@@ -23,7 +23,7 @@
 import { Xoshiro256 } from '@/core/prng';
 import type { Galaxy, StarSystem, Star, Planet, JumpPoint, Vec2, EntityId, ResourceDeposit, HexTerrain, PlanetSize, BinaryType, Atmosphere, AtmosphereType, PlanetLife, LifeLevel, AtmosphericSlot, OrbitalSlot, PlanetResourceDeposit } from '@/core/types';
 import { STAR_TYPES, STAR_WEIGHTS } from '@/data/star-types';
-import { PLANET_TYPES, SIZE_HEX_COUNT, ORBIT_SLOTS, ORBIT_SLOTS_BY_SIZE, GAS_GIANT_ATMOSPHERE_SLOTS, PLANET_DENSITY, PLANET_TYPE_RADIUS, getSizeFromRadius, LIFE_LEVEL_WEIGHTS, PROFILE_ELEMENTS, RARE_ELEMENTS, ULTRA_RARE_ELEMENTS } from '@/data/planet-types';
+import { PLANET_TYPES, SIZE_HEX_COUNT, ORBIT_SLOTS, ORBIT_SLOTS_BY_SIZE, GAS_GIANT_ATMOSPHERE_SLOTS, PLANET_DENSITY, PLANET_TYPE_RADIUS, getSizeFromRadius, LIFE_LEVEL_WEIGHTS, PROFILE_ELEMENTS, RARE_ELEMENTS, ULTRA_RARE_ELEMENTS, TYPE_NAMES } from '@/data/planet-types';
 import { ELEMENTS, ELEMENT_MAP } from '@/data/elements';
 import { generateHexGrid } from './hex-grid';
 
@@ -442,8 +442,9 @@ function generatePlanet(systemId: EntityId, orbit: number, systemName: string, p
     );
   }
 
-  // Имя планеты
-  const planetName = `${systemName} ${toRoman(orbit)}`;
+  // Имя планеты (с типом)
+  const typeName = TYPE_NAMES[planetDef.type] ?? planetDef.type;
+  const planetName = `${systemName} ${toRoman(orbit)} — ${typeName}`;
 
   // Сводная таблица ресурсов планеты (агрегация из гексов)
   const resourceDeposits = aggregateResourceDeposits(hexes, planetDef.type, rng.derive('ultra'));
@@ -479,24 +480,29 @@ function generatePlanet(systemId: EntityId, orbit: number, systemName: string, p
  * G-02 fix: принимает РЕАЛЬНУЮ атмосферу (не делает свой roll)
  * G-03 fix: принимает реальный Star (не starDef)
  * G-18 fix: 278 → 278.5 для лучшей точности
+ * G-30 fix: парниковый эффект = ПРОЦЕНТ от T_eq (масштабируется с расстоянием)
+ *
+ * Физика: парниковый эффект захватывает ДОЛЮ исходящего излучения.
+ * Исходящее излучение ≈ входящее (равновесие) → парник пропорционален T_eq.
+ * Это гарантирует монотонное убывание температуры с расстоянием.
  *
  * 1. Равновесная температура (равновесие излучения звезды):
  *    T_eq = 278.5K × (L/L☉)^(1/4) × (1AU/r)^(1/2)
  *
- * 2. Парниковый эффект зависит от РЕАЛЬНОГО типа атмосферы:
- *    - none → 0K
- *    - thin → 10-40K
- *    - standard → 30-60K
- *    - dense → 80-200K
- *    - co2 → 100-300K
- *    - methane → 80-250K
- *    - toxic → 40-120K
- *    - inert → 10-30K (минимальный парник)
+ * 2. Парниковый эффект = ПРОЦЕНТ от T_eq (масштабируется с расстоянием):
+ *    - none → 0%
+ *    - thin → 3-10%
+ *    - standard → 10-20% (Земля: ~13% = +33K/+255K)
+ *    - dense → 20-45%
+ *    - co2 → 30-60% (Венера: ~124% — экстремальный случай)
+ *    - methane → 20-50%
+ *    - toxic → 5-20%
+ *    - inert → 2-7%
  *
- * 3. Тип планеты модифицирует (альбедо, геотермалка):
- *    - volcanic → геотермальный нагрев +100..400K
- *    - ice → высокое альбедо, охлаждение
- *    - gas_giant → внутренний нагрев
+ * 3. Тип планеты модифицирует (альбедо, геотермалка — плоские K):
+ *    - volcanic → геотермальный нагрев +30..100K (внутренний источник, не зависит от звезды)
+ *    - ice → высокое альбедо, охлаждение -20..-50K
+ *    - gas_giant → внутренний нагрев +10..30K
  */
 function calculatePlanetTemperature(
   star: Star,
@@ -513,49 +519,53 @@ function calculatePlanetTemperature(
   // T_eq = 278.5 * L^(1/4) * r^(-1/2) K
   const T_eq = 278.5 * Math.pow(L, 0.25) * Math.pow(r, -0.5);
 
-  // G-02 fix: Парниковый эффект на основе РЕАЛЬНОГО типа атмосферы
-  let greenhouseK = 0;
+  // G-30 fix: Парниковый эффект = ПРОЦЕНТ от T_eq
+  // Физика: greenhouse захватывает долю исходящего излучения, которое
+  // пропорционально приходящему → эффект масштабируется с T_eq.
+  // Это гарантирует, что далёкие планеты с CO₂ не нагреваются до +200°C.
+  let greenhousePercent = 0;
   switch (atmosphere.type) {
     case 'none':
-      greenhouseK = 0;
+      greenhousePercent = 0;
       break;
     case 'thin':
-      greenhouseK = 10 + rng.nextFloat() * 30;       // 10-40K
+      greenhousePercent = 3 + rng.nextFloat() * 7;        // 3-10%
       break;
     case 'standard':
-      greenhouseK = 30 + rng.nextFloat() * 60;        // 30-60K  (was 30-90)
+      greenhousePercent = 10 + rng.nextFloat() * 10;       // 10-20%
       break;
     case 'dense':
-      greenhouseK = 80 + rng.nextFloat() * 120;       // 80-200K
+      greenhousePercent = 20 + rng.nextFloat() * 25;       // 20-45%
       break;
     case 'co2':
-      greenhouseK = 100 + rng.nextFloat() * 200;      // 100-300K
+      greenhousePercent = 30 + rng.nextFloat() * 30;       // 30-60%
       break;
     case 'methane':
-      greenhouseK = 80 + rng.nextFloat() * 170;       // 80-250K
+      greenhousePercent = 20 + rng.nextFloat() * 30;       // 20-50%
       break;
     case 'toxic':
-      greenhouseK = 40 + rng.nextFloat() * 80;        // 40-120K
+      greenhousePercent = 5 + rng.nextFloat() * 15;        // 5-20%
       break;
     case 'inert':
-      greenhouseK = 10 + rng.nextFloat() * 20;        // 10-30K (минимальный парник)
+      greenhousePercent = 2 + rng.nextFloat() * 5;         // 2-7%
       break;
   }
+  const greenhouseK = T_eq * (greenhousePercent / 100);
 
-  // Модификатор типа планеты
+  // Модификатор типа планеты (плоские K — внутренние источники/альбедо)
   let typeModifierK = 0;
   switch (planetDef.type) {
     case 'volcanic':
-      typeModifierK = 100 + rng.nextFloat() * 300; // геотермальный нагрев
+      typeModifierK = 30 + rng.nextFloat() * 70;   // +30-100K геотермальный нагрев
       break;
     case 'ice':
-      typeModifierK = -20 - rng.nextFloat() * 30; // высокое альбедо → охлаждение
+      typeModifierK = -20 - rng.nextFloat() * 30;  // -20 to -50K высокое альбедо → охлаждение
       break;
     case 'gas_giant':
-      typeModifierK = 20 + rng.nextFloat() * 60; // внутренний нагрев
+      typeModifierK = 10 + rng.nextFloat() * 20;   // +10-30K внутренний нагрев (Кельвин-Гельмгольц)
       break;
     case 'desert':
-      typeModifierK = -5 + rng.nextFloat() * 20; // низкое альбедо днём, быстрое охлаждение ночью
+      typeModifierK = -5 + rng.nextFloat() * 15;   // -5 to +10K
       break;
     default:
       break;
