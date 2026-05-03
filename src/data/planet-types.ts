@@ -17,7 +17,7 @@ export const PLANET_DENSITY: Record<PlanetType, { min: number; max: number; avg:
   ice:      { min: 2.0, max: 4.5, avg: 3.0 },
   oceanic:  { min: 3.5, max: 5.5, avg: 4.5 },
   desert:   { min: 3.0, max: 5.5, avg: 4.0 },
-  gas_giant:{ min: 0.8, max: 2.5, avg: 1.5 },
+  gas_giant:{ min: 1.2, max: 2.5, avg: 1.5 },  // G-29 fix: min 0.8→1.2 (min gravity ~0.9g)
   dwarf:    { min: 2.0, max: 5.0, avg: 3.5 },
 };
 
@@ -27,10 +27,10 @@ export const PLANET_DENSITY: Record<PlanetType, { min: number; max: number; avg:
  * Размер сетки ВЫВОДИТСЯ из радиуса через getSizeFromRadius().
  */
 export const PLANET_TYPE_RADIUS: Record<PlanetType, { min: number; max: number }> = {
-  rocky:    { min: 2000, max: 7000 },
+  rocky:    { min: 2000, max: 10000 },  // G-25 fix: max 7000→10000 (allows R=1.57 = "large")
   volcanic: { min: 2500, max: 8000 },
   ice:      { min: 1500, max: 6000 },
-  oceanic:  { min: 4000, max: 8000 },
+  oceanic:  { min: 4000, max: 11000 },  // G-25 fix: max 8000→11000 (allows R=1.73 = "large")
   desert:   { min: 2000, max: 6500 },
   gas_giant:{ min: 25000, max: 80000 },
   dwarf:    { min: 500, max: 2000 },

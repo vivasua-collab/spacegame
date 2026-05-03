@@ -69,34 +69,59 @@ export class Xoshiro256 {
    * с уникальным именем. Изменение в одном под-seed'е
    * не влияет на другие.
    *
-   * Использует FNV-1a хеш для качественного распределения
-   * даже для похожих строк (system_0, system_1, ...).
-   * Результат комбинируется со всеми 4 словами состояния
-   * через SplitMix64 для гарантии независимости.
+   * G-24 fix v2: Вычисляем 4 НЕЗАВИСИМЫХ хеша имени (разные offset basis
+   * и prime), XOR с 4 словами состояния, и используем РЕЗУЛЬТАТ напрямую
+   * как начальное состояние xoshiro256** (без коллапса через SplitMix64).
+   * xoshiro256** требует только, чтобы состояние не было всеми нулями.
+   *
+   * 4 хеша:
+   *   h0: FNV-1a (offset 0x811c9dc5, prime 0x01000193)
+   *   h1: FNV-1a variant (offset 0x6a09e667, prime 0x5bd1e995 — Murmur2)
+   *   h2: FNV-1a variant (offset 0xbb67ae85, prime 0xcc9e2d51 — Murmur3 c1)
+   *   h3: FNV-1a variant (offset 0x3c6ef372, prime 0x1b873593 — Murmur3 c2)
    */
   derive(name: string): Xoshiro256 {
-    // FNV-1a хеш имени — качественное распределение
-    let h1 = 0x811c9dc5 >>> 0; // FNV offset basis (32-bit)
-    let h2 = 0x9e3779b9 >>> 0; // Второй хеш для diversity
+    // 4 независимых хеша имени — разные offset/prime для diversity
+    let h0 = 0x811c9dc5 >>> 0; // FNV-1a offset
+    let h1 = 0x6a09e667 >>> 0; // SHA-256 init (arbitrary different offset)
+    let h2 = 0xbb67ae85 >>> 0; // SHA-256 init
+    let h3 = 0x3c6ef372 >>> 0; // SHA-256 init
     for (let i = 0; i < name.length; i++) {
-      h1 ^= name.charCodeAt(i);
-      h1 = Math.imul(h1, 0x01000193) >>> 0; // FNV prime
-      h2 ^= name.charCodeAt(i) + i;
-      h2 = Math.imul(h2, 0x9e3779b9) >>> 0;
+      const c = name.charCodeAt(i);
+      // h0: standard FNV-1a
+      h0 ^= c;
+      h0 = Math.imul(h0, 0x01000193) >>> 0;
+      // h1: Murmur2-style mixing
+      h1 ^= c;
+      h1 = Math.imul(h1, 0x5bd1e995) >>> 0;
+      h1 ^= h1 >>> 15;
+      // h2: Murmur3 c1-style mixing
+      h2 ^= c;
+      h2 = Math.imul(h2, 0xcc9e2d51) >>> 0;
+      h2 ^= h2 >>> 17;
+      // h3: Murmur3 c2-style mixing
+      h3 ^= c;
+      h3 = Math.imul(h3, 0x1b873593) >>> 0;
+      h3 ^= h3 >>> 13;
     }
-    // Комбинируем ВСЕ 4 слова состояния с хешем имени
-    const combined = (this.state[0] ^ h1 ^ (this.state[1] >>> 16)) >>> 0;
-    const extra = (this.state[2] ^ h2 ^ (this.state[3] >>> 16)) >>> 0;
-    // Двойной SplitMix64 для максимально независимого seed
-    let z = (combined + 0x9e3779b97f4a7c15) | 0;
-    z = Math.imul(z ^ (z >>> 30), 0xbf58476d1ce4e5b9);
-    z = Math.imul(z ^ (z >>> 27), 0x94d049bb133111eb);
-    z = z ^ (z >>> 31);
-    let w = (extra + 0x9e3779b97f4a7c15) | 0;
-    w = Math.imul(w ^ (w >>> 30), 0xbf58476d1ce4e5b9);
-    w = Math.imul(w ^ (w >>> 27), 0x94d049bb133111eb);
-    w = w ^ (w >>> 31);
-    return new Xoshiro256(z ^ w);
+
+    // XOR с основным состоянием — включает seed в результат
+    const s0 = (this.state[0] ^ h0) >>> 0;
+    const s1 = (this.state[1] ^ h1) >>> 0;
+    const s2 = (this.state[2] ^ h2) >>> 0;
+    const s3 = (this.state[3] ^ h3) >>> 0;
+
+    // Гарантируем, что состояние не все нули (единственное требование xoshiro256**)
+    const state: [number, number, number, number] = [
+      s0 === 0 && s1 === 0 && s2 === 0 && s3 === 0 ? 1 : s0,
+      s1,
+      s2,
+      s3,
+    ];
+
+    const child = Object.create(Xoshiro256.prototype) as Xoshiro256;
+    (child as unknown as { state: [number, number, number, number] }).state = state;
+    return child;
   }
 
   weightedChoice<T>(items: readonly T[], weights: readonly number[]): T {

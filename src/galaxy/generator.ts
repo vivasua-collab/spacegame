@@ -348,10 +348,15 @@ function createStar(systemId: EntityId, systemName: string, starDef: typeof STAR
 function generatePlanet(systemId: EntityId, orbit: number, systemName: string, primaryStar: Star, binaryType: BinaryType, rng: Xoshiro256): Planet {
   const planetId = genId('planet');
 
-  // G-13 fix: Орбитальный радиус с учётом типа двойной системы
-  // BINARY_CLOSE: минимальный радиус = 1.0 AU (планеты дальше от центра масс)
-  // BINARY_WIDE: максимальный радиус ограничен (далёкие планеты менее стабильны)
-  let orbitalRadius = 0.3 + orbit * (0.5 + rng.nextFloat() * 0.3);
+  // G-13 + G-27 fix: Орбитальный радиус с учётом светимости звезды и типа двойной системы.
+  // Базовая формула: hzCenter × (0.3 + orbit × (0.5 + rng × 0.3))
+  // где hzCenter = sqrt(L/0.8) — центр обитаемой зоны.
+  // Это гарантирует, что планеты M/K карликов попадают в HZ,
+  // а не начинаются с 0.8 AU (далеко от HZ M-карликов на 0.1–0.2 AU).
+  const hzCenter = Math.sqrt(Math.max(0.001, primaryStar.luminosity) / 0.8);
+  // Для очень ярких звёзд ограничиваем множитель, чтобы планеты не улетали на 100+ AU
+  const orbitalScale = Math.min(hzCenter, 5.0); // макс множитель 5 (для F/G звёзд)
+  let orbitalRadius = orbitalScale * (0.3 + orbit * (0.5 + rng.nextFloat() * 0.3));
 
   if (binaryType === 'BINARY_CLOSE') {
     // Планеты должны быть дальше от центра масс двойной системы
