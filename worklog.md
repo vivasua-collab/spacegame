@@ -613,3 +613,53 @@ Stage Summary:
 - ResourceDeposit interface updated to match PlanetResourceDeposit in src/core/types.ts
 - All 22 MVP elements mapped to tiers per planet type
 - Sections 1-4, 6-7 unchanged
+
+---
+Task ID: 8
+Agent: Main Agent
+Task: Colony Hub + Colonization Flow
+
+Work Log:
+- Created checkpoints/05_04_colony_hub_plan.md — detailed plan for colony_hub implementation
+- Added `colony_hub` building to src/data/buildings.ts:
+  - category: 'colonization' (new category)
+  - Produces base energy (5) regardless of luminosity
+  - Extracts all deposits on hex at 50% of mine speed
+  - Free cost (auto-placed), 3 upgrade levels, all planet sizes
+- Added 'colonization' to BuildingCategory in src/core/types.ts
+- Added 'colonization' to GamePhase type in src/core/types.ts
+- Updated src/economy/engine.ts:
+  - processExtraction: colony_hub extracts deposits at 0.005 × availability × levelMult (50% mine rate)
+  - recalcEnergyBalance: colony_hub produces 5 × levelMult energy (no luminosity factor)
+  - Added colonizePlanet(planet, system?) function: finds best hex, places colony_hub, gives starter resources, recalcs energy, emits event
+- Updated src/economy/index.ts: exported colonizePlanet
+- Updated src/stores/game-store.ts:
+  - Removed auto-colonization from createInitialState (no more solar_plant auto-placement)
+  - Initial phase changed from 'paused' to 'colonization'
+  - Initial speed changed from 1 to 0
+  - Added colonizePlanet action: calls engine colonizePlanet, transitions to 'playing' phase, speed=1, navigates to planet view
+- Updated src/components/game/system-view.tsx:
+  - Added Flag icon + Button imports
+  - Added colonizePlanetAction and isColonization state
+  - PlanetCard now receives isColonization and onColonize props
+  - "Колонизировать" button shown on non-gas_giant unowned planets during colonization phase
+  - Owner badge changed from "Owned" to "Колония"
+- Updated src/components/game/game-layout.tsx:
+  - Added Flag icon import
+  - Colonization banner shown when phase === 'colonization'
+  - TimeControls hidden during colonization phase
+- Updated src/components/game/planet-view.tsx:
+  - Colony hub shown in cyan (#22d3ee) on hex grid and info card
+  - Added "+5/tick (базовая энергия)" info for colony_hub in HexInfoCard
+- Updated src/components/game/building-dialog.tsx:
+  - colony_hub excluded from build mode (auto-placed only)
+  - Added colony_hub energy display in building list
+- Lint: 0 errors
+- Dev server: 200 OK
+
+Stage Summary:
+- Complete colonization flow: new game → select system → select planet → click "Колонизировать" → game starts
+- colony_hub: auto-placed on best hex, produces 5 energy + extracts deposits at 50% rate
+- 8 files modified (buildings.ts, types.ts, engine.ts, index.ts, game-store.ts, system-view.tsx, game-layout.tsx, planet-view.tsx, building-dialog.tsx)
+- New GamePhase: 'colonization' (between menu and playing)
+- No more auto-start: player must choose where to colonize

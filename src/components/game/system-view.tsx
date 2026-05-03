@@ -18,7 +18,9 @@ import {
   Orbit,
   Clock,
   Ruler,
+  Flag,
 } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import type { StarSystem, Planet, AtmosphereType, LifeLevel } from '@/core/types';
 
 export function SystemView() {
@@ -27,6 +29,8 @@ export function SystemView() {
   const selectPlanet = useGameStore((s) => s.selectPlanet);
   const selectSystem = useGameStore((s) => s.selectSystem);
   const selectedPlanetId = useGameStore((s) => s.selectedPlanetId);
+  const colonizePlanetAction = useGameStore((s) => s.colonizePlanet);
+  const isColonization = gameState?.phase === 'colonization';
 
   if (!gameState || !selectedSystemId) {
     return (
@@ -161,7 +165,9 @@ export function SystemView() {
                 key={planet.id}
                 planet={planet}
                 isSelected={planet.id === selectedPlanetId}
+                isColonization={isColonization}
                 onClick={() => selectPlanet(planet.id)}
+                onColonize={() => colonizePlanetAction(planet.id)}
               />
             ))}
           </div>
@@ -174,11 +180,15 @@ export function SystemView() {
 function PlanetCard({
   planet,
   isSelected,
+  isColonization,
   onClick,
+  onColonize,
 }: {
   planet: Planet;
   isSelected: boolean;
+  isColonization: boolean;
   onClick: () => void;
+  onColonize: () => void;
 }) {
   const typeColor = getTypeColor(planet.type);
 
@@ -243,8 +253,18 @@ function PlanetCard({
 
           {planet.owner && (
             <Badge className="text-[9px] h-4 px-1 bg-emerald-900/50 text-emerald-400 border-emerald-800 shrink-0">
-              Owned
+              Колония
             </Badge>
+          )}
+          {isColonization && !planet.owner && planet.type !== 'gas_giant' && (
+            <Button
+              size="sm"
+              className="h-6 text-[10px] px-2 bg-cyan-600 hover:bg-cyan-500 text-white shrink-0"
+              onClick={(e) => { e.stopPropagation(); onColonize(); }}
+            >
+              <Flag className="size-3 mr-1" />
+              Колонизировать
+            </Button>
           )}
         </div>
       </CardContent>

@@ -125,8 +125,8 @@ export function BuildingDialog({ open, onOpenChange, planet, hexIndex, terrain }
     );
   }
 
-  // Build mode
-  const availableBuildings = BUILDINGS.filter((b) => b.size.includes(planet.size));
+  // Build mode — exclude colony_hub (placed automatically on colonization)
+  const availableBuildings = BUILDINGS.filter((b) => b.size.includes(planet.size) && b.id !== 'colony_hub');
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -187,6 +187,11 @@ export function BuildingDialog({ open, onOpenChange, planet, hexIndex, terrain }
                       <span className="text-green-400 flex items-center gap-1">
                         <Zap className="size-3" />
                         +10
+                      </span>
+                    ) : building.id === 'colony_hub' ? (
+                      <span className="text-cyan-400 flex items-center gap-1">
+                        <Zap className="size-3" />
+                        +5
                       </span>
                     ) : null}
                     <span className="text-slate-500">Max level: {building.levels}</span>

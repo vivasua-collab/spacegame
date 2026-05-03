@@ -7,6 +7,20 @@ import type { BuildingDef } from '@/core/types';
 
 export const BUILDINGS: BuildingDef[] = [
   {
+    id: 'colony_hub',
+    name: 'Колониальный хаб',
+    description: 'Стартовое здание колонии: обеспечивает базовую энергию и добычу ресурсов. Автоматически размещается при колонизации.',
+    category: 'colonization',
+    layer: ['surface'],
+    size: ['tiny', 'small', 'medium', 'large', 'huge'],
+    energyConsumption: 0,
+    baseProductionTime: 0,
+    levels: 3,
+    costPerLevel: {}, // Бесплатно при колонизации; улучшение требует ресурсы
+    terrainBonus: {},
+    requiresAtmosphere: false,
+  },
+  {
     id: 'mine',
     name: 'Шахта',
     description: 'Добыча металлических руд из недр планеты',
@@ -123,6 +137,7 @@ export const BUILDINGS: BuildingDef[] = [
 export const BUILDING_MAP = new Map(BUILDINGS.map(b => [b.id, b]));
 
 export const CATEGORY_NAMES: Record<string, string> = {
+  colonization: 'Колонизация',
   extraction: 'Добыча',
   processing: 'Переработка',
   production: 'Производство',
@@ -133,6 +148,7 @@ export const CATEGORY_NAMES: Record<string, string> = {
 };
 
 export const CATEGORY_ICONS: Record<string, string> = {
+  colonization: '🏠',
   extraction: '⛏️',
   processing: '🔥',
   production: '🏗️',

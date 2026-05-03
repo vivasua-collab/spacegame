@@ -33,7 +33,7 @@ export interface GameTime {
 
 export type GameSpeed = 0 | 1 | 5 | 15 | 50;
 
-export type GamePhase = 'menu' | 'playing' | 'paused';
+export type GamePhase = 'menu' | 'colonization' | 'playing' | 'paused';
 
 // ============ Звёзды ============
 
@@ -150,7 +150,7 @@ export interface ElementDef {
 
 // ============ Здания ============
 
-export type BuildingCategory = 'extraction' | 'processing' | 'production' | 'energy' | 'military' | 'research' | 'logistics';
+export type BuildingCategory = 'colonization' | 'extraction' | 'processing' | 'production' | 'energy' | 'military' | 'research' | 'logistics';
 
 export type BuildingLayer = 'surface' | 'atmosphere' | 'orbit';
 

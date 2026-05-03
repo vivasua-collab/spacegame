@@ -16,6 +16,7 @@ import {
   RotateCcw,
   Save,
   Loader2,
+  Flag,
 } from 'lucide-react';
 
 export function GameLayout() {
@@ -62,8 +63,8 @@ export function GameLayout() {
 
         <Separator orientation="vertical" className="h-5 bg-white/10" />
 
-        {/* Speed controls */}
-        <TimeControls />
+        {/* Speed controls — скрыты при фазе colonization */}
+        {gameState.phase !== 'colonization' && <TimeControls />}
 
         <div className="flex-1" />
 
@@ -85,6 +86,19 @@ export function GameLayout() {
           New Game
         </Button>
       </header>
+
+      {/* Colonization banner */}
+      {gameState.phase === 'colonization' && (
+        <div className="bg-cyan-900/30 border-b border-cyan-600/30 px-4 py-2 flex items-center gap-3 shrink-0">
+          <Flag className="size-4 text-cyan-400 shrink-0" />
+          <span className="text-sm text-cyan-200 font-medium">
+            Выберите планету для колонизации
+          </span>
+          <span className="text-xs text-cyan-400/60">
+            Кликните на систему на карте галактики, затем нажмите «Колонизировать» на планете
+          </span>
+        </div>
+      )}
 
       {/* ===== Main Content ===== */}
       <div className="flex flex-1 min-h-0">

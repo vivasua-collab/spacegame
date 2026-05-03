@@ -61,6 +61,22 @@ function processExtraction(planet: Planet): void {
         planet.resources[key] = (planet.resources[key] ?? 0) + extracted;
       }
     }
+
+    // Colony hub: добыча всех залежей на гексе со скоростью 50% от шахты
+    if (buildingDef.id === 'colony_hub') {
+      const levelMult = 1 + hex.buildingLevel * 0.1;
+      for (const deposit of hex.deposits) {
+        if (deposit.quantity <= 0) continue;
+
+        const baseRate = 0.005 * deposit.availability; // 50% от скорости шахты
+        const amount = baseRate * levelMult;
+        const extracted = Math.min(amount, deposit.quantity);
+
+        deposit.quantity -= extracted;
+        const key = deposit.elementId;
+        planet.resources[key] = (planet.resources[key] ?? 0) + extracted;
+      }
+    }
   }
 
   // Atmospheric slots (P1-01: газовые гиганты)
@@ -190,6 +206,9 @@ export function recalcEnergyBalance(planet: Planet, system?: StarSystem): void {
       } else {
         production += 10 * levelMult; // fallback for unknown energy buildings
       }
+    } else if (buildingDef.id === 'colony_hub') {
+      // Colony hub: базовая энергия 5, не зависит от светимости
+      production += 5 * levelMult;
     } else {
       consumption += buildingDef.energyConsumption * levelMult;
     }
@@ -414,6 +433,70 @@ export function enqueueProduction(
     total: recipe.time,
     repeat,
   });
+
+  return true;
+}
+
+/**
+ * Колонизировать планету: поставить colony_hub на лучший гекс + дать стартовые ресурсы.
+ * Возвращает true если успешно, false если нельзя колонизировать.
+ */
+export function colonizePlanet(planet: Planet, system?: StarSystem): boolean {
+  // Нельзя колонизировать газовый гигант (нет поверхности) или уже занятую планету
+  if (planet.type === 'gas_giant') return false;
+  if (planet.owner) return false;
+
+  // Найти лучший гекс для colony_hub:
+  // Предпочтение: не-ocean гекс с максимальным количеством deposits
+  let bestHex = -1;
+  let bestScore = -1;
+
+  for (let i = 0; i < planet.hexes.length; i++) {
+    const hex = planet.hexes[i];
+    if (hex.buildingId) continue;
+    if (hex.terrain === 'ocean') continue;
+
+    const score = hex.deposits.length * 10 + (hex.deposits.reduce((s, d) => s + d.availability, 0));
+    if (score > bestScore) {
+      bestScore = score;
+      bestHex = i;
+    }
+  }
+
+  // Fallback: любой свободный не-ocean гекс
+  if (bestHex === -1) {
+    for (let i = 0; i < planet.hexes.length; i++) {
+      if (!planet.hexes[i].buildingId && planet.hexes[i].terrain !== 'ocean') {
+        bestHex = i;
+        break;
+      }
+    }
+  }
+
+  // Последний fallback: любой свободный гекс
+  if (bestHex === -1) {
+    for (let i = 0; i < planet.hexes.length; i++) {
+      if (!planet.hexes[i].buildingId) {
+        bestHex = i;
+        break;
+      }
+    }
+  }
+
+  if (bestHex === -1) return false; // Нет свободных гексов
+
+  // Поставить colony_hub
+  planet.hexes[bestHex].buildingId = 'colony_hub';
+  planet.hexes[bestHex].buildingLevel = 1;
+  planet.owner = 'player';
+
+  // Дать стартовые ресурсы
+  giveStarterResources(planet);
+
+  // Пересчитать энергобаланс
+  recalcEnergyBalance(planet, system);
+
+  gameBus.emit('planet:colonized', { planetId: planet.id, hexIndex: bestHex });
 
   return true;
 }

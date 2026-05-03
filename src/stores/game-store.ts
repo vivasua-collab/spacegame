@@ -6,7 +6,7 @@
 import { create } from 'zustand';
 import type { GameState, GameTime, GameSpeed, GamePhase, Galaxy, StarSystem, Planet, EntityId, ProductionQueue } from '@/core/types';
 import { generateGalaxy, type GalaxyGenConfig } from '@/galaxy';
-import { processEconomyTick, buildOnHex, upgradeBuilding, enqueueProduction, giveStarterResources, recalcEnergyBalance } from '@/economy';
+import { processEconomyTick, buildOnHex, upgradeBuilding, enqueueProduction, giveStarterResources, recalcEnergyBalance, colonizePlanet } from '@/economy';
 import { gameBus } from '@/core/event-bus';
 import { BUILDING_MAP } from '@/data/buildings';
 
@@ -49,6 +49,9 @@ export interface GameStore {
   buildOnHex: (planetId: EntityId, hexIndex: number, buildingId: string) => boolean;
   upgradeBuildingOnHex: (planetId: EntityId, hexIndex: number) => boolean;
   enqueueProduction: (planetId: EntityId, recipeId: string, repeat?: boolean) => boolean;
+
+  // Колонизация
+  colonizePlanet: (planetId: EntityId) => boolean;
 
   // Сохранение/загрузка
   saveGame: (name?: string) => Promise<boolean>;
@@ -115,30 +118,10 @@ export const useGameStore = create<GameStore>((set, get) => {
   function createInitialState(config: Partial<GalaxyGenConfig>): GameState {
     const galaxy = generateGalaxy(config);
 
-    // Даём стартовые ресурсы на первую планету первой системы
-    const firstSystem = galaxy.systems[0];
-    if (firstSystem && firstSystem.planets.length > 0) {
-      const firstPlanet = firstSystem.planets[0];
-      giveStarterResources(firstPlanet);
-      firstPlanet.owner = 'player';
-      recalcEnergyBalance(firstPlanet);
-
-      // Установить солнечную станцию на первый подходящий гекс
-      for (let i = 0; i < firstPlanet.hexes.length; i++) {
-        const hex = firstPlanet.hexes[i];
-        if (!hex.buildingId && hex.terrain !== 'ocean') {
-          hex.buildingId = 'solar_plant';
-          hex.buildingLevel = 1;
-          break;
-        }
-      }
-      recalcEnergyBalance(firstPlanet);
-    }
-
     return {
       time: { tick: 0, day: 0, year: 0 },
-      speed: 1,
-      phase: 'paused',
+      speed: 0,
+      phase: 'colonization',
       galaxy,
       productionQueues: new Map(),
       fleets: [],
@@ -248,6 +231,30 @@ export const useGameStore = create<GameStore>((set, get) => {
       if (!planet) return false;
       const result = enqueueProduction(planet, gameState.productionQueues, recipeId, repeat);
       if (result) set({ gameState: { ...gameState } });
+      return result;
+    },
+
+    colonizePlanet: (planetId) => {
+      const { gameState } = get();
+      if (!gameState) return false;
+      const planet = findPlanet(gameState, planetId);
+      if (!planet) return false;
+
+      // Найти систему для расчёта энергобаланса
+      const system = gameState.galaxy.systemMap.get(planet.systemId);
+
+      const result = colonizePlanet(planet, system);
+      if (result) {
+        // После колонизации — начать игру
+        gameState.phase = 'playing';
+        gameState.speed = 1;
+        set({
+          gameState: { ...gameState },
+          selectedSystemId: planet.systemId,
+          selectedPlanetId: planetId,
+          view: 'planet',
+        });
+      }
       return result;
     },
 

@@ -9,4 +9,5 @@ export {
   upgradeBuilding,
   enqueueProduction,
   giveStarterResources,
+  colonizePlanet,
 } from './engine';

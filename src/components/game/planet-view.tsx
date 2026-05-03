@@ -509,7 +509,11 @@ function HexGrid({ hexes, onHexClick, onHexHover, hoveredHexIndex }: HexGridProp
                   y={pos.y + 1}
                   textAnchor="middle"
                   dominantBaseline="middle"
-                  fill={buildingDef.category === 'energy' ? '#4ade80' : '#fbbf24'}
+                  fill={
+                    buildingDef.category === 'energy' ? '#4ade80' :
+                    buildingDef.id === 'colony_hub' ? '#22d3ee' :
+                    '#fbbf24'
+                  }
                   fontSize={HEX_SIZE * 0.4}
                   fontFamily="monospace"
                   fontWeight="bold"
@@ -576,7 +580,7 @@ function HexInfoCard({ hex }: { hex: HexCell }) {
 
         {buildingDef && (
           <div className="space-y-1">
-            <div className="text-xs text-amber-400 font-medium">
+            <div className="text-xs font-medium" style={{ color: buildingDef.id === 'colony_hub' ? '#22d3ee' : '#fbbf24' }}>
               {buildingDef.name} (Lv.{hex.buildingLevel})
             </div>
             {buildingDef.energyConsumption > 0 && (
@@ -587,6 +591,11 @@ function HexInfoCard({ hex }: { hex: HexCell }) {
             {buildingDef.category === 'energy' && (
               <div className="text-xs text-green-400 flex items-center gap-1">
                 <Zap className="size-3" />+10/tick
+              </div>
+            )}
+            {buildingDef.id === 'colony_hub' && (
+              <div className="text-xs text-cyan-400 flex items-center gap-1">
+                <Zap className="size-3" />+5/tick (базовая энергия)
               </div>
             )}
           </div>
