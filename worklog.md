@@ -432,3 +432,43 @@ Stage Summary:
 - Click on system zooms to 4x centered on that system
 - CSS transform approach replaces manual coordinate math for smoother zoom
 - Better label visibility logic adapted to zoom level
+
+---
+Task ID: 6
+Agent: Main Agent
+Task: Star colors + zoom state persistence + checkpoint update
+
+Work Log:
+- Updated star colors in src/data/star-types.ts to match astronomical spectral classes:
+  - O: #9bb0ff → #6e8eff (deeper blue-violet)
+  - B: #aabfff → #8ea4ff (blue-white)
+  - A: #cad7ff → #c8d4ff (white with blue tint)
+  - F: #f8f7ff → #f5f0e8 (warmer yellow-white)
+  - G: #fff4ea → #ffe8a0 (golden yellow, Sun-like)
+  - K: #ffd2a1 → #ffba6a (deeper orange)
+  - M: #ffad6b → #ff6a3d (distinctly red-orange)
+  - WD: #e8e8ff → #d8d8ff (white-blue dwarf)
+  - RG: #ff8866 → #ff5533 (deep red-orange giant)
+  - NS: #b0b0ff → #7777ff (intense blue neutron)
+  - PULSAR: #8080ff → #5566ff (bright blue-purple)
+  - BH: #1a1a2e → #2a1a4e (deep purple accretion glow)
+- Added special rendering in galaxy-map.tsx for exotic star types:
+  - Black holes: dual-layer purple glow + accretion disk ellipse ring
+  - Pulsars: rotating beam ellipse effect
+  - Black hole dots have visible purple stroke even when not selected
+- Added star type spectral class legend (O B A F G K M) to the map controls
+- Fixed zoom reset when navigating back to galaxy map:
+  - Changed game-layout.tsx to keep GalaxyMap always mounted with CSS hidden class
+  - Instead of conditional rendering `{view === 'galaxy' && <GalaxyMap />}`, uses `<div className={view === 'galaxy' ? 'w-full h-full' : 'hidden'}><GalaxyMap /></div>`
+  - This preserves zoom/pan state when switching between galaxy/system/planet views
+- Created checkpoint: checkpoints/05_04_phase2_ui_fixes.md
+- Lint: 0 errors
+- Dev server: restarted, 200 OK
+
+Stage Summary:
+- Star colors now match proper astronomical spectral class colors (more vivid, distinguishable)
+- Special visual effects for black holes (accretion disk) and pulsars (beam ellipse)
+- Zoom/pan state persists when navigating between views
+- Spectral class legend (O B A F G K M) added to galaxy map
+- 3 files modified: star-types.ts, galaxy-map.tsx, game-layout.tsx
+- 1 checkpoint created: 05_04_phase2_ui_fixes.md

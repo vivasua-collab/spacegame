@@ -132,9 +132,11 @@ export function GameLayout() {
           </div>
         </aside>
 
-        {/* Main view area */}
+        {/* Main view area — keep GalaxyMap always mounted to preserve zoom/pan state */}
         <main className="flex-1 min-w-0 p-3 overflow-hidden">
-          {view === 'galaxy' && <GalaxyMap />}
+          <div className={view === 'galaxy' ? 'w-full h-full' : 'hidden'}>
+            <GalaxyMap />
+          </div>
           {view === 'system' && <SystemView />}
           {view === 'planet' && <PlanetView />}
         </main>

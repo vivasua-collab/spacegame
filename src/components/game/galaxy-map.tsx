@@ -354,6 +354,9 @@ export function GalaxyMap() {
           const isSelected = sys.id === selectedSystemId;
           const isHovered = sys.id === hoveredSystemId;
           const r = isSelected ? dotRadius + 2 : isHovered ? dotRadius + 1 : dotRadius;
+          const starColor = sys.stars[0]?.color ?? '#666';
+          const isBlackHole = sys.stars[0]?.type === 'STAR_BH';
+          const isPulsar = sys.stars[0]?.type === 'STAR_PULSAR';
 
           return (
             <g
@@ -363,25 +366,60 @@ export function GalaxyMap() {
               onMouseLeave={() => setHoveredSystemId(null)}
               className="cursor-pointer"
             >
-              {/* Glow */}
-              <circle
-                cx={cx}
-                cy={cy}
-                r={r + 8}
-                fill={sys.stars[0]?.color ?? '#666'}
-                opacity={isSelected ? 0.3 : isHovered ? 0.2 : 0.08}
-              />
+              {/* Glow — for black holes use a brighter purple accretion disk glow */}
+              {isBlackHole ? (
+                <>
+                  <circle cx={cx} cy={cy} r={r + 12} fill="#5533aa" opacity={isSelected ? 0.4 : isHovered ? 0.3 : 0.15} />
+                  <circle cx={cx} cy={cy} r={r + 6} fill="#7744cc" opacity={isSelected ? 0.3 : isHovered ? 0.2 : 0.1} />
+                </>
+              ) : (
+                <circle
+                  cx={cx}
+                  cy={cy}
+                  r={r + 8}
+                  fill={starColor}
+                  opacity={isSelected ? 0.3 : isHovered ? 0.2 : 0.08}
+                />
+              )}
+
+              {/* Pulsar: rotating beam effect */}
+              {isPulsar && (
+                <ellipse
+                  cx={cx}
+                  cy={cy}
+                  rx={r + 10}
+                  ry={r * 0.3}
+                  fill="none"
+                  stroke={starColor}
+                  strokeWidth={1.2}
+                  opacity={isSelected ? 0.6 : isHovered ? 0.4 : 0.2}
+                />
+              )}
 
               {/* Star dot */}
               <circle
                 cx={cx}
                 cy={cy}
                 r={r}
-                fill={sys.stars[0]?.color ?? '#666'}
-                stroke={isSelected ? '#fff' : 'transparent'}
-                strokeWidth={isSelected ? 1.5 : 0}
+                fill={starColor}
+                stroke={isSelected ? '#fff' : isBlackHole ? '#7744cc' : 'transparent'}
+                strokeWidth={isSelected ? 1.5 : isBlackHole ? 1 : 0}
                 className="transition-all duration-150"
               />
+
+              {/* Black hole: accretion disk ring */}
+              {isBlackHole && (
+                <ellipse
+                  cx={cx}
+                  cy={cy}
+                  rx={r + 5}
+                  ry={r * 0.4}
+                  fill="none"
+                  stroke="#9966dd"
+                  strokeWidth={1}
+                  opacity={isSelected ? 0.7 : 0.4}
+                />
+              )}
 
               {/* Selection ring */}
               {isSelected && (
@@ -439,8 +477,8 @@ export function GalaxyMap() {
         })}
       </svg>
 
-      {/* Legend */}
-      <div className="absolute bottom-3 left-3 bg-black/60 rounded-lg px-3 py-2 text-[10px] text-slate-400 backdrop-blur-sm border border-white/5">
+      {/* Legend — star types & jump points */}
+      <div className="absolute bottom-3 left-3 bg-black/60 rounded-lg px-3 py-2 text-[10px] text-slate-400 backdrop-blur-sm border border-white/5 space-y-1.5">
         <div className="flex items-center gap-3">
           <span className="flex items-center gap-1">
             <span className="inline-block w-3 h-0.5 bg-white/10" style={{ borderTop: '1px dashed rgba(255,255,255,0.3)' }} />
@@ -450,6 +488,15 @@ export function GalaxyMap() {
             <span className="inline-block w-3 h-0.5" style={{ borderTop: '1px solid rgba(100,180,255,0.5)' }} />
             Stabilized JP
           </span>
+        </div>
+        <div className="flex flex-wrap gap-x-2 gap-y-0.5 text-[9px]">
+          <span className="flex items-center gap-0.5"><span className="inline-block w-2 h-2 rounded-full" style={{ backgroundColor: '#6e8eff' }} /> O</span>
+          <span className="flex items-center gap-0.5"><span className="inline-block w-2 h-2 rounded-full" style={{ backgroundColor: '#8ea4ff' }} /> B</span>
+          <span className="flex items-center gap-0.5"><span className="inline-block w-2 h-2 rounded-full" style={{ backgroundColor: '#c8d4ff' }} /> A</span>
+          <span className="flex items-center gap-0.5"><span className="inline-block w-2 h-2 rounded-full" style={{ backgroundColor: '#f5f0e8' }} /> F</span>
+          <span className="flex items-center gap-0.5"><span className="inline-block w-2 h-2 rounded-full" style={{ backgroundColor: '#ffe8a0' }} /> G</span>
+          <span className="flex items-center gap-0.5"><span className="inline-block w-2 h-2 rounded-full" style={{ backgroundColor: '#ffba6a' }} /> K</span>
+          <span className="flex items-center gap-0.5"><span className="inline-block w-2 h-2 rounded-full" style={{ backgroundColor: '#ff6a3d' }} /> M</span>
         </div>
       </div>
 
