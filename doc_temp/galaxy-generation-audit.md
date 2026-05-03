@@ -1,16 +1,16 @@
 # Аудит генерации галактики — код vs документация
 
-> **Дата обновления:** 2026-05-03 (v2 — после применения исправлений G-01..G-18)  
-> **Цель:** Полная документация текущей реализации генерации, отражающая ВСЕ применённые исправления и выявленные новые расхождения.  
-> **Спецификация:** `docs/03-planets.md` (единый источник истины), дополнительно `docs/02-stars.md`, `docs/01-galaxy.md`  
-> **Код:** `src/galaxy/generator.ts`, `src/galaxy/hex-grid.ts`, `src/data/planet-types.ts`, `src/data/star-types.ts`, `src/core/types.ts`, `src/core/prng.ts`
+> **Дата обновления:** 2026-05-04 (v3 — после рефакторинга генератора на оркестратор + модули)
+> **Цель:** Полная документация текущей реализации генерации, отражающая архитектуру оркестратора, все применённые исправления и выявленные расхождения.
+> **Спецификация:** `docs/03-planets.md` (единый источник истины), дополнительно `docs/02-stars.md`, `docs/01-galaxy.md`
+> **Код:** `src/galaxy/` (оркестратор + 5 модулей + gen-context + hex-grid)
 
 ---
 
 ## Содержание
 
-1. [Статус исправлений G-01..G-18](#1-статус-исправлений-g-01g-18)
-2. [Архитектура генерации (текущая)](#2-архитектура-генерации)
+1. [Статус исправлений G-01..G-31](#1-статус-исправлений-g-01g-31)
+2. [Архитектура генерации (оркестратор + модули)](#2-архитектура-генерации)
 3. [Типы планет — радиус, гравитация, размер сетки](#3-типы-планет--радиус-гравитация-размер-сетки)
 4. [Температура планеты](#4-температура-планеты)
 5. [Атмосфера — вероятности типов](#5-атмосфера--вероятности-типов)
@@ -27,104 +27,157 @@
 
 ---
 
-## 1. Статус исправлений G-01..G-18
+## 1. Статус исправлений G-01..G-31
 
-Все критические и значительные баги, обнаруженные в v1 аудита, исправлены в коде:
+Все критические и значительные баги, обнаруженные в v1/v2 аудита, исправлены в коде:
 
 | ID | Описание | Статус | Файл |
 |-----|----------|--------|------|
 | G-01 | lifeChance не соответствует спец. | ✅ ИСПРАВЛЕНО | planet-types.ts: lifeChance обновлены; LIFE_LEVEL_WEIGHTS добавлены |
-| G-02 | Парниковый эффект не координирован с атмосферой | ✅ ИСПРАВЛЕНО | generator.ts: атмосфера генерируется ДО температуры; calculatePlanetTemperature принимает реальный Atmosphere |
-| G-03 | Температура использует starDef, не Star | ✅ ИСПРАВЛЕНО | generator.ts: generatePlanet получает primaryStar (Star), не starDef |
-| G-04 | Размер ±1 вар. позволяет радиусы ЗА ПРЕДЕЛАМИ спец. | ✅ ИСПРАВЛЕНО | generator.ts: радиус из PLANET_TYPE_RADIUS; размер из getSizeFromRadius() |
-| G-05 | Диск не генерируется; diskRng не используется | ✅ ИСПРАВЛЕНО | generator.ts: diskRng используется, diskCount=20% |
+| G-02 | Парниковый эффект не координирован с атмосферой | ✅ ИСПРАВЛЕНО | generate-planets.ts: атмосфера генерируется ДО температуры; calculatePlanetTemperature принимает реальный Atmosphere |
+| G-03 | Температура использует starDef, не Star | ✅ ИСПРАВЛЕНО | generate-systems.ts + generate-planets.ts: generatePlanet получает primaryStar (Star), не starDef |
+| G-04 | Размер ±1 вар. позволяет радиусы ЗА ПРЕДЕЛАМИ спец. | ✅ ИСПРАВЛЕНО | generate-planets.ts: радиус из PLANET_TYPE_RADIUS; размер из getSizeFromRadius() |
+| G-05 | Диск не генерируется; diskRng не используется | ✅ ИСПРАВЛЕНО | generate-positions.ts: diskRng используется, diskCount=20% |
 | G-06 | Размер сетки не из R⊕ | ✅ ИСПРАВЛЕНО | planet-types.ts: getSizeFromRadius() из R⊕ |
-| G-07 | Атмосферные вероятности приблизительные | ✅ ИСПРАВЛЕНО | generator.ts: условные вероятности точно пересчитаны из §2.4 |
-| G-08 | Gas Giant: inert/toxic переставлены | ✅ ИСПРАВЛЕНО | generator.ts: inert=5%, toxic=4% |
-| G-09 | Уровни жизни: единое распределение | ✅ ИСПРАВЛЕНО | generator.ts: LIFE_LEVEL_WEIGHTS per-type |
-| G-10 | Условия для жизни не проверяются | ✅ ИСПРАВЛЕНО | generator.ts: температура, атмосфера, toxic ограничения |
-| G-11 | Toxic атмосфера полностью блокирует жизнь | ✅ ИСПРАВЛЕНО | generator.ts: toxic позволяет microbes (экстремофилы) |
-| G-12 | Спутник звезды может стать спецтипом | ✅ ИСПРАВЛЕНО | generator.ts: selectCompanionStar только из main sequence |
-| G-13 | Орбитальный радиус не учитывает тип двойной системы | ✅ ИСПРАВЛЕНО | generator.ts: BINARY_CLOSE→min 1 AU, BINARY_WIDE→max 30 AU |
-| G-14 | Ядро галактики: ~30% вместо ~15% | ✅ ИСПРАВЛЕНО | generator.ts: bulgeFraction=0.15 |
-| G-15 | Орбитальные слоты зависят от типа, не от размера | ✅ ИСПРАВЛЕНО | generator.ts: ORBIT_SLOTS_BY_SIZE для не-ГГ |
-| G-16 | selectPlanetType использует HZ вместо Snow Line | ✅ ИСПРАВЛЕНО | generator.ts: snowLine + 4 зоны (innerHZ/inHZ/betweenHZAndSnow/beyondSnow) |
-| G-17 | Астероидные поля не учитывают ГГ и двойную систему | ✅ ИСПРАВЛЕНО | generator.ts: +1 за ГГ, +1 за двойную |
-| G-18 | Коэффициент 278 вместо 278.5 | ✅ ИСПРАВЛЕНО | generator.ts: 278.5 |
-| G-30 | Парник — плоское K, не масштабируется с расстоянием → немонотонная температура | ✅ ИСПРАВЛЕНО | generator.ts: парник = % от T_eq, геотермалка уменьшена |
-| G-31 | Имя планеты не содержит тип | ✅ ИСПРАВЛЕНО | generator.ts: TYPE_NAMES в имени |
+| G-07 | Атмосферные вероятности приблизительные | ✅ ИСПРАВЛЕНО | generate-planets.ts: условные вероятности точно пересчитаны из §2.4 |
+| G-08 | Gas Giant: inert/toxic переставлены | ✅ ИСПРАВЛЕНО | generate-planets.ts: inert=5%, toxic=4% |
+| G-09 | Уровни жизни: единое распределение | ✅ ИСПРАВЛЕНО | generate-planets.ts: LIFE_LEVEL_WEIGHTS per-type |
+| G-10 | Условия для жизни не проверяются | ✅ ИСПРАВЛЕНО | generate-planets.ts: температура, атмосфера, toxic ограничения |
+| G-11 | Toxic атмосфера полностью блокирует жизнь | ✅ ИСПРАВЛЕНО | generate-planets.ts: toxic позволяет microbes (экстремофилы) |
+| G-12 | Спутник звезды может стать спецтипом | ✅ ИСПРАВЛЕНО | generate-systems.ts: selectCompanionStar только из main sequence |
+| G-13 | Орбитальный радиус не учитывает тип двойной системы | ✅ ИСПРАВЛЕНО | generate-planets.ts: BINARY_CLOSE→min 1 AU, BINARY_WIDE→max 30 AU |
+| G-14 | Ядро галактики: ~30% вместо ~15% | ✅ ИСПРАВЛЕНО | generate-positions.ts: bulgeFraction=0.15 |
+| G-15 | Орбитальные слоты зависят от типа, не от размера | ✅ ИСПРАВЛЕНО | generate-planets.ts: ORBIT_SLOTS_BY_SIZE для не-ГГ |
+| G-16 | selectPlanetType использует HZ вместо Snow Line | ✅ ИСПРАВЛЕНО | generate-planets.ts: snowLine + 4 зоны (innerHZ/inHZ/betweenHZAndSnow/beyondSnow) |
+| G-17 | Астероидные поля не учитывают ГГ и двойную систему | ✅ ИСПРАВЛЕНО | generate-systems.ts: +1 за ГГ, +1 за двойную |
+| G-18 | Коэффициент 278 вместо 278.5 | ✅ ИСПРАВЛЕНО | generate-planets.ts: 278.5 |
+| G-19 | Вариация звёзд ±20% вместо subclass-based | 🟡 Осознанное отклонение | generate-systems.ts: createStar() — упрощение для MVP |
+| G-24 | PRNG derive() использует слабый DJB2 | ✅ ИСПРАВЛЕНО | prng.ts: 4 независимых хеша (FNV-1a + Murmur2 + Murmur3) |
+| G-25 | Rocky/Oceanic max radius расширен для "large" сетки | 🟡 Осознанное отклонение | planet-types.ts:30,33 |
+| G-27 | Орбитальный радиус масштабируется от hzCenter | 🟡 Осознанное отклонение | generate-planets.ts: hzCenter |
+| G-29 | Gas giant density min поднят для мин. гравитации | 🟡 Осознанное отклонение | planet-types.ts:20 |
+| G-30 | Парник — плоское K, не масштабируется с расстоянием | ✅ ИСПРАВЛЕНО | generate-planets.ts: парник = % от T_eq |
+| G-31 | Имя планеты не содержит тип | ✅ ИСПРАВЛЕНО | generate-planets.ts: TYPE_NAMES в имени |
 
 ---
 
 ## 2. Архитектура генерации
 
-### 2.1 Цепочка вызовов (текущая)
+### 2.1 Оркестратор + 5 модулей (рефакторинг v3)
+
+Генератор был рефакторинг из одного файла `generator.ts` (~1200 строк) в оркестратор + 5 модулей + общий контекст.
 
 ```
-generateGalaxy(config)
+src/galaxy/
+  index.ts              — экспорт generateGalaxy + типы
+  generator.ts          — ОРКЕСТРАТОР (~118 строк)
+  gen-context.ts        — общий контекст (genId, usedNames, resetGenContext)
+  generate-positions.ts — генерация позиций (спираль, ядро, диск, ореол)
+  generate-systems.ts   — генерация звёздных систем (звёзды, компаньоны, имена)
+  generate-planets.ts   — генерация планет (тип, атмосфера, температура, жизнь)
+  generate-resources.ts — генерация ресурсов (deposits, ultra-rare)
+  generate-jump-points.ts — JP + связность
+  hex-grid.ts           — гексагональная сетка (без изменений)
+```
+
+### 2.2 Граф зависимостей (DAG, без циклов)
+
+```
+generator.ts (оркестратор)
+  ├── gen-context.ts
+  ├── generate-positions.ts
+  ├── generate-systems.ts
+  │     ├── gen-context.ts
+  │     └── generate-planets.ts
+  │           ├── gen-context.ts
+  │           ├── generate-resources.ts
+  │           └── hex-grid.ts
+  └── generate-jump-points.ts
+        └── gen-context.ts
+```
+
+### 2.3 Цепочка вызовов (текущая)
+
+```
+generateGalaxy(config)                              — generator.ts
 ├── mainRng = new Xoshiro256(seed)
 ├── armRng = mainRng.derive('arms')
 ├── bulgeRng = mainRng.derive('bulge')
-├── diskRng = mainRng.derive('disk')      ← G-05: ИСПОЛЬЗУЕТСЯ
+├── diskRng = mainRng.derive('disk')                ← G-05: ИСПОЛЬЗУЕТСЯ
 ├── haloRng = mainRng.derive('halo')
 ├── jpRng = mainRng.derive('jump_points')
 │
-├── generateSpiralPositions(cfg, armRng, bulgeRng, diskRng, haloRng)
-│   ├── Ядро: ~15% (bulgeFraction=0.15)     ← G-14 fix
-│   ├── Диск: ~20% (diskFraction=0.20)      ← G-05 fix
+├── generateSpiralPositions(cfg, armRng, bulgeRng, diskRng, haloRng)  — generate-positions.ts
+│   ├── Ядро: ~15% (bulgeFraction=0.15)             ← G-14 fix
+│   ├── Диск: ~20% (diskFraction=0.20)              ← G-05 fix
 │   ├── Рукава: ~60% (остаток)
-│   └── Ореол: ~5% (haloFraction)
+│   └── Ореол: ~5% (haloFraction из cfg)
 │
 ├── for i in positions:
 │   ├── systemRng = mainRng.derive(`system_${i}`)
-│   └── generateSystem(pos, i, systemRng, cfg)
+│   └── generateSystem(pos, i, systemRng, cfg)      — generate-systems.ts
 │       ├── selectBinaryType(rng) → BINARY_NONE/CLOSE/WIDE/TRIPLE
 │       ├── weightedChoice(STAR_TYPES, STAR_WEIGHTS) → тип главной звезды
-│       ├── createStar(starDef, rng.derive('star_primary'))
+│       ├── generateSystemName(rng, index)
+│       ├── createStar(systemId, name, starDef, rng.derive('star_primary'))
 │       │   └── mass/luminosity/temp/radius × (0.8 + rng×0.4)  ← ±20% вариация
 │       ├── [selectCompanionStar + createStar] × 1-2  ← G-12: только main sequence
 │       ├── totalPlanets = rng.nextInt(starDef.minPlanets, starDef.maxPlanets)
 │       ├── planetCount = floor(totalPlanets × stabilityMult)
+│       ├── asteroidFields с бонусами (G-17)         ← +1 за ГГ, +1 за двойную
 │       └── for j in planetCount:
 │           ├── planetRng = rng.derive(`planet_${j}`)
 │           └── generatePlanet(systemId, j+1, name, primaryStar, binaryType, planetRng)
-│               ├── hzCenter = sqrt(L/0.8)                     ← G-27: масштабирование орбит
-│               ├── orbitalRadius = hzCenter × ...              ← G-13: бинарные ограничения
+│               │                                   — generate-planets.ts
+│               ├── hzCenter = sqrt(L/0.8)           ← G-27: масштабирование орбит
+│               ├── orbitalRadius = hzCenter × ...    ← G-13: бинарные ограничения
 │               ├── selectPlanetType(orbitalRadius, primaryStar, rng)
-│               │   ├── HZ inner/outer + snow line              ← G-16: 4 зоны
+│               │   ├── HZ inner/outer + snow line    ← G-16: 4 зоны
 │               │   └── 10% аномальная планета
-│               ├── radiusKm = PLANET_TYPE_RADIUS[type]         ← G-04: из типа
-│               ├── size = getSizeFromRadius(radiusKm)          ← G-06: из R⊕
+│               ├── radiusKm = PLANET_TYPE_RADIUS[type]  ← G-04: из типа
+│               ├── size = getSizeFromRadius(radiusKm)   ← G-06: из R⊕
 │               ├── density = PLANET_DENSITY[type] + rng
 │               ├── gravity = (radiusKm/6371) × (density/5.51)
 │               ├── orbitalPeriod = 365.25 × sqrt(r³/M)
-│               ├── atmosphere = generateAtmosphere(...)        ← G-02: ДО температуры
+│               ├── atmosphere = generateAtmosphere(...)   ← G-02: ДО температуры
 │               ├── temperature = calculatePlanetTemperature(star, r, planetDef, atmosphere, rng)
-│               │   ├── T_eq = 278.5 × L^0.25 × r^(-0.5)      ← G-18: 278.5
-│               │   ├── greenhouseK по РЕАЛЬНОМУ atmosphere      ← G-02 fix
+│               │   ├── T_eq = 278.5 × L^0.25 × r^(-0.5) ← G-18: 278.5
+│               │   ├── greenhouseK = T_eq × (greenhousePercent/100) ← G-30: % от T_eq
 │               │   └── typeModifierK (volcanic/ice/gas_giant/desert)
 │               ├── life = generateLife(planetDef, atmosphere, temperature, rng)
-│               │   ├── LIFE_LEVEL_WEIGHTS per-type              ← G-09 fix
+│               │   ├── LIFE_LEVEL_WEIGHTS per-type     ← G-09 fix
 │               │   ├── температура < -20 или > +80 → только microbes ← G-10 fix
-│               │   ├── complex/simple → нужна standard/dense    ← G-11 fix
+│               │   ├── complex/simple → нужна standard/dense ← G-11 fix
 │               │   └── toxic → только microbes (экстремофилы)  ← G-11 fix
 │               ├── hexes = generateHexGrid(size, terrainWeights, rng.derive('hexes'))
-│               ├── assignResourceDeposits(hexes, rng.derive('deposits'), type)
+│               ├── assignResourceDeposits(hexes, rng.derive('deposits'), type) — generate-resources.ts
 │               ├── atmosphericSlots (только gas_giant, 6-12)
-│               ├── orbitSlots = ORBIT_SLOTS_BY_SIZE[size]      ← G-15 fix
-│               └── aggregateResourceDeposits(hexes, type, rng.derive('ultra'))
+│               ├── orbitSlots = ORBIT_SLOTS_BY_SIZE[size]  ← G-15 fix
+│               ├── aggregateResourceDeposits(hexes, type, rng.derive('ultra')) — generate-resources.ts
+│               └── name = `${systemName} ${toRoman(orbit)} — ${typeName}` ← G-31 fix
 │
-├── generateJumpPoints(systems, jpRng, cfg)
-└── ensureConnectivity(systems, jpRng, cfg)
+├── generateJumpPoints(systems, jpRng, cfg)         — generate-jump-points.ts
+└── ensureConnectivity(systems, jpRng, cfg)          — generate-jump-points.ts
 ```
 
-### 2.2 PRNG — Xoshiro256
+### 2.4 PRNG — Xoshiro256
 
-- `derive(name)`: FNV-1a хеш имени + SplitMix64 → воспроизводимый дочерний генератор
+- `derive(name)`: 4 независимых хеша имени (FNV-1a + Murmur2 + Murmur3 c1/c2) XOR с основным состоянием — воспроизводимый дочерний генератор (G-24 fix)
 - Каждый этап генерации использует свой `derive()`, что обеспечивает локальность изменений
 - `weightedChoice(items, weights)` — взвешенный выбор с нормализацией
 - `nextGaussian(mean, stddev)` — Box-Muller для нормального распределения
-- **Важно:** PRNG derive() был исправлен (G-24, см. чекпоинт 05_03_colony_start.md) — заменён слабый DJB2 на FNV-1a
+
+### 2.5 Общий контекст — gen-context.ts
+
+```typescript
+let nextId = 1;
+export const usedNames = new Set<string>();
+
+genId(prefix)       — генерация уникального ID с префиксом
+resetGenContext()    — сброс контекста для воспроизводимости
+```
+
+Сбрасывается при каждой новой генерации через `resetGenContext()` в оркестраторе.
 
 ---
 
@@ -144,7 +197,7 @@ generateGalaxy(config)
 | Gas Giant | 25 000 – 80 000 | 25 000 – 80 000 | ✅ |
 | Dwarf | 500 – 2 000 | 500 – 2 000 | ✅ |
 
-**🟡 G-25: Rocky max=10000 (спец: 7000), Oceanic max=11000 (спец: 8000).**  
+**🟡 G-25: Rocky max=10000 (спец: 7000), Oceanic max=11000 (спец: 8000).**
 Осознанное отклонение: позволяет генерировать планеты размера "large" (91 гекс). Без расширения Rocky/Oceanic не могли бы иметь "Большая" сетку, т.к. при max 7000/8000 км R⊕<1.3 → всегда "Средняя".
 
 ### 3.2 Размер сетки (G-06 fix)
@@ -177,7 +230,7 @@ R ≥ 2.0 → huge (127)
 | Gas Giant | 0.8 – 2.5 | **1.2 – 2.5** | 🟡 G-29: min поднят |
 | Dwarf | 2.0 – 5.0 | 2.0 – 5.0 | ✅ |
 
-**🟡 G-29: gas_giant density min=1.2 (спец: 0.8).**  
+**🟡 G-29: gas_giant density min=1.2 (спец: 0.8).**
 Осознанное отклонение: гарантирует минимальную гравитацию ГГ ~0.9g (вместо ~0.4g при density=0.8 и R=25000/6371≈3.9 → g=3.9×0.8/5.51≈0.57). Это геймплейное решение — газовые гиганты с <0.5g выглядят нереалистично.
 
 ### 3.4 Резюме: радиус/гравитация/размер
@@ -188,17 +241,19 @@ R ≥ 2.0 → huge (127)
 
 ## 4. Температура планеты
 
-### 4.1 Формула (G-02 + G-03 + G-18 fix)
+### 4.1 Формула (G-02 + G-03 + G-18 + G-30 fix)
 
 **Текущая реализация:**
 ```
 T_eq = 278.5 × L^(1/4) × r^(-1/2)  [K]
+greenhouseK = T_eq × (greenhousePercent / 100)  [K]    ← G-30: % от T_eq
 T_final = T_eq + greenhouseK + typeModifierK - 273.15  [°C]
 ```
 
 - ✅ G-03: Принимает реальный Star (с ±20% вариацией), не starDef
 - ✅ G-02: Парниковый эффект на основе РЕАЛЬНОГО типа атмосферы (не свой roll)
 - ✅ G-18: 278.5K (было 278)
+- ✅ G-30: Парник = ПРОЦЕНТ от T_eq (масштабируется с расстоянием)
 
 **Эквивалентность со спецификацией §2.3:**
 ```
@@ -408,6 +463,18 @@ T_final = T_eq + greenhouseK + typeModifierK - 273.15  [°C]
 
 Трёхтирная система (profile/rare/ultra_rare) работает корректно. Каждая планета имеет ВСЕ 22 элемента с разными количествами. Газовые гиганты получают элементы напрямую (без гексов).
 
+**Категории множителей (generate-resources.ts):**
+
+| Тип | structural | fuel | alloy | electronics | chemical | energy | rare | light |
+|-----|-----------|------|-------|-------------|----------|--------|------|-------|
+| rocky | 2.5 | 0.5 | 1.5 | 0.8 | 0.6 | 0.5 | 0.3 | 0.5 |
+| volcanic | 1.8 | 0.3 | 2.5 | 0.6 | 1.2 | 2.0 | 0.8 | 0.2 |
+| ice | 0.4 | 2.0 | 0.3 | 0.2 | 1.8 | 0.2 | 0.15 | 1.0 |
+| oceanic | 0.7 | 1.0 | 0.5 | 0.5 | 1.8 | 0.3 | 0.2 | 0.6 |
+| desert | 1.2 | 0.2 | 1.0 | 0.6 | 0.3 | 0.6 | 0.5 | 0.3 |
+| gas_giant | 0.1 | 3.0 | 0.1 | 0.1 | 2.5 | 0.1 | 0.1 | 1.5 |
+| dwarf | 0.6 | 0.3 | 0.4 | 0.2 | 0.3 | 0.2 | 0.15 | 0.3 |
+
 ---
 
 ## 9. Орбитальные и атмосферные слоты
@@ -441,8 +508,8 @@ Gas giant: 6–12 ✅. Остальные: 0 ✅.
 
 ### 10.2 Вариация параметров
 
-**Код:** Простая ±20% вариация: `mass × (0.8 + rng × 0.4)`  
-**Спец (§1.3):** Подкласс (0-9) с интерполяцией.  
+**Код:** Простая ±20% вариация: `mass × (0.8 + rng × 0.4)`
+**Спец (§1.3):** Подкласс (0-9) с интерполяцией.
 🟡 Упрощение для MVP, не влияет на геймплей.
 
 ### 10.3 Двойные/тройные системы
@@ -451,7 +518,7 @@ NONE=60%, CLOSE=20%, WIDE=15%, TRIPLE=5% ✅
 
 ### 10.4 Спутник звезды (G-12 fix)
 
-**Код:** `selectCompanionStar` выбирает только из главной последовательности (7 типов, индексы 0-6). ✅  
+**Код:** `selectCompanionStar` выбирает только из главной последовательности (7 типов, индексы 0-6). ✅
 Если главная звезда — специальный тип, компаньон выбирается случайно из main sequence.
 
 ### 10.5 Stability multiplier
@@ -482,6 +549,14 @@ orbitalRadius = orbitalScale × (0.3 + orbit × (0.5 + rng × 0.3))
 - ✅ +1 если двойная/тройная система (15% bonus)
 - 🟡 Упрощение: бонус = +1 (а не процентная вероятность +10%/+15%)
 
+### 10.8 Имена систем (L-02)
+
+**Формат:** `Greek Constellation[-N]`
+- Greek: Alpha, Beta, Gamma, ... Omega (24 слова)
+- Constellation: Centauri, Cygni, Draconis, ... Virginis (15 слов)
+- Суффикс `-N` добавляется при коллизии (до 100 попыток)
+- Уникальность гарантируется через `usedNames` в gen-context.ts
+
 ---
 
 ## 11. Спиральная структура галактики
@@ -497,14 +572,14 @@ orbitalRadius = orbitalScale × (0.3 + orbit × (0.5 + rng × 0.3))
 
 ### 11.2 Алгоритм
 
-**Спец (§1.1):** r(θ) = a × e^(b×θ) — логарифмическая спираль (угол → радиус)  
+**Спец (§1.1):** r(θ) = a × e^(b×θ) — логарифмическая спираль (угол → радиус)
 **Код:** dist → spiralAngle + гауссово смещение (радиус → угол)
 
 🟡 Обратный порядок параметризации, но визуальный результат аналогичен. Не влияет на геймплей.
 
 ### 11.3 diskFraction в конфиге
 
-**Внимание:** `GalaxyGenConfig.diskFraction = 0.2` существует, но в `generateSpiralPositions` используется **захардкоженное** `diskFraction = 0.20`. Конфиг-параметр `cfg.diskFraction` игнорируется для распределения, но может влиять на другие расчёты.
+**Внимание:** `GalaxyGenConfig.diskFraction = 0.2` существует, но в `generateSpiralPositions` используется **захардкоженное** `diskFraction = 0.20`. Конфиг-параметр `cfg.diskFraction` не передаётся в `PositionsConfig` и игнорируется для распределения.
 
 🟡 Потенциальная путаница: diskFraction определён в конфиге, но не используется в generateSpiralPositions.
 
@@ -534,8 +609,10 @@ BFS + мосты ✅. Алгоритм корректен.
 |----|-----------|---------|------|
 | G-25 | Rocky max radius: 10000 (спец: 7000) | Позволяет размер "large" (91 гекс). Без этого Rocky ≤ medium (61 гекс) | planet-types.ts:30 |
 | G-25 | Oceanic max radius: 11000 (спец: 8000) | Позволяет размер "large" (91 гекс). Без этого Oceanic ≤ medium (61 гекс) | planet-types.ts:33 |
-| G-27 | Орбитальный радиус масштабируется от hzCenter | Без этого планеты M/K карликов все попадают в outer zone (далеко от HZ) | generator.ts:356 |
+| G-27 | Орбитальный радиус масштабируется от hzCenter | Без этого планеты M/K карликов все попадают в outer zone (далеко от HZ) | generate-planets.ts:365 |
 | G-29 | Gas giant density min: 1.2 (спец: 0.8) | Гарантирует мин. гравитацию ГГ ~0.9g (вместо ~0.4g) | planet-types.ts:20 |
+| G-19 | Вариация звёзд ±20% вместо subclass-based интерполяции | Упрощение для MVP | generate-systems.ts:68-71 |
+| G-30 | Парник = % от T_eq (было плоское K) | Физически корректно: парник пропорционален приходящему излучению | generate-planets.ts:148-159 |
 
 ---
 
@@ -586,20 +663,20 @@ BFS + мосты ✅. Алгоритм корректен.
 
 ## 15. Сводная таблица текущих расхождений
 
-### 🟢 Исправлено (было 🔴/🟡 в v1)
+### 🟢 Исправлено (было 🔴/🟡 в v1/v2)
 
-Все G-01..G-18 исправлены. См. §1.
+Все G-01..G-18, G-24, G-30, G-31 исправлены. См. §1.
 
 ### 🟡 Осознанные отклонения (не баги, а дизайнерские решения)
 
 | # | ID | Описание | Файл |
 |---|-----|----------|------|
 | 1 | G-25 | Rocky/Oceanic max radius расширен для "large" сетки | planet-types.ts:30,33 |
-| 2 | G-27 | Орбитальный радиус масштабируется от hzCenter | generator.ts:356 |
+| 2 | G-27 | Орбитальный радиус масштабируется от hzCenter | generate-planets.ts:365 |
 | 3 | G-29 | Gas giant density min=1.2 для мин. гравитации ~0.9g | planet-types.ts:20 |
-| 4 | G-19 | Вариация звёзд ±20% вместо subclass-based интерполяции | generator.ts:323-327 |
-| 5 | G-20 | Позиции систем: радиус→угол вместо угол→радиус | generator.ts:179-193 |
-| 6 | G-30 | Парник = % от T_eq (было плоское K, немонотонная температура) | generator.ts:525-552 |
+| 4 | G-19 | Вариация звёзд ±20% вместо subclass-based интерполяции | generate-systems.ts:68-71 |
+| 5 | G-20 | Позиции систем: радиус→угол вместо угол→радиус | generate-positions.ts:70-85 |
+| 6 | G-30 | Парник = % от T_eq (было плоское K, немонотонная температура) | generate-planets.ts:148-159 |
 
 ### 🔴 Внутренние противоречия спецификации
 
@@ -619,12 +696,12 @@ BFS + мосты ✅. Алгоритм корректен.
 
 | # | Описание | Файл |
 |---|----------|------|
-| 13 | diskFraction в конфиге существует, но не используется в generateSpiralPositions (захардкожено 0.20) | generator.ts:52,148 |
+| 13 | diskFraction в конфиге существует, но не передаётся в PositionsConfig (захардкожено 0.20) | generator.ts:63; generate-positions.ts:40 |
 | 14 | lifeChance в PLANET_TYPES не используется generateLife() (используется LIFE_LEVEL_WEIGHTS) | planet-types.ts:101 etc. |
 | 15 | size/hexCount в PLANET_TYPES де-факто не используются (размер из getSizeFromRadius, hexCount из SIZE_HEX_COUNT) | planet-types.ts |
-| 16 | Орбитальный радиус для двойных: фиксированные ограничения вместо формул из спец §3.4 | generator.ts:361-368 |
-| 17 | Астероидные поля: бонус +1 вместо процентной вероятности +10%/+15% | generator.ts:264-271 |
-| 18 | Composition атмосферы всегда `[]` | generator.ts:575,587 |
+| 16 | Орбитальный радиус для двойных: фиксированные ограничения вместо формул из спец §3.4 | generate-planets.ts:369-373 |
+| 17 | Астероидные поля: бонус +1 вместо процентной вероятности +10%/+15% | generate-systems.ts:132-138 |
+| 18 | Composition атмосферы всегда `[]` | generate-planets.ts:182,192 |
 
 ### ⬜ Нереализованные функции (из спецификации, но не в коде)
 
@@ -632,39 +709,106 @@ BFS + мосты ✅. Алгоритм корректен.
 
 ---
 
-## Приложение A: Карта файла generator.ts (текущая)
+## Приложение A: Карта файлов (текущая архитектура)
+
+### generator.ts — ОРКЕСТРАТОР (~118 строк)
 
 ```
 Строки    Функция / блок
 ────────  ────────────────────────────────
-1-21      Комментарий с аудитом (G-01..G-18)
-23-28     Импорты
-30-33     genId
-36-59     GalaxyGenConfig
-61-74     DEFAULT_CONFIG
-76-78     MAIN_SEQUENCE_STAR_TYPES (G-12)
-80-126    generateGalaxy()
-128-206   generateSpiralPositions() — G-05/G-14: bulge 15%, disk 20%, arms 60%
-208-285   generateSystem() — G-03, G-17
-287-294   selectBinaryType()
-296-314   selectCompanionStar() — G-12: main sequence only
-316-329   createStar()
-331-474   generatePlanet() — G-02,G-03,G-04,G-06,G-13,G-15,G-27
-476-567   calculatePlanetTemperature() — G-02,G-03,G-18
-569-588   generateAtmosphere() — G-02: ДО температуры
-590-603   selectGasGiantAtmosphereType() — G-08
-605-673   selectAtmosphereType() — G-07: точные условные вероятности
-675-686   getAtmospherePressure()
-688-769   generateLife() — G-01,G-09,G-10,G-11
-771-867   selectPlanetType() — G-16: 4 зоны + snow line
-869-...   assignResourceDeposits()
-...       aggregateResourceDeposits()
-...       generateJumpPoints()
-...       ensureConnectivity()
-...       generateSystemName(), toRoman()
+1-17      Комментарий: описание оркестратора + 5 модулей
+19-24     Импорты
+26-67     GalaxyGenConfig + DEFAULT_CONFIG
+69-118    generateGalaxy() — оркестратор
 ```
 
-## Приложение B: Карта файла planet-types.ts (текущая)
+### gen-context.ts (~21 строка)
+
+```
+Строки    Функция / блок
+────────  ────────────────────────────────
+7-10      nextId, usedNames
+12-15     genId(prefix)
+17-21     resetGenContext()
+```
+
+### generate-positions.ts (~98 строк)
+
+```
+Строки    Функция / блок
+────────  ────────────────────────────────
+1-9       Комментарий (G-05/G-14)
+11-22     PositionsConfig interface
+24-98     generateSpiralPositions()
+            ├── bulge ~15%
+            ├── disk ~20%
+            ├── arms ~60%
+            └── halo ~5%
+```
+
+### generate-systems.ts (~152 строки)
+
+```
+Строки    Функция / блок
+────────  ────────────────────────────────
+1-4       Комментарий
+6-10      Импорты
+12-14     MAIN_SEQUENCE_STAR_TYPES (G-12)
+16-18     GREEK, CONSTELLATIONS пулы имён
+20-33     generateSystemName() (L-02)
+35-42     selectBinaryType()
+44-59     selectCompanionStar() — G-12: main sequence only
+61-74     createStar()
+76-152    generateSystem()
+            ├── звёзды (одиночная/двойная/тройная)
+            ├── планеты (через generatePlanet)
+            └── asteroidFields (G-17)
+```
+
+### generate-planets.ts (~472 строки)
+
+```
+Строки    Функция / блок
+────────  ────────────────────────────────
+1-14      Комментарий (физика: формулы)
+16-21     Импорты
+23-38     toRoman()
+40-118    selectPlanetType() — G-16: 4 зоны + snow line
+120-173   calculatePlanetTemperature() — G-02,G-03,G-18,G-30
+175-271   Атмосфера:
+            ├── generateAtmosphere()
+            ├── selectGasGiantAtmosphereType() — G-08
+            ├── selectAtmosphereType() — G-07: точные условные вероятности
+            └── getAtmospherePressure()
+273-342   generateLife() — G-01,G-09,G-10,G-11
+344-472   generatePlanet() — G-02,G-03,G-04,G-06,G-13,G-15,G-27,G-31
+```
+
+### generate-resources.ts (~205 строк)
+
+```
+Строки    Функция / блок
+────────  ────────────────────────────────
+1-8       Комментарий (трёхтирная система)
+10-13     Импорты
+15-24     CATEGORY_MULTIPLIERS (7 типов × 8 категорий)
+26-104    assignResourceDeposits() — залежи на гексах
+106-205   aggregateResourceDeposits() — агрегация + ультраредкие
+```
+
+### generate-jump-points.ts (~129 строк)
+
+```
+Строки    Функция / блок
+────────  ────────────────────────────────
+1-4       Комментарий (P1-23)
+6-8       Импорты
+10-13     JumpPointsConfig interface
+14-66     generateJumpPoints()
+67-129    ensureConnectivity() — BFS + мосты
+```
+
+### planet-types.ts (~264 строки) — данные
 
 ```
 Строки    Данные
@@ -684,3 +828,14 @@ BFS + мосты ✅. Алгоритм корректен.
 236-249   ORBIT_SLOTS — используется только для gas_giant
 251-264   LIFE_LEVEL_WEIGHTS — G-09: per-type из спецификации
 ```
+
+---
+
+## Приложение B: Схема генерации (согласовано с пользователем)
+
+1. Задаётся количество звёзд (systemCount)
+2. Генерируются «гнёзда» — позиции согласно схеме галактики (ядро/рукава/диск/ореол)
+3. Генерируется набор звёзд по правилам распределения → размещаются в гнёзда
+4. Для каждой звезды по классу генерируются планеты
+5. Генерация ультра-редких ресурсов + распределение по планетам
+6. Финализация (JP, связность, стартовая система)
