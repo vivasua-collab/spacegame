@@ -1,10 +1,23 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { useGameStore } from '@/stores/game-store';
 import { GameLayout } from '@/components/game/game-layout';
 import { Button } from '@/components/ui/button';
 import { Rocket } from 'lucide-react';
+
+/**
+ * Deterministic pseudo-random number generator (simple LCG).
+ * Used to generate star background positions that match between server and client,
+ * avoiding React hydration mismatches caused by Math.random().
+ */
+function seededRng(seed: number) {
+  let s = seed;
+  return () => {
+    s = (s * 1664525 + 1013904223) & 0x7fffffff;
+    return s / 0x7fffffff;
+  };
+}
 
 export default function Home() {
   const gameState = useGameStore((s) => s.gameState);
@@ -13,6 +26,20 @@ export default function Home() {
   const tick = useGameStore((s) => s.tick);
 
   const [seed, setSeed] = useState('42');
+
+  // Deterministic star positions — same on server and client
+  const stars = useMemo(() => {
+    const rng = seededRng(42);
+    return Array.from({ length: 120 }, (_, i) => ({
+      w: rng() < 0.05 ? 2 : 1,
+      h: rng() < 0.05 ? 2 : 1,
+      left: `${rng() * 100}%`,
+      top: `${rng() * 100}%`,
+      opacity: 0.1 + rng() * 0.4,
+      delay: `${rng() * 3}s`,
+      key: i,
+    }));
+  }, []);
 
   // Game tick loop
   useEffect(() => {
@@ -29,19 +56,20 @@ export default function Home() {
   if (!isInitialized) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-[#060614] text-white p-4">
-        {/* Background stars effect */}
+        {/* Background stars effect — deterministic, no Math.random() */}
         <div className="absolute inset-0 overflow-hidden pointer-events-none">
-          {Array.from({ length: 120 }).map((_, i) => (
+          {stars.map((s) => (
             <div
-              key={i}
-              className="absolute rounded-full bg-white"
+              key={s.key}
+              className="absolute rounded-full bg-white animate-pulse"
               style={{
-                width: Math.random() < 0.05 ? 2 : 1,
-                height: Math.random() < 0.05 ? 2 : 1,
-                left: `${Math.random() * 100}%`,
-                top: `${Math.random() * 100}%`,
-                opacity: 0.1 + Math.random() * 0.4,
-                animationDelay: `${Math.random() * 3}s`,
+                width: s.w,
+                height: s.h,
+                left: s.left,
+                top: s.top,
+                opacity: s.opacity,
+                animationDelay: s.delay,
+                animationDuration: '3s',
               }}
             />
           ))}
