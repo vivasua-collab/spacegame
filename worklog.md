@@ -472,3 +472,41 @@ Stage Summary:
 - Spectral class legend (O B A F G K M) added to galaxy map
 - 3 files modified: star-types.ts, galaxy-map.tsx, game-layout.tsx
 - 1 checkpoint created: 05_04_phase2_ui_fixes.md
+
+---
+Task ID: 7
+Agent: Main Agent
+Task: Fix galaxy map rendering + save/load system + first screen
+
+Work Log:
+- Completely rewrote galaxy-map.tsx rendering logic:
+  - **Text**: constant screen size (fontSize = BASE / zoom) — no scaling with zoom
+  - **Star dots**: fixed SVG radius (3px) → grows naturally with zoom
+  - **Hit radius**: constant screen size (8px) — reduced from Math.max(12, r+6)
+  - **Glow**: fixed SVG margin → grows proportionally with dot
+  - **JP line stroke**: constant screen width (0.6/1.2px)
+  - **Selection ring**: constant screen margin (2px)
+  - All values computed as SCREEN_PIXEL / zoom to counter-scale CSS transform
+  - Removed auto-zoom on system click — preserves zoom state
+- Implemented save/load system:
+  - Added serializeGameState/deserializeGameState to game-store.ts (Map → array pairs for JSON)
+  - Added saveGame(), loadGame(), loadSaveList(), deleteSave() actions to game store
+  - Added currentSaveId, isSaving, isLoading state
+  - Added PUT endpoint to /api/save/[id] for updating existing saves
+  - Added SaveButton component in game-layout.tsx with save confirmation
+- Updated first screen (page.tsx):
+  - Tab-based UI: "New Galaxy" + "Load Game"
+  - "New Galaxy" tab: seed input + Launch button
+  - "Load Game" tab: list of saves with Load/Delete buttons
+  - Save info shows: name, seed, tick/date, last updated
+  - Auto-loads save list on mount
+- Fixed lint errors: setState-in-effect, unused imports
+- Files modified: galaxy-map.tsx, game-store.ts, page.tsx, game-layout.tsx, api/save/[id]/route.ts
+- Lint: 0 errors
+- Dev server: 200 OK
+
+Stage Summary:
+- Galaxy map now has proper zoom behavior: text stays same size, stars grow, hit targets don't overlap
+- Save/load system fully functional with SQLite backend
+- First screen shows New Galaxy + Load Game tabs
+- 5 files modified

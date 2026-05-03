@@ -18,8 +18,24 @@ function seededRng(seed: number) {
 /** Zoom configuration */
 const ZOOM_MIN = 0.15;
 const ZOOM_MAX = 80;
-const ZOOM_WHEEL_STEP = 1.15; // multiplier per scroll tick (15% zoom per tick)
-const ZOOM_BUTTON_STEP = 1.4; // multiplier per button click
+const ZOOM_WHEEL_STEP = 1.15;
+const ZOOM_BUTTON_STEP = 1.4;
+
+/**
+ * Rendering constants — all in SCREEN pixels (what the user sees).
+ * These get divided by `zoom` to produce SVG coordinates,
+ * so that CSS transform scale(zoom) renders them at the desired screen size.
+ */
+const DOT_R_SVG = 3;          // Star dot radius in SVG coords → grows with zoom
+const DOT_MIN_SCREEN = 3;     // Minimum dot size on screen (px)
+const FONT_SCREEN = 10;       // Label font size on screen (px)
+const FONT_SMALL_SCREEN = 8;  // Planet count font on screen (px)
+const TEXT_OFFSET_SCREEN = 10; // Label offset below dot on screen (px)
+const HIT_SCREEN = 8;         // Click target radius on screen (px)
+const SELECT_MARGIN = 2;      // Selection ring margin on screen (px)
+const GLOW_MARGIN = 5;        // Glow margin in SVG coords → grows with zoom
+const STROKE_UNSTAB = 0.6;    // Unstabilized JP line width on screen (px)
+const STROKE_STAB = 1.2;      // Stabilized JP line width on screen (px)
 
 export function GalaxyMap() {
   const gameState = useGameStore((s) => s.gameState);
@@ -28,7 +44,7 @@ export function GalaxyMap() {
 
   const [hoveredSystemId, setHoveredSystemId] = useState<string | null>(null);
 
-  // Zoom & pan state — using CSS transform for simplicity and smoothness
+  // Zoom & pan state
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
@@ -38,13 +54,12 @@ export function GalaxyMap() {
   const zoomRef = useRef(zoom);
   const panRef = useRef(pan);
 
-  // Keep refs in sync
   useEffect(() => { zoomRef.current = zoom; }, [zoom]);
   useEffect(() => { panRef.current = pan; }, [pan]);
 
   const systems = gameState?.galaxy.systems ?? [];
 
-  // Compute base viewport bounds (fit all systems in viewBox)
+  // Base viewport calculation (fit all systems)
   const base = useMemo(() => {
     if (systems.length === 0) return { offsetX: 0, offsetY: 0, scale: 1, svgW: 900, svgH: 600 };
 
@@ -78,7 +93,7 @@ export function GalaxyMap() {
     };
   }, [systems]);
 
-  // Track container size for cursor-centered zoom
+  // Track container size
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -90,13 +105,12 @@ export function GalaxyMap() {
     return () => obs.disconnect();
   }, []);
 
-  // Convert system world position → SVG coordinates (base, no zoom)
+  // System positions in SVG coords
   const toSvg = useCallback((x: number, y: number) => ({
     sx: x * base.scale + base.offsetX,
     sy: y * base.scale + base.offsetY,
   }), [base]);
 
-  // All system SVG positions (base, no zoom/pan)
   const systemPositions = useMemo(() => {
     const map = new Map<string, { sx: number; sy: number }>();
     for (const sys of systems) {
@@ -105,7 +119,7 @@ export function GalaxyMap() {
     return map;
   }, [systems, toSvg]);
 
-  // Build jump point lines (base coordinates, no zoom)
+  // Jump point lines
   const jumpLines = useMemo(() => {
     const seen = new Set<string>();
     const lines: { x1: number; y1: number; x2: number; y2: number; stabilized: boolean }[] = [];
@@ -120,19 +134,13 @@ export function GalaxyMap() {
         const to = systemPositions.get(jp.toSystemId);
         if (!from || !to) continue;
 
-        lines.push({
-          x1: from.sx,
-          y1: from.sy,
-          x2: to.sx,
-          y2: to.sy,
-          stabilized: jp.stabilized,
-        });
+        lines.push({ x1: from.sx, y1: from.sy, x2: to.sx, y2: to.sy, stabilized: jp.stabilized });
       }
     }
     return lines;
   }, [systems, systemPositions]);
 
-  // Deterministic background stars — no Math.random()
+  // Background stars
   const bgStars = useMemo(() => {
     const rng = seededRng(137);
     return Array.from({ length: 80 }, (_, i) => ({
@@ -145,47 +153,29 @@ export function GalaxyMap() {
     }));
   }, []);
 
-  /**
-   * Zoom centered on cursor position.
-   * The key idea: the SVG point under the cursor should stay under the cursor after zoom.
-   *
-   * CSS transform: translate(panX, panY) scale(zoom)
-   * SVG point under cursor = (mouseX - panX) / zoom  (in SVG coords)
-   * After zoom change to newZoom, we need: mouseX - newPanX = svgPoint * newZoom
-   * So: newPanX = mouseX - svgPoint * newZoom = mouseX - (mouseX - panX) / zoom * newZoom
-   */
+  // ─── Zoom / Pan handlers ────────────────────────────────
+
   const handleWheel = useCallback((e: WheelEvent) => {
     e.preventDefault();
-
     const direction = e.deltaY < 0 ? 1 : -1;
     const factor = Math.pow(ZOOM_WHEEL_STEP, direction);
     const currentZoom = zoomRef.current;
     const newZoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, currentZoom * factor));
-
     if (newZoom === currentZoom) return;
 
-    // Get mouse position relative to the container
     const rect = containerRef.current?.getBoundingClientRect();
     if (!rect) return;
 
     const mouseX = e.clientX - rect.left;
     const mouseY = e.clientY - rect.top;
-
-    // SVG point under cursor before zoom
     const svgX = (mouseX - panRef.current.x) / currentZoom;
     const svgY = (mouseY - panRef.current.y) / currentZoom;
 
-    // New pan so that same SVG point stays under cursor
-    const newPanX = mouseX - svgX * newZoom;
-    const newPanY = mouseY - svgY * newZoom;
-
     setZoom(newZoom);
-    setPan({ x: newPanX, y: newPanY });
+    setPan({ x: mouseX - svgX * newZoom, y: mouseY - svgY * newZoom });
   }, []);
 
-  // Pan: mouse down → start drag
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    // Left button on empty area or middle button
     const tag = (e.target as Element).tagName;
     if (e.button === 1 || (e.button === 0 && (e.target === e.currentTarget || tag === 'svg' || tag === 'g' || tag === 'line'))) {
       setIsDragging(true);
@@ -194,76 +184,40 @@ export function GalaxyMap() {
     }
   }, [pan]);
 
-  // Pan: mouse move
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
     if (!isDragging) return;
-    const dx = e.clientX - dragStart.current.x;
-    const dy = e.clientY - dragStart.current.y;
     setPan({
-      x: dragStart.current.panX + dx,
-      y: dragStart.current.panY + dy,
+      x: dragStart.current.panX + (e.clientX - dragStart.current.x),
+      y: dragStart.current.panY + (e.clientY - dragStart.current.y),
     });
   }, [isDragging]);
 
-  // Pan: mouse up → stop drag
-  const handleMouseUp = useCallback(() => {
-    setIsDragging(false);
-  }, []);
+  const handleMouseUp = useCallback(() => setIsDragging(false), []);
 
-  // Reset zoom & pan to fit all
   const resetView = useCallback(() => {
     setZoom(1);
     setPan({ x: 0, y: 0 });
   }, []);
 
-  // Zoom buttons
-  const zoomIn = useCallback(() => {
+  const zoomCenter = useCallback((factor: number) => {
     const currentZoom = zoomRef.current;
-    const newZoom = Math.min(ZOOM_MAX, currentZoom * ZOOM_BUTTON_STEP);
-    // Zoom toward center of container
+    const newZoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, currentZoom * factor));
     const centerX = containerSize.w / 2;
     const centerY = containerSize.h / 2;
     const svgX = (centerX - panRef.current.x) / currentZoom;
     const svgY = (centerY - panRef.current.y) / currentZoom;
-    setPan({
-      x: centerX - svgX * newZoom,
-      y: centerY - svgY * newZoom,
-    });
-    setZoom(newZoom);
-  }, [containerSize]);
-
-  const zoomOut = useCallback(() => {
-    const currentZoom = zoomRef.current;
-    const newZoom = Math.max(ZOOM_MIN, currentZoom / ZOOM_BUTTON_STEP);
-    const centerX = containerSize.w / 2;
-    const centerY = containerSize.h / 2;
-    const svgX = (centerX - panRef.current.x) / currentZoom;
-    const svgY = (centerY - panRef.current.y) / currentZoom;
-    setPan({
-      x: centerX - svgX * newZoom,
-      y: centerY - svgY * newZoom,
-    });
+    setPan({ x: centerX - svgX * newZoom, y: centerY - svgY * newZoom });
     setZoom(newZoom);
   }, [containerSize]);
 
   const handleSystemClick = useCallback(
     (system: StarSystem) => {
       selectSystem(system.id);
-      // Zoom to the clicked system
-      const pos = systemPositions.get(system.id);
-      if (pos) {
-        const targetZoom = 4;
-        setZoom(targetZoom);
-        setPan({
-          x: containerSize.w / 2 - pos.sx * targetZoom,
-          y: containerSize.h / 2 - pos.sy * targetZoom,
-        });
-      }
+      // No auto-zoom — preserve current zoom/pan state
     },
-    [selectSystem, systemPositions, containerSize],
+    [selectSystem],
   );
 
-  // Prevent default wheel on the container (for zoom)
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -271,7 +225,7 @@ export function GalaxyMap() {
     return () => el.removeEventListener('wheel', handleWheel);
   }, [handleWheel]);
 
-
+  // ─── Rendering calculations ──────────────────────────────
 
   if (systems.length === 0) {
     return (
@@ -281,15 +235,40 @@ export function GalaxyMap() {
     );
   }
 
-  // Label visibility: at very low zoom, hide all; at medium zoom, show on hover/select; at high zoom, show all
-  const showAllLabels = zoom > 1.5;
-  const showPlanetCount = zoom > 0.8;
+  // Label visibility — depends on zoom level
+  // At low zoom too many labels overlap, so hide most
+  const showAllLabels = zoom > 2;
+  const showDiscoveredLabels = zoom > 0.8;
+  const showPlanetCount = zoom > 1.5;
 
-  // Counter-scale for text and dots so they remain readable at any zoom level
-  const textScale = 1 / zoom;
-  const dotBaseRadius = 4;
-  const dotRadius = Math.max(2, Math.min(8, dotBaseRadius * Math.pow(zoom, -0.3)));
-  const fontSize = Math.max(7, Math.min(11, 9 * Math.pow(zoom, -0.15)));
+  // ─── Convert screen-pixel constants to SVG coords ────────
+  // CSS transform scale(zoom) multiplies SVG coords by zoom to get screen pixels.
+  // To get X screen pixels: SVG_value = X / zoom
+  // Exception: dot radius is fixed in SVG → naturally grows with zoom
+
+  const invZ = 1 / zoom; // precompute
+
+  // Dot: fixed SVG radius, grows with zoom; ensure minimum screen size
+  const dotR = Math.max(DOT_R_SVG, DOT_MIN_SCREEN * invZ);
+
+  // Glow margin: fixed in SVG, grows with zoom; ensure minimum
+  const glowR = dotR + Math.max(GLOW_MARGIN, 4 * invZ);
+
+  // Text: counter-scaled → constant screen size
+  const fontSize = FONT_SCREEN * invZ;
+  const fontSmall = FONT_SMALL_SCREEN * invZ;
+  const textOffset = TEXT_OFFSET_SCREEN * invZ;
+
+  // Hit area: counter-scaled → constant screen size
+  const hitR = Math.max(dotR + 2 * invZ, HIT_SCREEN * invZ);
+
+  // Selection ring: dotR + constant screen margin
+  const selectR = dotR + SELECT_MARGIN * invZ;
+  const selectStroke = 1 * invZ;
+
+  // JP line stroke widths: counter-scaled → constant screen width
+  const jpStrokeUnstab = STROKE_UNSTAB * invZ;
+  const jpStrokeStab = STROKE_STAB * invZ;
 
   return (
     <div
@@ -301,19 +280,13 @@ export function GalaxyMap() {
       onMouseLeave={handleMouseUp}
       style={{ cursor: isDragging ? 'grabbing' : 'grab' }}
     >
-      {/* Background stars — deterministic, no hydration mismatch */}
+      {/* Background stars */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         {bgStars.map((s) => (
           <div
             key={s.key}
             className="absolute rounded-full bg-white"
-            style={{
-              width: s.w,
-              height: s.h,
-              left: s.left,
-              top: s.top,
-              opacity: s.opacity,
-            }}
+            style={{ width: s.w, height: s.h, left: s.left, top: s.top, opacity: s.opacity }}
           />
         ))}
       </div>
@@ -331,17 +304,14 @@ export function GalaxyMap() {
         }}
         xmlns="http://www.w3.org/2000/svg"
       >
-        {/* Jump point lines */}
+        {/* Jump point lines — constant screen width */}
         {jumpLines.map((line, i) => (
           <line
             key={i}
-            x1={line.x1}
-            y1={line.y1}
-            x2={line.x2}
-            y2={line.y2}
+            x1={line.x1} y1={line.y1} x2={line.x2} y2={line.y2}
             stroke={line.stabilized ? 'rgba(100,180,255,0.3)' : 'rgba(255,255,255,0.1)'}
-            strokeWidth={line.stabilized ? 1.5 : 0.8}
-            strokeDasharray={line.stabilized ? undefined : '4,4'}
+            strokeWidth={line.stabilized ? jpStrokeStab : jpStrokeUnstab}
+            strokeDasharray={line.stabilized ? undefined : `${3 * invZ},${3 * invZ}`}
           />
         ))}
 
@@ -353,10 +323,15 @@ export function GalaxyMap() {
           const cy = pos.sy;
           const isSelected = sys.id === selectedSystemId;
           const isHovered = sys.id === hoveredSystemId;
-          const r = isSelected ? dotRadius + 2 : isHovered ? dotRadius + 1 : dotRadius;
           const starColor = sys.stars[0]?.color ?? '#666';
           const isBlackHole = sys.stars[0]?.type === 'STAR_BH';
           const isPulsar = sys.stars[0]?.type === 'STAR_PULSAR';
+
+          const isHighlighted = isSelected || isHovered;
+          const r = isHighlighted ? dotR + 1 * invZ : dotR;
+
+          // Should we show the label?
+          const showLabel = showAllLabels || (showDiscoveredLabels && sys.discovered) || isHighlighted;
 
           return (
             <g
@@ -366,81 +341,63 @@ export function GalaxyMap() {
               onMouseLeave={() => setHoveredSystemId(null)}
               className="cursor-pointer"
             >
-              {/* Glow — for black holes use a brighter purple accretion disk glow */}
+              {/* Glow halo — grows with zoom */}
               {isBlackHole ? (
                 <>
-                  <circle cx={cx} cy={cy} r={r + 12} fill="#5533aa" opacity={isSelected ? 0.4 : isHovered ? 0.3 : 0.15} />
-                  <circle cx={cx} cy={cy} r={r + 6} fill="#7744cc" opacity={isSelected ? 0.3 : isHovered ? 0.2 : 0.1} />
+                  <circle cx={cx} cy={cy} r={r + glowR * 0.6} fill="#5533aa" opacity={isHighlighted ? 0.4 : 0.15} />
+                  <circle cx={cx} cy={cy} r={r + glowR * 0.3} fill="#7744cc" opacity={isHighlighted ? 0.3 : 0.1} />
                 </>
               ) : (
-                <circle
-                  cx={cx}
-                  cy={cy}
-                  r={r + 8}
-                  fill={starColor}
-                  opacity={isSelected ? 0.3 : isHovered ? 0.2 : 0.08}
-                />
+                <circle cx={cx} cy={cy} r={glowR} fill={starColor} opacity={isHighlighted ? 0.25 : 0.06} />
               )}
 
-              {/* Pulsar: rotating beam effect */}
+              {/* Pulsar beam */}
               {isPulsar && (
                 <ellipse
-                  cx={cx}
-                  cy={cy}
-                  rx={r + 10}
-                  ry={r * 0.3}
-                  fill="none"
-                  stroke={starColor}
-                  strokeWidth={1.2}
-                  opacity={isSelected ? 0.6 : isHovered ? 0.4 : 0.2}
+                  cx={cx} cy={cy}
+                  rx={r + glowR * 0.5} ry={r * 0.3}
+                  fill="none" stroke={starColor}
+                  strokeWidth={1 * invZ}
+                  opacity={isHighlighted ? 0.5 : 0.2}
                 />
               )}
 
-              {/* Star dot */}
+              {/* Star dot — grows with zoom */}
               <circle
-                cx={cx}
-                cy={cy}
-                r={r}
+                cx={cx} cy={cy} r={r}
                 fill={starColor}
                 stroke={isSelected ? '#fff' : isBlackHole ? '#7744cc' : 'transparent'}
-                strokeWidth={isSelected ? 1.5 : isBlackHole ? 1 : 0}
-                className="transition-all duration-150"
+                strokeWidth={isSelected ? 1.5 * invZ : isBlackHole ? 0.8 * invZ : 0}
               />
 
-              {/* Black hole: accretion disk ring */}
+              {/* Black hole accretion disk */}
               {isBlackHole && (
                 <ellipse
-                  cx={cx}
-                  cy={cy}
-                  rx={r + 5}
-                  ry={r * 0.4}
-                  fill="none"
-                  stroke="#9966dd"
-                  strokeWidth={1}
-                  opacity={isSelected ? 0.7 : 0.4}
+                  cx={cx} cy={cy}
+                  rx={r + 3 * invZ} ry={(r + 3 * invZ) * 0.4}
+                  fill="none" stroke="#9966dd"
+                  strokeWidth={0.8 * invZ}
+                  opacity={isHighlighted ? 0.7 : 0.4}
                 />
               )}
 
-              {/* Selection ring */}
+              {/* Selection ring — constant screen margin */}
               {isSelected && (
                 <circle
-                  cx={cx}
-                  cy={cy}
-                  r={r + 4}
-                  fill="none"
-                  stroke="rgba(255,255,255,0.4)"
-                  strokeWidth={1}
-                  strokeDasharray="3,3"
+                  cx={cx} cy={cy} r={selectR}
+                  fill="none" stroke="rgba(255,255,255,0.5)"
+                  strokeWidth={selectStroke}
+                  strokeDasharray={`${2 * invZ},${2 * invZ}`}
                 />
               )}
 
-              {/* Name label */}
-              {(showAllLabels || sys.discovered || isHovered || isSelected) && (
+              {/* Name label — constant screen size */}
+              {showLabel && (
                 <text
                   x={cx}
-                  y={cy + r + 10 * textScale + 4}
+                  y={cy + r + textOffset}
                   textAnchor="middle"
-                  fill={isSelected ? '#fff' : 'rgba(255,255,255,0.6)'}
+                  fill={isSelected ? '#fff' : isHovered ? 'rgba(255,255,255,0.85)' : 'rgba(255,255,255,0.55)'}
                   fontSize={fontSize}
                   fontFamily="monospace"
                   style={{ pointerEvents: 'none' }}
@@ -449,14 +406,14 @@ export function GalaxyMap() {
                 </text>
               )}
 
-              {/* Planet count indicator */}
-              {sys.planets.length > 0 && (showPlanetCount || isHovered || isSelected) && (
+              {/* Planet count — constant screen size */}
+              {sys.planets.length > 0 && (showPlanetCount || isHighlighted) && (
                 <text
                   x={cx}
-                  y={cy - r - 4 * textScale - 2}
+                  y={cy - r - 3 * invZ}
                   textAnchor="middle"
                   fill="rgba(255,255,255,0.3)"
-                  fontSize={fontSize * 0.8}
+                  fontSize={fontSmall}
                   fontFamily="monospace"
                   style={{ pointerEvents: 'none' }}
                 >
@@ -464,70 +421,44 @@ export function GalaxyMap() {
                 </text>
               )}
 
-              {/* Hit area (invisible, large click target) */}
-              <circle
-                cx={cx}
-                cy={cy}
-                r={Math.max(12, r + 6)}
-                fill="transparent"
-                stroke="none"
-              />
+              {/* Hit area — constant screen size, just slightly larger than visible dot */}
+              <circle cx={cx} cy={cy} r={hitR} fill="transparent" stroke="none" />
             </g>
           );
         })}
       </svg>
 
-      {/* Legend — star types & jump points */}
+      {/* Legend */}
       <div className="absolute bottom-3 left-3 bg-black/60 rounded-lg px-3 py-2 text-[10px] text-slate-400 backdrop-blur-sm border border-white/5 space-y-1.5">
         <div className="flex items-center gap-3">
           <span className="flex items-center gap-1">
-            <span className="inline-block w-3 h-0.5 bg-white/10" style={{ borderTop: '1px dashed rgba(255,255,255,0.3)' }} />
-            Unstabilized JP
+            <span className="inline-block w-3 h-0.5" style={{ borderTop: '1px dashed rgba(255,255,255,0.3)' }} />
+            Unstabilized
           </span>
           <span className="flex items-center gap-1">
             <span className="inline-block w-3 h-0.5" style={{ borderTop: '1px solid rgba(100,180,255,0.5)' }} />
-            Stabilized JP
+            Stabilized
           </span>
         </div>
         <div className="flex flex-wrap gap-x-2 gap-y-0.5 text-[9px]">
-          <span className="flex items-center gap-0.5"><span className="inline-block w-2 h-2 rounded-full" style={{ backgroundColor: '#6e8eff' }} /> O</span>
-          <span className="flex items-center gap-0.5"><span className="inline-block w-2 h-2 rounded-full" style={{ backgroundColor: '#8ea4ff' }} /> B</span>
-          <span className="flex items-center gap-0.5"><span className="inline-block w-2 h-2 rounded-full" style={{ backgroundColor: '#c8d4ff' }} /> A</span>
-          <span className="flex items-center gap-0.5"><span className="inline-block w-2 h-2 rounded-full" style={{ backgroundColor: '#f5f0e8' }} /> F</span>
-          <span className="flex items-center gap-0.5"><span className="inline-block w-2 h-2 rounded-full" style={{ backgroundColor: '#ffe8a0' }} /> G</span>
-          <span className="flex items-center gap-0.5"><span className="inline-block w-2 h-2 rounded-full" style={{ backgroundColor: '#ffba6a' }} /> K</span>
-          <span className="flex items-center gap-0.5"><span className="inline-block w-2 h-2 rounded-full" style={{ backgroundColor: '#ff6a3d' }} /> M</span>
+          <span className="flex items-center gap-0.5"><span className="inline-block w-2 h-2 rounded-full" style={{ backgroundColor: '#6e8eff' }} />O</span>
+          <span className="flex items-center gap-0.5"><span className="inline-block w-2 h-2 rounded-full" style={{ backgroundColor: '#8ea4ff' }} />B</span>
+          <span className="flex items-center gap-0.5"><span className="inline-block w-2 h-2 rounded-full" style={{ backgroundColor: '#c8d4ff' }} />A</span>
+          <span className="flex items-center gap-0.5"><span className="inline-block w-2 h-2 rounded-full" style={{ backgroundColor: '#f5f0e8' }} />F</span>
+          <span className="flex items-center gap-0.5"><span className="inline-block w-2 h-2 rounded-full" style={{ backgroundColor: '#ffe8a0' }} />G</span>
+          <span className="flex items-center gap-0.5"><span className="inline-block w-2 h-2 rounded-full" style={{ backgroundColor: '#ffba6a' }} />K</span>
+          <span className="flex items-center gap-0.5"><span className="inline-block w-2 h-2 rounded-full" style={{ backgroundColor: '#ff6a3d' }} />M</span>
         </div>
       </div>
 
       {/* Zoom controls */}
-      <div className="absolute top-3 right-3 flex flex-col items-end gap-2">
-        <div className="flex items-center gap-1">
-          <button
-            onClick={zoomOut}
-            className="bg-black/60 rounded-lg w-7 h-7 flex items-center justify-center text-slate-400 hover:text-white backdrop-blur-sm border border-white/5 hover:border-white/20 transition-colors text-sm font-bold"
-            title="Zoom out"
-          >
-            −
-          </button>
-          <div className="bg-black/60 rounded-lg px-2 py-1 text-[10px] text-slate-400 backdrop-blur-sm border border-white/5 font-mono min-w-[48px] text-center">
-            {zoom >= 10 ? `${Math.round(zoom)}x` : `${(zoom * 100).toFixed(0)}%`}
-          </div>
-          <button
-            onClick={zoomIn}
-            className="bg-black/60 rounded-lg w-7 h-7 flex items-center justify-center text-slate-400 hover:text-white backdrop-blur-sm border border-white/5 hover:border-white/20 transition-colors text-sm font-bold"
-            title="Zoom in"
-          >
-            +
-          </button>
-          <button
-            onClick={resetView}
-            className="bg-black/60 rounded-lg px-2 py-1 text-[10px] text-slate-400 hover:text-white backdrop-blur-sm border border-white/5 hover:border-white/20 transition-colors ml-1"
-            title="Reset view"
-          >
-            Fit
-          </button>
+      <div className="absolute top-3 right-3 flex items-center gap-1">
+        <button onClick={() => zoomCenter(1 / ZOOM_BUTTON_STEP)} className="bg-black/60 rounded-lg w-7 h-7 flex items-center justify-center text-slate-400 hover:text-white backdrop-blur-sm border border-white/5 hover:border-white/20 transition-colors text-sm font-bold" title="Zoom out">−</button>
+        <div className="bg-black/60 rounded-lg px-2 py-1 text-[10px] text-slate-400 backdrop-blur-sm border border-white/5 font-mono min-w-[48px] text-center">
+          {zoom >= 10 ? `${Math.round(zoom)}x` : `${(zoom * 100).toFixed(0)}%`}
         </div>
+        <button onClick={() => zoomCenter(ZOOM_BUTTON_STEP)} className="bg-black/60 rounded-lg w-7 h-7 flex items-center justify-center text-slate-400 hover:text-white backdrop-blur-sm border border-white/5 hover:border-white/20 transition-colors text-sm font-bold" title="Zoom in">+</button>
+        <button onClick={resetView} className="bg-black/60 rounded-lg px-2 py-1 text-[10px] text-slate-400 hover:text-white backdrop-blur-sm border border-white/5 hover:border-white/20 transition-colors ml-1" title="Reset view">Fit</button>
       </div>
 
       {/* Zoom hint */}
@@ -535,7 +466,7 @@ export function GalaxyMap() {
         Scroll to zoom • Drag to pan
       </div>
 
-      {/* Minimap at high zoom levels */}
+      {/* Minimap at high zoom */}
       {zoom > 3 && (
         <Minimap
           systems={systems}
@@ -545,19 +476,14 @@ export function GalaxyMap() {
           pan={pan}
           containerSize={containerSize}
           selectedSystemId={selectedSystemId}
-          onNavigate={(newZoom, newPan) => {
-            setZoom(newZoom);
-            setPan(newPan);
-          }}
+          onNavigate={(newZoom, newPan) => { setZoom(newZoom); setPan(newPan); }}
         />
       )}
     </div>
   );
 }
 
-/**
- * Minimap component shown at high zoom levels to provide context.
- */
+/** Minimap for navigation context at high zoom. */
 function Minimap({
   systems,
   systemPositions,
@@ -582,66 +508,28 @@ function Minimap({
   const scaleX = minimapW / base.svgW;
   const scaleY = minimapH / base.svgH;
 
-  // Viewport rectangle
   const viewLeft = -pan.x / zoom;
   const viewTop = -pan.y / zoom;
   const viewWidth = containerSize.w / zoom;
   const viewHeight = containerSize.h / zoom;
 
-  const rectX = viewLeft * scaleX;
-  const rectY = viewTop * scaleY;
-  const rectW = viewWidth * scaleX;
-  const rectH = viewHeight * scaleY;
-
   const handleClick = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
     const clickX = ((e.clientX - rect.left) / rect.width) * base.svgW;
     const clickY = ((e.clientY - rect.top) / rect.height) * base.svgH;
-
-    // Center the view on the clicked point
-    const newPan = {
-      x: containerSize.w / 2 - clickX * zoom,
-      y: containerSize.h / 2 - clickY * zoom,
-    };
-    onNavigate(zoom, newPan);
+    onNavigate(zoom, { x: containerSize.w / 2 - clickX * zoom, y: containerSize.h / 2 - clickY * zoom });
   }, [base.svgW, base.svgH, containerSize, zoom, onNavigate]);
 
   return (
     <div className="absolute bottom-3 right-3 bg-black/70 rounded-lg p-1.5 backdrop-blur-sm border border-white/10">
-      <svg
-        width={minimapW}
-        height={minimapH}
-        viewBox={`0 0 ${minimapW} ${minimapH}`}
-        className="cursor-pointer"
-        onClick={handleClick}
-      >
-        {/* Systems */}
+      <svg width={minimapW} height={minimapH} viewBox={`0 0 ${minimapW} ${minimapH}`} className="cursor-pointer" onClick={handleClick}>
         {systems.map((sys) => {
           const pos = systemPositions.get(sys.id);
           if (!pos) return null;
-          const isSelected = sys.id === selectedSystemId;
-          return (
-            <circle
-              key={sys.id}
-              cx={pos.sx * scaleX}
-              cy={pos.sy * scaleY}
-              r={isSelected ? 2.5 : 1.5}
-              fill={isSelected ? '#fff' : sys.stars[0]?.color ?? '#666'}
-              opacity={isSelected ? 1 : 0.6}
-            />
-          );
+          const isSel = sys.id === selectedSystemId;
+          return <circle key={sys.id} cx={pos.sx * scaleX} cy={pos.sy * scaleY} r={isSel ? 2.5 : 1.5} fill={isSel ? '#fff' : sys.stars[0]?.color ?? '#666'} opacity={isSel ? 1 : 0.6} />;
         })}
-
-        {/* Viewport rectangle */}
-        <rect
-          x={rectX}
-          y={rectY}
-          width={rectW}
-          height={rectH}
-          fill="rgba(255,255,255,0.05)"
-          stroke="rgba(255,255,255,0.3)"
-          strokeWidth={1}
-        />
+        <rect x={viewLeft * scaleX} y={viewTop * scaleY} width={viewWidth * scaleX} height={viewHeight * scaleY} fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.3)" strokeWidth={1} />
       </svg>
     </div>
   );

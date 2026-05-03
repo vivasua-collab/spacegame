@@ -1,5 +1,6 @@
 'use client';
 
+import { useState, useCallback } from 'react';
 import { useGameStore, type GameView } from '@/stores/game-store';
 import { GalaxyMap } from './galaxy-map';
 import { SystemView } from './system-view';
@@ -13,6 +14,8 @@ import {
   Globe2,
   Rocket,
   RotateCcw,
+  Save,
+  Loader2,
 } from 'lucide-react';
 
 export function GameLayout() {
@@ -63,6 +66,9 @@ export function GameLayout() {
         <TimeControls />
 
         <div className="flex-1" />
+
+        {/* Save button */}
+        <SaveButton />
 
         {/* New game button */}
         <Button
@@ -193,5 +199,43 @@ function NavButton({
         )}
       </div>
     </button>
+  );
+}
+
+function SaveButton() {
+  const saveGame = useGameStore((s) => s.saveGame);
+  const isSaving = useGameStore((s) => s.isSaving);
+  const currentSaveId = useGameStore((s) => s.currentSaveId);
+  const [justSaved, setJustSaved] = useState(false);
+
+  const handleSave = useCallback(async () => {
+    const ok = await saveGame();
+    if (ok) {
+      setJustSaved(true);
+      setTimeout(() => setJustSaved(false), 1500);
+    }
+  }, [saveGame]);
+
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      className={`h-7 text-xs transition-colors ${
+        justSaved
+          ? 'text-green-400'
+          : 'text-slate-400 hover:text-white'
+      }`}
+      onClick={handleSave}
+      disabled={isSaving}
+    >
+      {isSaving ? (
+        <Loader2 className="size-3 mr-1 animate-spin" />
+      ) : justSaved ? (
+        <span className="text-green-400">✓</span>
+      ) : (
+        <Save className="size-3 mr-1" />
+      )}
+      {justSaved ? 'Saved' : currentSaveId ? 'Save' : 'Save'}
+    </Button>
   );
 }

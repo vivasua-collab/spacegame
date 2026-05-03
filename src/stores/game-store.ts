@@ -1,5 +1,6 @@
 /**
  * Основной Zustand-стор для игрового состояния.
+ * Включает систему сохранения/загрузки через API.
  */
 
 import { create } from 'zustand';
@@ -13,6 +14,15 @@ import { BUILDING_MAP } from '@/data/buildings';
 
 export type GameView = 'galaxy' | 'system' | 'planet';
 
+export interface SaveInfo {
+  id: string;
+  name: string;
+  seed: number;
+  tick: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface GameStore {
   // === Состояние ===
   gameState: GameState | null;
@@ -20,6 +30,9 @@ export interface GameStore {
   selectedSystemId: EntityId | null;
   selectedPlanetId: EntityId | null;
   isInitialized: boolean;
+  currentSaveId: string | null;
+  isSaving: boolean;
+  isLoading: boolean;
 
   // === Действия ===
   newGame: (config?: Partial<GalaxyGenConfig>) => void;
@@ -37,12 +50,65 @@ export interface GameStore {
   upgradeBuildingOnHex: (planetId: EntityId, hexIndex: number) => boolean;
   enqueueProduction: (planetId: EntityId, recipeId: string, repeat?: boolean) => boolean;
 
+  // Сохранение/загрузка
+  saveGame: (name?: string) => Promise<boolean>;
+  loadGame: (id: string) => Promise<boolean>;
+  loadSaveList: () => Promise<SaveInfo[]>;
+  deleteSave: (id: string) => Promise<boolean>;
+
   // Утилиты
   getSystem: (id: EntityId) => StarSystem | undefined;
   getPlanet: (id: EntityId) => Planet | undefined;
   getSelectedSystem: () => StarSystem | undefined;
   getSelectedPlanet: () => Planet | undefined;
 }
+
+// ============ Сериализация ============
+
+/**
+ * Сериализует GameState в JSON-строку.
+ * Конвертирует Map → массив пар [key, value] для JSON-совместимости.
+ */
+function serializeGameState(state: GameState): string {
+  const serializable = {
+    ...state,
+    galaxy: {
+      ...state.galaxy,
+      systemMap: Array.from(state.galaxy.systemMap.entries()),
+    },
+    productionQueues: Array.from(state.productionQueues.entries()),
+  };
+  return JSON.stringify(serializable);
+}
+
+/**
+ * Десериализует GameState из JSON-строки.
+ * Восстанавливает Map из массива пар [key, value].
+ */
+function deserializeGameState(json: string): GameState {
+  const raw = JSON.parse(json);
+
+  // Восстановить systemMap
+  const systemMapEntries: [string, StarSystem][] = raw.galaxy.systemMap || [];
+  const systemMap = new Map(systemMapEntries);
+
+  // Восстановить productionQueues
+  const queueEntries: [string, ProductionQueue][] = raw.productionQueues || [];
+  const productionQueues = new Map(queueEntries);
+
+  return {
+    ...raw,
+    galaxy: {
+      ...raw.galaxy,
+      systemMap,
+      systems: raw.galaxy.systems || [],
+    },
+    productionQueues,
+    fleets: raw.fleets || [],
+  };
+}
+
+// ============ Store ============
 
 export const useGameStore = create<GameStore>((set, get) => {
   /** Создать начальное GameState */
@@ -86,6 +152,9 @@ export const useGameStore = create<GameStore>((set, get) => {
     selectedSystemId: null,
     selectedPlanetId: null,
     isInitialized: false,
+    currentSaveId: null,
+    isSaving: false,
+    isLoading: false,
 
     newGame: (config = {}) => {
       const state = createInitialState(config);
@@ -95,6 +164,7 @@ export const useGameStore = create<GameStore>((set, get) => {
         selectedSystemId: state.galaxy.systems[0]?.id ?? null,
         selectedPlanetId: null,
         isInitialized: true,
+        currentSaveId: null,
       });
     },
 
@@ -125,15 +195,13 @@ export const useGameStore = create<GameStore>((set, get) => {
       const { gameState } = get();
       if (!gameState || gameState.phase !== 'playing') return;
 
-      // Обновляем время
       const TICKS_PER_DAY = 86400;
       gameState.time.tick += gameState.speed;
       gameState.time.day = Math.floor(gameState.time.tick / TICKS_PER_DAY);
       gameState.time.year = Math.floor(gameState.time.day / 365);
 
-      // P3-05: обрабатываем экономику пропорционально скорости (с ограничением для избежания лагов)
       const allPlanets = gameState.galaxy.systems.flatMap(s => s.planets);
-      const economyTicks = Math.min(gameState.speed, 50); // Cap to avoid lag
+      const economyTicks = Math.min(gameState.speed, 50);
       for (let i = 0; i < economyTicks; i++) {
         processEconomyTick(allPlanets, gameState.productionQueues, gameState.galaxy.systemMap);
       }
@@ -182,6 +250,100 @@ export const useGameStore = create<GameStore>((set, get) => {
       if (result) set({ gameState: { ...gameState } });
       return result;
     },
+
+    // ─── Сохранение / Загрузка ─────────────────────────────
+
+    saveGame: async (name?: string) => {
+      const { gameState, currentSaveId } = get();
+      if (!gameState) return false;
+
+      set({ isSaving: true });
+      try {
+        const saveName = name || `Galaxy #${gameState.galaxy.seed}`;
+        const stateJson = serializeGameState(gameState);
+
+        if (currentSaveId) {
+          // Обновить существующее сохранение
+          const res = await fetch(`/api/save/${currentSaveId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: saveName, state: stateJson, tick: gameState.time.tick }),
+          });
+          if (!res.ok) throw new Error('Failed to update save');
+        } else {
+          // Создать новое сохранение
+          const res = await fetch('/api/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              name: saveName,
+              seed: gameState.galaxy.seed,
+              state: stateJson,
+              tick: gameState.time.tick,
+            }),
+          });
+          if (!res.ok) throw new Error('Failed to create save');
+          const data = await res.json();
+          set({ currentSaveId: data.id });
+        }
+        return true;
+      } catch (e) {
+        console.error('Save failed:', e);
+        return false;
+      } finally {
+        set({ isSaving: false });
+      }
+    },
+
+    loadGame: async (id: string) => {
+      set({ isLoading: true });
+      try {
+        const res = await fetch(`/api/save/${id}`);
+        if (!res.ok) throw new Error('Failed to load save');
+        const data = await res.json();
+
+        const loadedState = deserializeGameState(data.state);
+
+        set({
+          gameState: loadedState,
+          view: 'galaxy',
+          selectedSystemId: loadedState.galaxy.systems[0]?.id ?? null,
+          selectedPlanetId: null,
+          isInitialized: true,
+          currentSaveId: id,
+        });
+        return true;
+      } catch (e) {
+        console.error('Load failed:', e);
+        return false;
+      } finally {
+        set({ isLoading: false });
+      }
+    },
+
+    loadSaveList: async () => {
+      try {
+        const res = await fetch('/api/save');
+        if (!res.ok) throw new Error('Failed to list saves');
+        return await res.json() as SaveInfo[];
+      } catch (e) {
+        console.error('List saves failed:', e);
+        return [];
+      }
+    },
+
+    deleteSave: async (id: string) => {
+      try {
+        const res = await fetch(`/api/save/${id}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error('Failed to delete save');
+        return true;
+      } catch (e) {
+        console.error('Delete save failed:', e);
+        return false;
+      }
+    },
+
+    // ─── Утилиты ───────────────────────────────────────────
 
     getSystem: (id) => {
       const { gameState } = get();
