@@ -314,7 +314,7 @@ function generatePlanet(systemId: EntityId, orbit: number, systemName: string, s
 
   // Ресурсные залежи на некоторых гексах
   if (hexes.length > 0) {
-    assignResourceDeposits(hexes, rng.derive('deposits'));
+    assignResourceDeposits(hexes, rng.derive('deposits'), planetDef.type);
   }
 
   // Атмосферные слоты (P1-01: только для газовых гигантов)
@@ -549,47 +549,132 @@ function generateLife(planetDef: typeof PLANET_TYPES[0], atmosphere: Atmosphere,
 }
 
 function selectPlanetType(orbit: number, starDef: typeof STAR_TYPES[0], rng: Xoshiro256): typeof PLANET_TYPES[0] {
-  // Внутренние орбиты → скалистые/вулканические, внешние → ледяные/газ. гиганты
-  if (orbit <= 2) {
+  // Зона обитаемости зависит от светимости звезды:
+  // Внутренний край HZ: r_in = sqrt(L/1.1) AU
+  // Внешний край HZ: r_out = sqrt(L/0.53) AU
+  // Это определяет, какие типы планет на каких орбитах вероятны.
+  const L = Math.max(0.001, starDef.luminosity);
+  const hzInner = Math.sqrt(L / 1.1);
+  const hzOuter = Math.sqrt(L / 0.53);
+
+  // Оцениваем расстояние для данной орбиты (примерно Тициус-Боде)
+  const estimatedR = 0.3 + orbit * 0.6;
+
+  // Определяем зону относительно обитаемой зоны
+  const inHZ = estimatedR >= hzInner && estimatedR <= hzOuter;
+  const innerThanHZ = estimatedR < hzInner;
+  const outerThanHZ = estimatedR > hzOuter;
+
+  if (innerThanHZ) {
+    // Ближе к звезде → горячие планеты
+    // Чем ближе к звезде, тем больше вулканических
+    const closeness = Math.max(0, 1 - estimatedR / hzInner);
+    const volcanicW = 30 + closeness * 40;
+    const rockyW = 50 - closeness * 20;
+    const dwarfW = 20 - closeness * 20;
     return rng.weightedChoice(
-      [PLANET_TYPES[0], PLANET_TYPES[1], PLANET_TYPES[6]], // rocky, volcanic, dwarf
-      [50, 30, 20],
+      [PLANET_TYPES[1], PLANET_TYPES[0], PLANET_TYPES[6]], // volcanic, rocky, dwarf
+      [Math.max(5, volcanicW), Math.max(5, rockyW), Math.max(5, dwarfW)],
     );
-  } else if (orbit <= 4) {
+  } else if (inHZ) {
+    // Обитаемая зона → землеподобные / океанические / пустынные
     return rng.weightedChoice(
-      [PLANET_TYPES[0], PLANET_TYPES[4], PLANET_TYPES[3]], // rocky, desert, oceanic
-      [40, 30, 30],
+      [PLANET_TYPES[0], PLANET_TYPES[3], PLANET_TYPES[4]], // rocky, oceanic, desert
+      [35, 35, 30],
     );
   } else {
+    // Внешняя зона → ледяные / газовые гиганты
+    // Чем дальше, тем больше газовых гигантов
+    const farness = Math.min(1, (estimatedR - hzOuter) / 10);
+    const gasW = 25 + farness * 35;
+    const iceW = 30 + farness * 15;
+    const oceanicW = 30 - farness * 20;
     return rng.weightedChoice(
-      [PLANET_TYPES[2], PLANET_TYPES[5], PLANET_TYPES[3]], // ice, gas_giant, oceanic
-      [30, 40, 30],
+      [PLANET_TYPES[5], PLANET_TYPES[2], PLANET_TYPES[3]], // gas_giant, ice, oceanic
+      [Math.max(5, gasW), Math.max(5, iceW), Math.max(5, oceanicW)],
     );
   }
 }
 
-/** Назначить ресурсные залежи на гексах */
-function assignResourceDeposits(hexes: HexCell[], rng: Xoshiro256): void {
-  // Р3-01: Deposits produce ores, not pure elements.
-  // Atmospheric elements (H, He, O, N, C, S) are extracted via gas_extractor, not mines.
-  const mineableElements = ELEMENTS.filter(e => !e.isAtmospheric);
+/** Назначить ресурсные залежи на гексах.
+ *
+ * Философия: на каждой планете есть ВСЯ таблица элементов (как таблица Менделеева).
+ * Профильные ресурсы (соответствующие типу планеты) — в больших количествах.
+ * Непрофильные — в малых, но всегда есть (微量).
+ * Атмосферные элементы (H, He, O, N, C, S) добываются газовым экстрактором,
+ * а не шахтами, но залежи в породе тоже есть.
+ */
+function assignResourceDeposits(hexes: HexCell[], rng: Xoshiro256, planetType?: string): void {
+  if (hexes.length === 0) return;
 
-  for (const hex of hexes) {
-    // Не на океане
-    if (hex.terrain === 'ocean') continue;
+  // Множители количества по типу планеты
+  const typeMultipliers: Record<string, Record<string, number>> = {
+    rocky:    { structural: 2.0, fuel: 0.3, alloy: 1.5, electronics: 1.0, chemical: 0.5, energy: 0.5, rare: 0.3, light: 0.5 },
+    volcanic: { structural: 1.5, fuel: 0.2, alloy: 2.0, electronics: 0.8, chemical: 1.0, energy: 1.5, rare: 0.8, light: 0.3 },
+    ice:      { structural: 0.5, fuel: 1.0, alloy: 0.3, electronics: 0.2, chemical: 1.5, energy: 0.2, rare: 0.1, light: 0.8 },
+    oceanic:  { structural: 0.8, fuel: 0.5, alloy: 0.5, electronics: 0.5, chemical: 1.5, energy: 0.3, rare: 0.2, light: 0.5 },
+    desert:   { structural: 1.0, fuel: 0.2, alloy: 0.8, electronics: 0.5, chemical: 0.3, energy: 0.5, rare: 0.5, light: 0.3 },
+    dwarf:    { structural: 0.5, fuel: 0.2, alloy: 0.3, electronics: 0.2, chemical: 0.2, energy: 0.2, rare: 0.1, light: 0.2 },
+    gas_giant:{ structural: 0.1, fuel: 3.0, alloy: 0.1, electronics: 0.1, chemical: 2.0, energy: 0.1, rare: 0.1, light: 1.0 },
+  };
+  const multipliers = typeMultipliers[planetType ?? 'rocky'] ?? typeMultipliers.rocky;
 
-    // 40% шанс залежей
-    if (!rng.nextBool(0.4)) continue;
+  // Разбиваем элементы по гексам: каждый гекс получает подмножество,
+  // но СОВОКУПНО все элементы покрыты.
+  // Стратегия: распределяем ВСЕ элементы по гексам, профильные — в несколько гексов,
+  // непрофильные — хотя бы в один.
 
-    // 1-3 элемента в залежи
-    const depositCount = rng.nextInt(1, 3);
-    for (let i = 0; i < depositCount; i++) {
-      const element = rng.nextChoice(mineableElements);
+  const nonOceanHexes = hexes.filter(h => h.terrain !== 'ocean');
+  if (nonOceanHexes.length === 0) return;
+
+  // Сначала гарантируем: каждый элемент хотя бы в 1 гексе
+  for (const element of ELEMENTS) {
+    const cat = element.category;
+    const mult = multipliers[cat] ?? 0.3;
+
+    // Базовое количество зависит от категории и множителя типа планеты
+    let baseQuantity: number;
+    if (cat === 'rare') {
+      baseQuantity = 10 + rng.nextFloat() * 40;  // редкие: 10-50
+    } else if (cat === 'energy') {
+      baseQuantity = 5 + rng.nextFloat() * 30;    // уран: мало
+    } else if (element.isAtmospheric) {
+      baseQuantity = 20 + rng.nextFloat() * 80;   // атмосферные в породе: 20-100
+    } else {
+      baseQuantity = 30 + rng.nextFloat() * 200;  // остальные: 30-230
+    }
+    baseQuantity *= mult;
+
+    // Сколько гексов содержит этот элемент
+    // Профильные — много гексов, непрофильные — минимум 1
+    const hexCount = Math.max(1, Math.min(
+      nonOceanHexes.length,
+      Math.ceil(mult * nonOceanHexes.length * 0.3),
+    ));
+
+    // Выбираем случайные гексы
+    const shuffled = [...nonOceanHexes].sort(() => rng.nextFloat() - 0.5);
+    for (let h = 0; h < hexCount && h < shuffled.length; h++) {
+      shuffled[h].deposits.push({
+        elementId: `${element.id}-ore`,
+        availability: 0.1 + rng.nextFloat() * 0.8 * mult,
+        quantity: Math.max(1, Math.round(baseQuantity * (0.5 + rng.nextFloat()))),
+        depth: element.category === 'rare' ? rng.nextInt(3, 5) : rng.nextInt(1, 4),
+      });
+    }
+  }
+
+  // Дополнительно: случайные богатые залежи на 10-20% гексов
+  for (const hex of nonOceanHexes) {
+    if (rng.nextBool(0.15)) {
+      const element = rng.nextChoice(ELEMENTS.filter(e => !e.isAtmospheric));
+      const cat = element.category;
+      const mult = multipliers[cat] ?? 0.3;
       hex.deposits.push({
-        elementId: `${element.id}-ore`, // Р3-01: ore ID, not pure element
-        availability: 0.2 + rng.nextFloat() * 0.7,
-        quantity: rng.nextInt(50, 500) * (element.category === 'rare' ? 0.1 : 1),
-        depth: rng.nextInt(1, 5),
+        elementId: `${element.id}-ore`,
+        availability: 0.5 + rng.nextFloat() * 0.5,
+        quantity: Math.round((100 + rng.nextFloat() * 400) * mult),
+        depth: rng.nextInt(1, 3),
       });
     }
   }

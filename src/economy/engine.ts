@@ -419,14 +419,30 @@ export function enqueueProduction(
 }
 
 /**
- * Дать стартовые ресурсы планете (для тестирования).
+ * Дать стартовые ресурсы планете (первичная колонизация).
+ * Все элементы из таблицы Менделеева игры, но в разных количествах:
+ * - Руды (ore) — основной запас для добычи через шахты
+ * - Чистые элементы — начальный буфер для крафта
+ * - Атмосферные — через газовый экстрактор
  */
 export function giveStarterResources(planet: Planet): void {
   const starters: Record<string, number> = {
-    'Fe-ore': 200, 'Si-ore': 150, 'C-ore': 100, 'Al-ore': 80,
-    'Ti-ore': 30, 'Cu-ore': 50, 'V-ore': 10, 'Y-ore': 5, 'Ba-ore': 10,
-    'H': 100, 'O': 100,
-    Fe: 50, Si: 30, C: 20, Al: 15,
+    // Руды — основной добываемый ресурс (шахты → плавильни → чистые элементы)
+    'Fe-ore': 500, 'Si-ore': 400, 'C-ore': 300, 'Al-ore': 200,
+    'Ti-ore': 80,  'Cr-ore': 60,  'Ni-ore': 50,  'V-ore': 20,
+    'Cu-ore': 100, 'Au-ore': 10,
+    'S-ore': 80,
+    'U-ore': 15,
+    'W-ore': 20,   'Co-ore': 25,  'Pt-ore': 5,
+    'Li-ore': 30,  'Y-ore': 8,    'Ba-ore': 15,
+    // Атмосферные руды (в породе — мало, основной добыч через экстрактор)
+    'H-ore': 50,   'He-ore': 30,  'O-ore': 60,  'N-ore': 40,
+
+    // Чистые элементы — начальный буфер для крафта
+    Fe: 100, Si: 60, C: 40, Al: 30,
+    Ti: 15,  Cu: 20, H: 200, O: 200,
+    // Энергия
+    Energy: 500,
   };
   for (const [id, amount] of Object.entries(starters)) {
     planet.resources[id] = (planet.resources[id] ?? 0) + amount;

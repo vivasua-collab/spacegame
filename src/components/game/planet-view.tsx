@@ -19,6 +19,9 @@ import {
   Zap,
   ChevronLeft,
   Layers,
+  Ruler,
+  Clock,
+  Orbit,
 } from 'lucide-react';
 import type { Planet, HexCell, HexTerrain, AtmosphereType, LifeLevel, AtmosphericSlot, OrbitalSlot } from '@/core/types';
 
@@ -30,6 +33,15 @@ const ATMO_DISPLAY: Record<AtmosphereType, string> = {
 const LIFE_DISPLAY: Record<LifeLevel, string> = {
   none: 'Нет', microbes: 'Микробы', plants: 'Растения', simple: 'Простая', complex: 'Сложная',
 };
+
+/** Форматирование орбитального периода */
+function formatOrbitalPeriod(days: number): string {
+  if (days < 1) return '<1 дня';
+  if (days < 365) return `${days} дн.`;
+  const years = days / 365.25;
+  if (years < 10) return `${years.toFixed(1)} лет`;
+  return `${Math.round(years)} лет`;
+}
 
 const HEX_SIZE = 24; // pixel size for hex rendering
 
@@ -84,7 +96,7 @@ export function PlanetView() {
             onClick={() => { selectPlanet(null); setView('system'); }}
           >
             <ChevronLeft className="size-3" />
-            Back to System
+            ← Система
           </button>
           <Separator orientation="vertical" className="h-3 bg-white/10" />
           <span className="text-sm font-semibold text-white">{planet.name}</span>
@@ -113,30 +125,42 @@ export function PlanetView() {
         <Card className="bg-[#0d0d24] border-white/10 text-white py-3 gap-3">
           <CardContent className="px-4 py-0 space-y-2">
             <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
-              Planet Info
+              Планета
             </div>
             <div className="space-y-1.5 text-xs">
               <div className="flex justify-between text-slate-300">
-                <span className="flex items-center gap-1 text-slate-500"><Globe2 className="size-3" /> Gravity</span>
+                <span className="flex items-center gap-1 text-slate-500"><Globe2 className="size-3" /> Гравитация</span>
                 <span className="font-mono">{planet.gravity.toFixed(2)}g</span>
               </div>
               <div className="flex justify-between text-slate-300">
-                <span className="flex items-center gap-1 text-slate-500"><Thermometer className="size-3" /> Temperature</span>
+                <span className="flex items-center gap-1 text-slate-500"><Thermometer className="size-3" /> Температура</span>
                 <span className="font-mono">{planet.temperature > 0 ? '+' : ''}{planet.temperature}&deg;C</span>
               </div>
               <div className="flex justify-between text-slate-300">
-                <span className="flex items-center gap-1 text-slate-500"><Wind className="size-3" /> Atmosphere</span>
+                <span className="flex items-center gap-1 text-slate-500"><Ruler className="size-3" /> Расстояние</span>
+                <span className="font-mono">{planet.orbitalRadius.toFixed(2)} AU</span>
+              </div>
+              <div className="flex justify-between text-slate-300">
+                <span className="flex items-center gap-1 text-slate-500"><Orbit className="size-3" /> Орбита</span>
+                <span className="font-mono">#{planet.orbitNumber}</span>
+              </div>
+              <div className="flex justify-between text-slate-300">
+                <span className="flex items-center gap-1 text-slate-500"><Clock className="size-3" /> Период</span>
+                <span className="font-mono">{formatOrbitalPeriod(planet.orbitalPeriod)}</span>
+              </div>
+              <div className="flex justify-between text-slate-300">
+                <span className="flex items-center gap-1 text-slate-500"><Wind className="size-3" /> Атмосфера</span>
                 <span>{ATMO_DISPLAY[planet.atmosphere.type] ?? planet.atmosphere.type}{planet.atmosphere.type !== 'none' ? ` (${planet.atmosphere.pressure.toFixed(1)} атм)` : ''}</span>
               </div>
               <div className="flex justify-between text-slate-300">
-                <span className="flex items-center gap-1 text-slate-500"><Layers className="size-3" /> Life</span>
+                <span className="flex items-center gap-1 text-slate-500"><Layers className="size-3" /> Жизнь</span>
                 <span>
                   {LIFE_DISPLAY[planet.life.level] ?? planet.life.level}
                   {planet.life.level !== 'none' ? ` (БИО ${planet.life.biodiversity.toFixed(2)})` : ''}
                 </span>
               </div>
               <div className="flex justify-between text-slate-300">
-                <span className="flex items-center gap-1 text-slate-500"><Zap className="size-3" /> Energy</span>
+                <span className="flex items-center gap-1 text-slate-500"><Zap className="size-3" /> Энергия</span>
                 <span className={`font-mono ${planet.energyBalance >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                   {planet.energyBalance >= 0 ? '+' : ''}{planet.energyBalance.toFixed(1)}
                 </span>
@@ -155,7 +179,7 @@ export function PlanetView() {
           <Card className="bg-[#0d0d24] border-white/10 text-white py-3 gap-3">
             <CardContent className="px-4 py-0 space-y-2">
               <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
-                Atmosphere Composition
+                Состав атмосферы
               </div>
               <div className="space-y-0.5">
                 {planet.atmosphere.composition.map((comp, i) => (
@@ -171,19 +195,19 @@ export function PlanetView() {
 
         {/* Atmospheric Slots (gas giants) */}
         {planet.atmosphericSlots.length > 0 && (
-          <SlotCard title="Atmospheric Slots" slots={planet.atmosphericSlots} />
+          <SlotCard title="Атмосферные слоты" slots={planet.atmosphericSlots} />
         )}
 
         {/* Orbital Slots */}
         {planet.orbitSlots.length > 0 && (
-          <SlotCard title="Orbital Slots" slots={planet.orbitSlots} />
+          <SlotCard title="Орбитальные слоты" slots={planet.orbitSlots} />
         )}
 
         {/* Resources */}
         <Card className="bg-[#0d0d24] border-white/10 text-white py-3 gap-3">
           <CardContent className="px-4 py-0">
             <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
-              Resources
+              Ресурсы
             </div>
             <ResourcePanel resources={planet.resources} className="h-48" />
           </CardContent>
@@ -359,7 +383,7 @@ function HexInfoCard({ hex }: { hex: HexCell }) {
     <Card className="bg-[#0d0d24] border-white/10 text-white py-3 gap-3">
       <CardContent className="px-4 py-0 space-y-2">
         <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
-          Hex Info
+          Информация о гексе
         </div>
         <div className="flex items-center gap-2">
           <div
@@ -394,7 +418,7 @@ function HexInfoCard({ hex }: { hex: HexCell }) {
 
         {hex.deposits.length > 0 && (
           <div className="space-y-0.5">
-            <div className="text-[10px] text-slate-500 uppercase">Deposits</div>
+            <div className="text-[10px] text-slate-500 uppercase">Залежи</div>
             {hex.deposits.map((dep, i) => {
               // M-04 fix: strip '-ore' suffix for ELEMENT_MAP lookup
               const pureId = dep.elementId.replace('-ore', '');
@@ -435,7 +459,7 @@ function SlotCard({ title, slots }: { title: string; slots: (AtmosphericSlot | O
                     {buildingDef.name} {slot.buildingLevel > 1 ? `(Lv.${slot.buildingLevel})` : ''}
                   </span>
                 ) : (
-                  <span className="text-slate-600 italic">Empty</span>
+                  <span className="text-slate-600 italic">Пусто</span>
                 )}
               </div>
             );
