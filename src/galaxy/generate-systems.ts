@@ -58,17 +58,129 @@ function selectCompanionStar(primaryDef: typeof STAR_TYPES[0], rng: Xoshiro256):
   return rng.weightedChoice(MAIN_SEQUENCE_STAR_TYPES, MAIN_SEQUENCE_STAR_WEIGHTS);
 }
 
-/** Создать объект звезды */
+/**
+ * G-32 fix: Создать объект звезды по алгоритму из 02-stars.md §6, Шаг 4.
+ *
+ * Главная последовательность:
+ *   1. Масса: ±15% от среднего, clamp в диапазон типа
+ *   2. Светимость: L = M^3.5 (M<2) или M^2.3 (M≥2) — из массы
+ *   3. Радиус: R = M^0.8 (M<1) или M^0.57 (M≥1) — из массы
+ *   4. Температура: T = 5778 × (L/R²)^0.25 — Стефан-Больцман
+ *
+ * Специальные типы (WD, RG, NS, PULSAR, BH):
+ *   - T и R выбираются из документированных диапазонов
+ *   - L вычисляется из T и R: L = R² × (T/5778)⁴ — гарантирует Стефан-Больцман
+ *   - Для NS/PULSAR: L ≈ 0 (косметическая T)
+ *   - Для BH: L = 0, T = 0
+ *
+ * Стефан-Больцман: L = 4πR²σT⁴ → L/L☉ = (R/R☉)² × (T/T☉)⁴
+ * T☉ = 5778K
+ */
+
+/** Диапазоны параметров для специальных типов звёзд (из 02-stars.md §2.1) */
+const SPECIAL_STAR_RANGES: Record<string, {
+  massMin: number; massMax: number;
+  tempMin: number; tempMax: number;
+  radiusMin: number; radiusMax: number;
+}> = {
+  STAR_WD:     { massMin: 0.5, massMax: 1.4, tempMin: 8000,  tempMax: 40000,  radiusMin: 0.008, radiusMax: 0.02 },
+  STAR_RG:     { massMin: 0.5, massMax: 8.0, tempMin: 3000,  tempMax: 5000,   radiusMin: 10,    radiusMax: 200 },
+  STAR_NS:     { massMin: 1.1, massMax: 2.1, tempMin: 500000, tempMax: 700000, radiusMin: 0.00001, radiusMax: 0.00001 },
+  STAR_PULSAR: { massMin: 1.1, massMax: 2.1, tempMin: 800000, tempMax: 1200000, radiusMin: 0.00001, radiusMax: 0.00001 },
+  STAR_BH:     { massMin: 3,   massMax: 50,  tempMin: 0,     tempMax: 0,      radiusMin: 0,     radiusMax: 0 },
+};
+
+/** Главная последовательность: индексы 0-6 в STAR_TYPES */
+const MAIN_SEQUENCE_TYPES = new Set(['STAR_O', 'STAR_B', 'STAR_A', 'STAR_F', 'STAR_G', 'STAR_K', 'STAR_M']);
+
+/** Стефан-Больцман: L/L☉ = (R/R☉)² × (T/T☉)⁴ */
+function stefanBoltzmannLuminosity(radiusRs: number, temperatureK: number): number {
+  const T_SUN = 5778;
+  return radiusRs * radiusRs * Math.pow(temperatureK / T_SUN, 4);
+}
+
+/** Стефан-Больцман: T = T☉ × (L/R²)^0.25 */
+function stefanBoltzmannTemperature(luminosityLs: number, radiusRs: number): number {
+  const T_SUN = 5778;
+  return T_SUN * Math.pow(luminosityLs / (radiusRs * radiusRs), 0.25);
+}
+
 function createStar(systemId: EntityId, systemName: string, starDef: typeof STAR_TYPES[0], rng: Xoshiro256): Star {
+  const isMainSequence = MAIN_SEQUENCE_TYPES.has(starDef.type);
+
+  let mass: number;
+  let luminosity: number;
+  let temperature: number;
+  let radius: number;
+
+  if (isMainSequence) {
+    // === Главная последовательность: алгоритм из 02-stars.md §6, Шаг 4 ===
+    // Вариация ±15% для массы и светимости, R из массы, T из L/R (Стефан-Больцман)
+    // Это гарантирует физическую согласованность T, L, R.
+
+    // 1. Масса: ±15% вариация от среднего
+    const massVariation = 1.0 + (rng.nextFloat() * 0.3 - 0.15); // 0.85–1.15
+    mass = starDef.mass * massVariation;
+
+    // 2. Светимость: ±15% вариация от табличного среднего
+    // (M^3.5/M^2.3 — грубое приближение, занижает O/B классы;
+    //  табличные значения точнее, а T вычисляется для согласованности)
+    const lumVariation = 1.0 + (rng.nextFloat() * 0.3 - 0.15); // 0.85–1.15
+    luminosity = starDef.luminosity * lumVariation;
+
+    // 3. Радиус из массы (02-stars.md §6, Шаг 4)
+    if (mass < 1) {
+      radius = Math.pow(mass, 0.8);
+    } else {
+      radius = Math.pow(mass, 0.57);
+    }
+
+    // 4. Температура из L и R — закон Стефана-Больцмана (02-stars.md §6, Шаг 4)
+    // T = T☉ × (L / R²)^0.25 — гарантирует L = R² × (T/T☉)⁴
+    temperature = stefanBoltzmannTemperature(luminosity, Math.max(0.001, radius));
+  } else {
+    // === Специальные типы: T и R из диапазонов, L из Стефана-Больцмана ===
+    const ranges = SPECIAL_STAR_RANGES[starDef.type];
+
+    if (!ranges) {
+      // Fallback — не должно происходить
+      mass = starDef.mass;
+      luminosity = starDef.luminosity;
+      temperature = starDef.temperature;
+      radius = starDef.radius;
+    } else if (starDef.type === 'STAR_BH') {
+      // Чёрная дыра: L=0, T=0
+      mass = ranges.massMin + rng.nextFloat() * (ranges.massMax - ranges.massMin);
+      luminosity = 0;
+      temperature = 0;
+      radius = 0;
+    } else if (starDef.type === 'STAR_NS' || starDef.type === 'STAR_PULSAR') {
+      // Нейтронная звезда / пульсар: L≈0 в оптике, T косметическая
+      mass = ranges.massMin + rng.nextFloat() * (ranges.massMax - ranges.massMin);
+      temperature = ranges.tempMin + rng.nextFloat() * (ranges.tempMax - ranges.tempMin);
+      radius = ranges.radiusMin;
+      // L для NS/PULSAR пренебрежимо мала в оптике, но используем Стефана-Больцмана
+      // для корректного расчёта температуры планет (должна быть ≈0)
+      luminosity = Math.max(0.0001, stefanBoltzmannLuminosity(radius, temperature));
+    } else {
+      // Белый карлик (WD) / Красный гигант (RG):
+      // Выбираем T и R из диапазонов, L из Стефана-Больцмана
+      mass = ranges.massMin + rng.nextFloat() * (ranges.massMax - ranges.massMin);
+      temperature = ranges.tempMin + rng.nextFloat() * (ranges.tempMax - ranges.tempMin);
+      radius = ranges.radiusMin + rng.nextFloat() * (ranges.radiusMax - ranges.radiusMin);
+      luminosity = stefanBoltzmannLuminosity(radius, temperature);
+    }
+  }
+
   return {
     id: genId('star'),
     systemId,
     type: starDef.type,
     name: `${systemName} (звезда)`,
-    mass: starDef.mass * (0.8 + rng.nextFloat() * 0.4),
-    luminosity: starDef.luminosity * (0.8 + rng.nextFloat() * 0.4),
-    temperature: starDef.temperature * (0.9 + rng.nextFloat() * 0.2),
-    radius: starDef.radius * (0.8 + rng.nextFloat() * 0.4),
+    mass,
+    luminosity,
+    temperature,
+    radius,
     color: starDef.color,
   };
 }
