@@ -3,12 +3,27 @@
  * Seed-based, детерминированный, спиральная структура.
  * Поддержка двойных/тройных систем (P1-07), именованных под-seed'ов (P1-29),
  * улучшенных JP с проверками (P1-23).
+ *
+ * Audit fixes applied:
+ * G-02: Atmosphere generated BEFORE temperature (real atmo type for greenhouse)
+ * G-03: generatePlanet receives real Star object (with ±20% variation)
+ * G-04/G-06: Size/radius derived from PLANET_TYPE_RADIUS + getSizeFromRadius
+ * G-05/G-14: Spiral positions: bulge 15%, disk 20%, arms 60%, halo 5%
+ * G-07: Atmosphere probabilities match spec §2.4 (conditional)
+ * G-08: Gas giant inert/toxic swap fixed (inert=5%, toxic=4%)
+ * G-09/G-01/G-10/G-11: Life generation uses per-type LIFE_LEVEL_WEIGHTS + conditions
+ * G-12: Companion star only from main sequence types
+ * G-13: Orbital radius with binary type awareness
+ * G-15: Orbit slots use ORBIT_SLOTS_BY_SIZE (non-gas-giant)
+ * G-16: Snow line added to selectPlanetType
+ * G-17: Asteroid fields with gas giant/binary bonuses
+ * G-18: 278 → 278.5 in calculatePlanetTemperature
  */
 
 import { Xoshiro256 } from '@/core/prng';
 import type { Galaxy, StarSystem, Star, Planet, JumpPoint, Vec2, EntityId, ResourceDeposit, HexTerrain, PlanetSize, BinaryType, Atmosphere, AtmosphereType, PlanetLife, LifeLevel, AtmosphericSlot, OrbitalSlot, PlanetResourceDeposit } from '@/core/types';
 import { STAR_TYPES, STAR_WEIGHTS } from '@/data/star-types';
-import { PLANET_TYPES, SIZE_HEX_COUNT, ORBIT_SLOTS, GAS_GIANT_ATMOSPHERE_SLOTS, PLANET_DENSITY, PLANET_RADIUS_KM, PROFILE_ELEMENTS, RARE_ELEMENTS, ULTRA_RARE_ELEMENTS } from '@/data/planet-types';
+import { PLANET_TYPES, SIZE_HEX_COUNT, ORBIT_SLOTS, ORBIT_SLOTS_BY_SIZE, GAS_GIANT_ATMOSPHERE_SLOTS, PLANET_DENSITY, PLANET_TYPE_RADIUS, getSizeFromRadius, LIFE_LEVEL_WEIGHTS, PROFILE_ELEMENTS, RARE_ELEMENTS, ULTRA_RARE_ELEMENTS } from '@/data/planet-types';
 import { ELEMENTS, ELEMENT_MAP } from '@/data/elements';
 import { generateHexGrid } from './hex-grid';
 
@@ -58,6 +73,10 @@ export const DEFAULT_CONFIG: GalaxyGenConfig = {
   maxJumpPointsPerSystem: 6,
 };
 
+/** G-12: Main sequence star types only (indices 0-6 in STAR_TYPES) */
+const MAIN_SEQUENCE_STAR_TYPES = STAR_TYPES.slice(0, 7);
+const MAIN_SEQUENCE_STAR_WEIGHTS = MAIN_SEQUENCE_STAR_TYPES.map(s => s.weight);
+
 /** Генерация галактики */
 export function generateGalaxy(config: Partial<GalaxyGenConfig> = {}): Galaxy {
   const cfg = { ...DEFAULT_CONFIG, ...config };
@@ -106,7 +125,14 @@ export function generateGalaxy(config: Partial<GalaxyGenConfig> = {}): Galaxy {
   };
 }
 
-/** Генерация позиций в спиральной структуре */
+/**
+ * G-05/G-14 fix: Генерация позиций в спиральной структуре.
+ * Распределение по спецификации §1.1:
+ * - Bulge (ядро): ~15%
+ * - Disk (межрукавное пространство): ~20%
+ * - Arms (спиральные рукава): ~60%
+ * - Halo (ореол): ~5%
+ */
 function generateSpiralPositions(
   cfg: GalaxyGenConfig,
   armRng: Xoshiro256,
@@ -117,12 +143,18 @@ function generateSpiralPositions(
   const positions: Vec2[] = [];
   const armAngleStep = (2 * Math.PI) / cfg.arms;
 
-  // Распределение систем по областям
-  const bulgeCount = Math.floor(cfg.systemCount * cfg.diskFraction * cfg.bulgeDensity);
-  const armCount = cfg.systemCount - bulgeCount - Math.floor(cfg.systemCount * cfg.haloFraction);
-  const haloCount = cfg.systemCount - bulgeCount - armCount;
+  // G-05/G-14 fix: Распределение систем строго по спецификации §1.1
+  const bulgeFraction = 0.15;
+  const diskFraction = 0.20;
+  const armFraction = 0.60;
+  // haloFraction = 0.05 (from config)
 
-  // Ядро (bulge)
+  const haloCount = Math.floor(cfg.systemCount * cfg.haloFraction);
+  const bulgeCount = Math.floor(cfg.systemCount * bulgeFraction);
+  const diskCount = Math.floor(cfg.systemCount * diskFraction);
+  const armCount = cfg.systemCount - bulgeCount - diskCount - haloCount;
+
+  // Ядро (bulge) — ~15%
   for (let i = 0; i < bulgeCount; i++) {
     const angle = bulgeRng.nextFloat() * Math.PI * 2;
     const dist = bulgeRng.nextFloat() * cfg.radius * 0.1;
@@ -132,7 +164,18 @@ function generateSpiralPositions(
     });
   }
 
-  // Спиральные рукава
+  // G-05/G-14 fix: Диск (inter-arm space) — ~20%
+  // Uniform random positions within the galaxy radius, NOT along arms
+  for (let i = 0; i < diskCount; i++) {
+    const angle = diskRng.nextFloat() * Math.PI * 2;
+    const dist = diskRng.nextFloat() * cfg.radius;
+    positions.push({
+      x: Math.cos(angle) * dist,
+      y: Math.sin(angle) * dist,
+    });
+  }
+
+  // Спиральные рукава — ~60%
   for (let i = 0; i < armCount; i++) {
     const arm = armRng.nextInt(0, cfg.arms - 1);
     const armAngle = arm * armAngleStep;
@@ -149,7 +192,7 @@ function generateSpiralPositions(
     });
   }
 
-  // Ореол (halo)
+  // Ореол (halo) — ~5%
   for (let i = 0; i < haloCount; i++) {
     const angle = haloRng.nextFloat() * Math.PI * 2;
     const dist = haloRng.nextFloat() * cfg.radius;
@@ -194,7 +237,7 @@ function generateSystem(position: Vec2, index: number, rng: Xoshiro256, cfg: Gal
     }
   }
 
-  // Планеты (генерируются вокруг главной звезды)
+  // G-03 fix: Планеты используют РЕАЛЬНУЮ звезду (с ±20% вариацией)
   const totalPlanets = rng.nextInt(starDef.minPlanets, starDef.maxPlanets);
   // Множитель стабильности для двойных/тройных
   const stabilityMult = binaryType === 'BINARY_NONE' ? 1.0
@@ -205,15 +248,27 @@ function generateSystem(position: Vec2, index: number, rng: Xoshiro256, cfg: Gal
   const planets: Planet[] = [];
   for (let i = 0; i < planetCount; i++) {
     const planetRng = rng.derive(`planet_${i}`);
-    const planet = generatePlanet(systemId, i + 1, name, starDef, planetRng);
+    // G-03: передаём реальный Star и binaryType
+    const planet = generatePlanet(systemId, i + 1, name, primaryStar, binaryType, planetRng);
     planets.push(planet);
   }
 
-  // Астероидные поля
-  const asteroidFields = rng.nextInt(
+  // G-17 fix: Астероидные поля с бонусами за газовый гигант и двойную систему
+  let asteroidFields = rng.nextInt(
     starDef.type === 'STAR_NS' || starDef.type === 'STAR_PULSAR' ? 1 : 0,
     starDef.type === 'STAR_NS' || starDef.type === 'STAR_PULSAR' ? 4 : 3,
   );
+  const maxAsteroidFields = starDef.type === 'STAR_NS' || starDef.type === 'STAR_PULSAR' ? 4 : 3;
+
+  // +1 если есть газовый гигант (10% bonus rounded up)
+  const hasGasGiant = planets.some(p => p.type === 'gas_giant');
+  if (hasGasGiant) {
+    asteroidFields = Math.min(maxAsteroidFields, asteroidFields + 1);
+  }
+  // +1 если двойная/тройная система (15% bonus rounded up)
+  if (binaryType !== 'BINARY_NONE') {
+    asteroidFields = Math.min(maxAsteroidFields, asteroidFields + 1);
+  }
 
   return {
     id: systemId,
@@ -238,16 +293,24 @@ function selectBinaryType(rng: Xoshiro256): BinaryType {
   return 'BINARY_TRIPLE';
 }
 
-/** P1-07: Выбор спутника для двойной/тройной системы */
+/**
+ * G-12 fix: Выбор спутника для двойной/тройной системы.
+ * «Тот же класс или на 1 ниже» — только среди главной последовательности (indices 0-6).
+ * Специальные типы (WD, RG, NS, PULSAR, BH) не используются для компаньонов.
+ */
 function selectCompanionStar(primaryDef: typeof STAR_TYPES[0], rng: Xoshiro256): typeof STAR_TYPES[0] {
   if (rng.nextBool(0.7)) {
-    // Тот же класс или на 1 ниже
-    const currentIdx = STAR_TYPES.indexOf(primaryDef);
-    const companionIdx = Math.max(0, Math.min(STAR_TYPES.length - 1, currentIdx + rng.nextInt(0, 1)));
-    return STAR_TYPES[companionIdx];
+    // Тот же класс или на 1 ниже — только среди main sequence
+    const currentIdx = MAIN_SEQUENCE_STAR_TYPES.indexOf(primaryDef);
+    // If primary is not in main sequence (special type), pick a random main sequence star
+    if (currentIdx === -1) {
+      return rng.weightedChoice(MAIN_SEQUENCE_STAR_TYPES, MAIN_SEQUENCE_STAR_WEIGHTS);
+    }
+    const companionIdx = Math.max(0, Math.min(MAIN_SEQUENCE_STAR_TYPES.length - 1, currentIdx + rng.nextInt(0, 1)));
+    return MAIN_SEQUENCE_STAR_TYPES[companionIdx];
   }
-  // Случайный класс (взвешенный)
-  return rng.weightedChoice(STAR_TYPES, STAR_WEIGHTS);
+  // Случайный класс (взвешенный, main sequence only — компаньоны не бывают спецтипами)
+  return rng.weightedChoice(MAIN_SEQUENCE_STAR_TYPES, MAIN_SEQUENCE_STAR_WEIGHTS);
 }
 
 /** Создать объект звезды */
@@ -268,34 +331,55 @@ function createStar(systemId: EntityId, systemName: string, starDef: typeof STAR
 /**
  * Генерация планеты.
  *
+ * G-03 fix: получает реальный Star объект (с ±20% вариацией), не starDef
+ * G-13 fix: получает binaryType для корректировки орбитального радиуса
+ * G-02 fix: атмосфера генерируется ДО температуры
+ * G-04/G-06 fix: радиус из PLANET_TYPE_RADIUS, размер из getSizeFromRadius
+ *
  * Физика:
- * - Радиус: по типу + размеру с случайной вариацией
+ * - Радиус: из PLANET_TYPE_RADIUS[тип], размер = getSizeFromRadius(radiusKm)
  * - Плотность: по типу планеты (из 03-planets.md §2.2)
  * - Гравитация: g = (radiusKm/6371) × (density/5.51) (из 03-planets.md §2.2)
- * - Равновесная температура: T_eq = 278K × (L/L☉)^(1/4) × (1AU/r)^(1/2)
- * - Парниковый эффект зависит от типа атмосферы
+ * - Равновесная температура: T_eq = 278.5K × (L/L☉)^(1/4) × (1AU/r)^(1/2)
+ * - Парниковый эффект зависит от РЕАЛЬНОГО типа атмосферы
  * - Орбитальный период: P = 365.25 × sqrt(r³ / M) дней (3-й закон Кеплера)
  * - Ресурсы: ВСЯ таблица «Менделеева» на каждой планете (профильные/редкие/ультраредкие)
  */
-function generatePlanet(systemId: EntityId, orbit: number, systemName: string, starDef: typeof STAR_TYPES[0], rng: Xoshiro256): Planet {
+function generatePlanet(systemId: EntityId, orbit: number, systemName: string, primaryStar: Star, binaryType: BinaryType, rng: Xoshiro256): Planet {
   const planetId = genId('planet');
 
-  // Орбитальный радиус: AU, растёт с номером орбиты (примерно по Тициусу-Боде)
-  const orbitalRadius = 0.3 + orbit * (0.5 + rng.nextFloat() * 0.3);
+  // G-13 fix: Орбитальный радиус с учётом типа двойной системы
+  // BINARY_CLOSE: минимальный радиус = 1.0 AU (планеты дальше от центра масс)
+  // BINARY_WIDE: максимальный радиус ограничен (далёкие планеты менее стабильны)
+  let orbitalRadius = 0.3 + orbit * (0.5 + rng.nextFloat() * 0.3);
 
-  // Тип планеты зависит от РЕАЛЬНОГО орбитального радиуса и звезды
-  const planetDef = selectPlanetType(orbitalRadius, starDef, rng);
+  if (binaryType === 'BINARY_CLOSE') {
+    // Планеты должны быть дальше от центра масс двойной системы
+    orbitalRadius = Math.max(1.0, orbitalRadius);
+  } else if (binaryType === 'BINARY_WIDE') {
+    // Дальние планеты менее стабильны — ограничиваем максимальный радиус
+    const maxStableRadius = 30; // AU — приблизительный предел стабильности
+    orbitalRadius = Math.min(maxStableRadius, orbitalRadius);
+  }
 
-  // Размер с вариацией
-  const sizes: PlanetSize[] = ['tiny', 'small', 'medium', 'large', 'huge'];
-  const baseSize = planetDef.size;
-  const sizeIndex = sizes.indexOf(baseSize);
-  const sizeVar = rng.nextInt(Math.max(0, sizeIndex - 1), Math.min(sizes.length - 1, sizeIndex + 1));
-  const size = sizes[sizeVar];
+  // Тип планеты зависит от орбитального радиуса и реальной светимости звезды
+  const planetDef = selectPlanetType(orbitalRadius, primaryStar, rng);
 
-  // Радиус в км — из диапазона по типу и размеру
-  const radiusRange = PLANET_RADIUS_KM[planetDef.type]?.[size] ?? { min: 3000, max: 7000 };
-  const radiusKm = radiusRange.min + rng.nextFloat() * (radiusRange.max - radiusRange.min);
+  // G-04/G-06 fix: Радиус из PLANET_TYPE_RADIUS, размер из getSizeFromRadius
+  let radiusKm: number;
+  let size: PlanetSize;
+
+  if (planetDef.type === 'gas_giant') {
+    // Газовые гиганты: size = 'huge' (всегда), grid = 0 hexes
+    size = 'huge';
+    const radiusRange = PLANET_TYPE_RADIUS.gas_giant;
+    radiusKm = radiusRange.min + rng.nextFloat() * (radiusRange.max - radiusRange.min);
+  } else {
+    // Остальные: радиус из диапазона типа, размер выводится из радиуса
+    const radiusRange = PLANET_TYPE_RADIUS[planetDef.type];
+    radiusKm = radiusRange.min + rng.nextFloat() * (radiusRange.max - radiusRange.min);
+    size = getSizeFromRadius(radiusKm);
+  }
 
   // Плотность — из диапазона по типу планеты (03-planets.md §2.2)
   const densityRange = PLANET_DENSITY[planetDef.type] ?? { min: 3.0, max: 6.0, avg: 4.5 };
@@ -306,17 +390,18 @@ function generatePlanet(systemId: EntityId, orbit: number, systemName: string, s
   const gravity = (radiusKm / 6371) * (density / 5.51);
 
   // Орбитальный период по 3-му закону Кеплера: P = sqrt(r³ / M) лет
-  const orbitalPeriodYears = Math.sqrt(Math.pow(orbitalRadius, 3) / starDef.mass);
+  // G-03 fix: используем реальную массу звезды
+  const orbitalPeriodYears = Math.sqrt(Math.pow(orbitalRadius, 3) / primaryStar.mass);
   const orbitalPeriodDays = Math.round(orbitalPeriodYears * 365.25);
 
-  // Температура: физическая модель на основе светимости и расстояния
-  const temperature = calculatePlanetTemperature(starDef, orbitalRadius, planetDef, rng);
-
-  // Атмосфера (P1-16: полноценная структура вместо boolean)
+  // G-02 fix: Атмосфера генерируется ДО температуры
   const atmosphere = generateAtmosphere(planetDef, rng);
 
-  // Жизнь (P1-17: полноценная структура вместо boolean)
-  const life = generateLife(planetDef, atmosphere, rng);
+  // Температура: физическая модель с РЕАЛЬНОЙ атмосферой и РЕАЛЬНОЙ звездой
+  const temperature = calculatePlanetTemperature(primaryStar, orbitalRadius, planetDef, atmosphere, rng);
+
+  // Жизнь (передаём температуру для климатических ограничений)
+  const life = generateLife(planetDef, atmosphere, temperature, rng);
 
   // Гекс-сетка (P1-01: 0 гексов для газовых гигантов)
   const hexes = planetDef.type === 'gas_giant'
@@ -334,12 +419,23 @@ function generatePlanet(systemId: EntityId, orbit: number, systemName: string, s
         (_, i) => ({ index: i, buildingId: null, buildingLevel: 0 }))
     : [];
 
-  // Орбитальные слоты (P1-01: для всех планет)
-  const orbitSlotRange = ORBIT_SLOTS[planetDef.type];
-  const orbitSlots: OrbitalSlot[] = Array.from(
-    { length: rng.nextInt(orbitSlotRange.min, orbitSlotRange.max) },
-    (_, i) => ({ index: i, buildingId: null, buildingLevel: 0 }),
-  );
+  // G-15 fix: Орбитальные слоты по размеру (для не-газовых-гигантов)
+  let orbitSlots: OrbitalSlot[];
+  if (planetDef.type === 'gas_giant') {
+    // Газовые гиганты: 6-12 слотов
+    const ggRange = ORBIT_SLOTS.gas_giant;
+    orbitSlots = Array.from(
+      { length: rng.nextInt(ggRange.min, ggRange.max) },
+      (_, i) => ({ index: i, buildingId: null, buildingLevel: 0 }),
+    );
+  } else {
+    // Остальные: фиксированное количество по размеру
+    const slotCount = ORBIT_SLOTS_BY_SIZE[size];
+    orbitSlots = Array.from(
+      { length: slotCount },
+      (_, i) => ({ index: i, buildingId: null, buildingLevel: 0 }),
+    );
+  }
 
   // Имя планеты
   const planetName = `${systemName} ${toRoman(orbit)}`;
@@ -375,14 +471,22 @@ function generatePlanet(systemId: EntityId, orbit: number, systemName: string, s
 /**
  * Расчёт температуры планеты на основе физики.
  *
- * 1. Равновесная температура (равновесие излучения звезды):
- *    T_eq = 278K × (L/L☉)^(1/4) × (1AU/r)^(1/2)
+ * G-02 fix: принимает РЕАЛЬНУЮ атмосферу (не делает свой roll)
+ * G-03 fix: принимает реальный Star (не starDef)
+ * G-18 fix: 278 → 278.5 для лучшей точности
  *
- * 2. Парниковый эффект зависит от атмосферы:
- *    - нет/тонкая → почти нет парника
- *    - стандартная → +30..60K
- *    - плотная → +80..200K
- *    - CO2/метан → сильный парник +100..300K
+ * 1. Равновесная температура (равновесие излучения звезды):
+ *    T_eq = 278.5K × (L/L☉)^(1/4) × (1AU/r)^(1/2)
+ *
+ * 2. Парниковый эффект зависит от РЕАЛЬНОГО типа атмосферы:
+ *    - none → 0K
+ *    - thin → 10-40K
+ *    - standard → 30-60K
+ *    - dense → 80-200K
+ *    - co2 → 100-300K
+ *    - methane → 80-250K
+ *    - toxic → 40-120K
+ *    - inert → 10-30K (минимальный парник)
  *
  * 3. Тип планеты модифицирует (альбедо, геотермалка):
  *    - volcanic → геотермальный нагрев +100..400K
@@ -390,30 +494,47 @@ function generatePlanet(systemId: EntityId, orbit: number, systemName: string, s
  *    - gas_giant → внутренний нагрев
  */
 function calculatePlanetTemperature(
-  starDef: typeof STAR_TYPES[0],
+  star: Star,
   orbitalRadiusAU: number,
   planetDef: typeof PLANET_TYPES[0],
+  atmosphere: Atmosphere,
   rng: Xoshiro256,
 ): number {
   // Защита от деления на ноль и отрицательных значений
   const r = Math.max(0.05, orbitalRadiusAU);
-  const L = Math.max(0.001, starDef.luminosity);
+  const L = Math.max(0.001, star.luminosity);
 
-  // Равновесная температура в Кельвинах (по закону Стефана-Больцмана)
-  // T_eq = 278 * L^(1/4) * r^(-1/2) K
-  const T_eq = 278 * Math.pow(L, 0.25) * Math.pow(r, -0.5);
+  // G-18 fix: Равновесная температура в Кельвинах — 278.5 вместо 278
+  // T_eq = 278.5 * L^(1/4) * r^(-1/2) K
+  const T_eq = 278.5 * Math.pow(L, 0.25) * Math.pow(r, -0.5);
 
-  // Парниковый эффект (будет уточнён после генерации атмосферы, но здесь предварительный)
-  const atmoChance = planetDef.atmosphereChance;
-  const hasAtmo = rng.nextBool(atmoChance);
+  // G-02 fix: Парниковый эффект на основе РЕАЛЬНОГО типа атмосферы
   let greenhouseK = 0;
-  if (hasAtmo) {
-    const atmoRoll = rng.nextFloat();
-    if (atmoRoll < 0.3) greenhouseK = 10 + rng.nextFloat() * 30;     // тонкая
-    else if (atmoRoll < 0.6) greenhouseK = 30 + rng.nextFloat() * 60; // стандартная
-    else if (atmoRoll < 0.75) greenhouseK = 80 + rng.nextFloat() * 120; // плотная
-    else if (atmoRoll < 0.85) greenhouseK = 100 + rng.nextFloat() * 200; // CO2
-    else greenhouseK = 80 + rng.nextFloat() * 150; // метан/токсичная
+  switch (atmosphere.type) {
+    case 'none':
+      greenhouseK = 0;
+      break;
+    case 'thin':
+      greenhouseK = 10 + rng.nextFloat() * 30;       // 10-40K
+      break;
+    case 'standard':
+      greenhouseK = 30 + rng.nextFloat() * 60;        // 30-60K  (was 30-90)
+      break;
+    case 'dense':
+      greenhouseK = 80 + rng.nextFloat() * 120;       // 80-200K
+      break;
+    case 'co2':
+      greenhouseK = 100 + rng.nextFloat() * 200;      // 100-300K
+      break;
+    case 'methane':
+      greenhouseK = 80 + rng.nextFloat() * 170;       // 80-250K
+      break;
+    case 'toxic':
+      greenhouseK = 40 + rng.nextFloat() * 80;        // 40-120K
+      break;
+    case 'inert':
+      greenhouseK = 10 + rng.nextFloat() * 20;        // 10-30K (минимальный парник)
+      break;
   }
 
   // Модификатор типа планеты
@@ -461,65 +582,86 @@ function generateAtmosphere(planetDef: typeof PLANET_TYPES[0], rng: Xoshiro256):
   return { type, pressure, composition: [] };
 }
 
+/**
+ * G-08 fix: Газовый гигант — распределение типов атмосферы.
+ * inert = 5%, toxic = 4% (было наоборот).
+ * dense=36%, standard=5%, methane=25%, co2=25%, inert=5%, toxic=4%
+ */
 function selectGasGiantAtmosphereType(rng: Xoshiro256): AtmosphereType {
-  // H-02 fix: добавлен toxic (4%), inert исправлен на 5% по 03-planets.md §2.4
   const roll = rng.nextFloat() * 100;
   if (roll < 36) return 'dense';
   if (roll < 41) return 'standard';
   if (roll < 66) return 'methane';
   if (roll < 91) return 'co2';
-  if (roll < 95) return 'inert';
-  return 'toxic';
+  if (roll < 96) return 'inert';    // G-08 fix: 5% (было 4%)
+  return 'toxic';                    // G-08 fix: 4% (было 5%)
 }
 
+/**
+ * G-07 fix: Условные вероятности типов атмосферы по спецификации §2.4.
+ * Даны УСЛОВНЫЕ вероятности (при наличии атмосферы).
+ * Порядок: thin, standard, dense, toxic, inert, methane, co2
+ */
 function selectAtmosphereType(planetType: string, rng: Xoshiro256): AtmosphereType {
   const roll = rng.nextFloat() * 100;
   switch (planetType) {
     case 'rocky':
+      // G-07: thin=40%, standard=35%, dense=7.5%, toxic=5%, inert=5%, methane=2.5%, co2=5%
       if (roll < 40) return 'thin';
-      if (roll < 75) return 'standard';
-      if (roll < 88) return 'dense';
-      if (roll < 93) return 'toxic';
-      if (roll < 96) return 'inert';
-      if (roll < 98) return 'methane';
-      return 'co2';
+      if (roll < 75) return 'standard';       // 40+35=75
+      if (roll < 82.5) return 'dense';         // 75+7.5=82.5
+      if (roll < 87.5) return 'toxic';         // 82.5+5=87.5
+      if (roll < 92.5) return 'inert';         // 87.5+5=92.5
+      if (roll < 95) return 'methane';         // 92.5+2.5=95
+      return 'co2';                             // 95+5=100
+
     case 'volcanic':
-      if (roll < 15) return 'thin';
-      if (roll < 25) return 'standard';
-      if (roll < 42) return 'dense';
-      if (roll < 72) return 'toxic';
-      if (roll < 82) return 'inert';
-      if (roll < 88) return 'methane';
-      return 'co2';
+      // G-07: thin=10%, standard=5%, dense=20%, toxic=30%, inert=10%, methane=3.3%, co2=21.7%
+      if (roll < 10) return 'thin';
+      if (roll < 15) return 'standard';        // 10+5=15
+      if (roll < 35) return 'dense';            // 15+20=35
+      if (roll < 65) return 'toxic';            // 35+30=65
+      if (roll < 75) return 'inert';            // 65+10=75
+      if (roll < 78.3) return 'methane';        // 75+3.3=78.3
+      return 'co2';                              // 78.3+21.7=100
+
     case 'ice':
-      if (roll < 50) return 'thin';
-      if (roll < 55) return 'standard';
-      if (roll < 58) return 'dense';
-      if (roll < 60) return 'toxic';
-      if (roll < 72) return 'inert';
-      if (roll < 78) return 'methane';
-      return 'co2';
+      // G-07: thin=40%, standard=5%, dense=5%, toxic=5%, inert=15%, methane=10%, co2=20%
+      if (roll < 40) return 'thin';
+      if (roll < 45) return 'standard';        // 40+5=45
+      if (roll < 50) return 'dense';            // 45+5=50
+      if (roll < 55) return 'toxic';            // 50+5=55
+      if (roll < 70) return 'inert';            // 55+15=70
+      if (roll < 80) return 'methane';          // 70+10=80
+      return 'co2';                              // 80+20=100
+
     case 'oceanic':
-      if (roll < 20) return 'thin';
-      if (roll < 72) return 'standard';
-      if (roll < 90) return 'dense';
-      if (roll < 93) return 'toxic';
-      if (roll < 96) return 'inert';
-      if (roll < 98) return 'methane';
-      return 'co2';
+      // G-07: thin=14.1%, standard=55.3%, dense=20%, toxic=2.4%, inert=2.4%, methane=1.2%, co2=4.7%
+      if (roll < 14.1) return 'thin';
+      if (roll < 69.4) return 'standard';      // 14.1+55.3=69.4
+      if (roll < 89.4) return 'dense';          // 69.4+20=89.4
+      if (roll < 91.8) return 'toxic';          // 89.4+2.4=91.8
+      if (roll < 94.2) return 'inert';          // 91.8+2.4=94.2
+      if (roll < 95.4) return 'methane';        // 94.2+1.2=95.4
+      return 'co2';                              // 95.4+4.7≈100
+
     case 'desert':
-      if (roll < 30) return 'thin';
-      if (roll < 35) return 'standard';
-      if (roll < 38) return 'dense';
-      if (roll < 50) return 'toxic';
-      if (roll < 60) return 'inert';
-      if (roll < 75) return 'methane';
-      return 'co2';
+      // G-07: thin=26.7%, standard=6.7%, dense=6.7%, toxic=13.3%, inert=13.3%, methane=13.3%, co2=20%
+      if (roll < 26.7) return 'thin';
+      if (roll < 33.4) return 'standard';      // 26.7+6.7=33.4
+      if (roll < 40.1) return 'dense';          // 33.4+6.7=40.1
+      if (roll < 53.4) return 'toxic';          // 40.1+13.3=53.4
+      if (roll < 66.7) return 'inert';          // 53.4+13.3=66.7
+      if (roll < 80) return 'methane';          // 66.7+13.3=80
+      return 'co2';                              // 80+20=100
+
     case 'dwarf':
-      if (roll < 70) return 'thin';
-      if (roll < 75) return 'standard';
-      if (roll < 85) return 'inert';
-      return 'co2';
+      // G-07: thin=50%, standard=10%, inert=30%, co2=10%
+      if (roll < 50) return 'thin';
+      if (roll < 60) return 'standard';        // 50+10=60
+      if (roll < 90) return 'inert';            // 60+30=90
+      return 'co2';                              // 90+10=100
+
     default:
       return 'thin';
   }
@@ -538,29 +680,85 @@ function getAtmospherePressure(type: AtmosphereType, rng: Xoshiro256): number {
   }
 }
 
-/** P1-17: Генерация жизни */
-function generateLife(planetDef: typeof PLANET_TYPES[0], atmosphere: Atmosphere, rng: Xoshiro256): PlanetLife {
-  // Нет жизни на газовых гигантах и без атмосферы
-  if (planetDef.type === 'gas_giant' || atmosphere.type === 'none' || atmosphere.type === 'toxic') {
+/**
+ * G-09/G-01/G-10/G-11 fix: Генерация жизни.
+ *
+ * 1. Использует per-type LIFE_LEVEL_WEIGHTS из спецификации §1.2
+ * 2. Температурные ограничения: если < -20°C или > +80°C → только microbes или none
+ * 3. Для complex/simple жизни требуется standard или dense атмосфера
+ * 4. Токсичная атмосфера разрешает микробов (экстремофилы), НЕ блокирует полностью
+ * 5. Газовые гиганты — без жизни
+ * 6. Без атмосферы — без жизни
+ */
+function generateLife(
+  planetDef: typeof PLANET_TYPES[0],
+  atmosphere: Atmosphere,
+  temperature: number,
+  rng: Xoshiro256,
+): PlanetLife {
+  // Газовые гиганты — без жизни
+  if (planetDef.type === 'gas_giant') {
     return { level: 'none', biodiversity: 0, compatibleWithColonists: false, hazardLevel: 0 };
   }
 
-  if (!rng.nextBool(planetDef.lifeChance)) {
+  // Без атмосферы — без жизни
+  if (atmosphere.type === 'none') {
     return { level: 'none', biodiversity: 0, compatibleWithColonists: false, hazardLevel: 0 };
   }
 
-  // Определяем уровень жизни
-  const roll = rng.nextFloat() * 100;
-  let level: LifeLevel;
-  if (roll < 50) level = 'microbes';
-  else if (roll < 75) level = 'plants';
-  else if (roll < 90) level = 'simple';
-  else level = 'complex';
+  // G-09 fix: Токсичная атмосфера НЕ блокирует жизнь полностью — экстремофилы возможны
+  // (убрано из блока "нет жизни", микробы разрешены)
+
+  // G-09: Используем per-type взвешенный выбор из LIFE_LEVEL_WEIGHTS
+  const weights = LIFE_LEVEL_WEIGHTS[planetDef.type as keyof typeof LIFE_LEVEL_WEIGHTS];
+  if (!weights) {
+    return { level: 'none', biodiversity: 0, compatibleWithColonists: false, hazardLevel: 0 };
+  }
+
+  // levels: [none, microbes, plants, simple, complex]
+  const levels: LifeLevel[] = ['none', 'microbes', 'plants', 'simple', 'complex'];
+  const totalWeight = weights.reduce((a, b) => a + b, 0);
+
+  if (totalWeight === 0) {
+    return { level: 'none', biodiversity: 0, compatibleWithColonists: false, hazardLevel: 0 };
+  }
+
+  // Взвешенный выбор уровня жизни
+  let roll = rng.nextFloat() * totalWeight;
+  let level: LifeLevel = 'none';
+  for (let i = 0; i < weights.length; i++) {
+    roll -= weights[i];
+    if (roll <= 0) {
+      level = levels[i];
+      break;
+    }
+  }
+
+  // G-10 fix: Температурные ограничения — экстремальные температуры
+  // Если температура < -20°C или > +80°C → только microbes или none
+  if (temperature < -20 || temperature > 80) {
+    if (level !== 'none' && level !== 'microbes') {
+      level = 'microbes';
+    }
+  }
+
+  // G-11 fix: Для complex/simple жизни требуется standard или dense атмосфера
+  if ((level === 'complex' || level === 'simple') &&
+      atmosphere.type !== 'standard' && atmosphere.type !== 'dense') {
+    // Понижаем до plants если атмосфера тонкая/токсичная/и т.д.
+    level = 'plants';
+    // Для plants тоже нужна хотя бы thin атмосфера (уже есть, т.к. none обработан выше)
+  }
+
+  // Токсичная атмосфера ограничивает до microbes (экстремофилы)
+  if (atmosphere.type === 'toxic' && level !== 'none' && level !== 'microbes') {
+    level = 'microbes';
+  }
 
   return {
     level,
-    biodiversity: rng.nextFloat(),
-    compatibleWithColonists: rng.nextBool(0.3),
+    biodiversity: level === 'none' ? 0 : rng.nextFloat(),
+    compatibleWithColonists: level !== 'none' && rng.nextBool(0.3),
     hazardLevel: level === 'complex' ? rng.nextInt(1, 3) : 0,
   };
 }
@@ -568,16 +766,23 @@ function generateLife(planetDef: typeof PLANET_TYPES[0], atmosphere: Atmosphere,
 /**
  * Выбор типа планеты на основе РЕАЛЬНОГО орбитального радиуса и типа звезды.
  *
- * Ключевые отличия от предыдущей версии:
- * 1. Использует РЕАЛЬНЫЙ orbitalRadius, а не фиксированную оценку
+ * G-03 fix: принимает реальный Star объект
+ * G-16 fix: добавлена линия снега (snow line) как вторая зона
+ *
+ * Ключевые отличия:
+ * 1. Использует РЕАЛЬНЫЙ orbitalRadius и РЕАЛЬНУЮ светимость звезды
  * 2. Все 7 типов планет доступны в КАЖДОЙ зоне (с разными весами)
  * 3. 10% шанс «аномальной» планеты — тип не из основной зоны
- * 4. Карликовые планеты добавлены во все зоны
+ * 4. Линия снега: R_snow = 2.7 × sqrt(L) AU — за ней лед/газовые гиганты вероятнее
  */
-function selectPlanetType(orbitalRadius: number, starDef: typeof STAR_TYPES[0], rng: Xoshiro256): typeof PLANET_TYPES[0] {
-  const L = Math.max(0.001, starDef.luminosity);
+function selectPlanetType(orbitalRadius: number, star: Star, rng: Xoshiro256): typeof PLANET_TYPES[0] {
+  const L = Math.max(0.001, star.luminosity);
   const hzInner = Math.sqrt(L / 1.1);
   const hzOuter = Math.sqrt(L / 0.53);
+
+  // G-16 fix: Линия снега — R_snow = 2.7 × sqrt(L) AU
+  const snowLine = 2.7 * Math.sqrt(L);
+
   const r = Math.max(0.05, orbitalRadius);
 
   // 10% шанс аномальной планеты (любой тип с равными весами)
@@ -588,9 +793,11 @@ function selectPlanetType(orbitalRadius: number, starDef: typeof STAR_TYPES[0], 
     );
   }
 
-  // Определяем зону
+  // Определяем зону (с учётом линии снега)
   const inHZ = r >= hzInner && r <= hzOuter;
   const innerThanHZ = r < hzInner;
+  // G-16: за линией снега лед и газовые гиганты значительно вероятнее
+  const beyondSnowLine = r > snowLine;
 
   if (innerThanHZ) {
     // Внутренняя зона → горячие планеты преобладают
@@ -621,19 +828,34 @@ function selectPlanetType(orbitalRadius: number, starDef: typeof STAR_TYPES[0], 
         12,  // dwarf — умеренно
       ],
     );
-  } else {
-    // Внешняя зона → холодные и газовые
-    const farness = Math.min(1, (r - hzOuter) / Math.max(0.1, hzOuter));
+  } else if (beyondSnowLine) {
+    // G-16 fix: За линией снега → лед и газовые гиганты значительно вероятнее
+    const farness = Math.min(1, (r - snowLine) / Math.max(0.1, snowLine));
     return rng.weightedChoice(
       PLANET_TYPES,
       [
-        Math.max(3, 10 - farness * 8),   // rocky — убывает
-        Math.max(1, 3 - farness * 2),     // volcanic — редко
-        Math.max(5, 20 + farness * 25),  // ice — возрастает
-        Math.max(2, 5 - farness * 3),     // oceanic — убывает
-        Math.max(2, 8 - farness * 5),     // desert — убывает
-        Math.max(5, 25 + farness * 30),  // gas_giant — возрастает
-        Math.max(5, 15 + farness * 10),  // dwarf — возрастает
+        Math.max(2, 5 - farness * 4),     // rocky — очень редко
+        Math.max(1, 2 - farness),          // volcanic — почти нет
+        Math.max(10, 35 + farness * 25),  // ice — доминирует
+        Math.max(1, 3 - farness * 2),      // oceanic — почти нет
+        Math.max(1, 4 - farness * 3),      // desert — редко
+        Math.max(15, 35 + farness * 20),  // gas_giant — очень частый
+        Math.max(8, 15 + farness * 10),   // dwarf — умеренно
+      ],
+    );
+  } else {
+    // Между HZ и снеговой линией → переходная зона
+    const farness = Math.min(1, (r - hzOuter) / Math.max(0.1, snowLine - hzOuter));
+    return rng.weightedChoice(
+      PLANET_TYPES,
+      [
+        Math.max(3, 10 - farness * 8),    // rocky — убывает
+        Math.max(1, 3 - farness * 2),      // volcanic — редко
+        Math.max(5, 20 + farness * 20),   // ice — возрастает
+        Math.max(2, 5 - farness * 3),      // oceanic — убывает
+        Math.max(2, 8 - farness * 5),      // desert — убывает
+        Math.max(5, 25 + farness * 25),   // gas_giant — возрастает
+        Math.max(5, 15 + farness * 10),   // dwarf — возрастает
       ],
     );
   }
@@ -974,32 +1196,35 @@ function ensureConnectivity(systems: StarSystem[], rng: Xoshiro256, cfg: GalaxyG
 
 /** Генерация имени системы (L-02 fix: расширены пулы + числовой суффикс для уникальности) */
 const GREEK = ['Alpha', 'Beta', 'Gamma', 'Delta', 'Epsilon', 'Zeta', 'Eta', 'Theta', 'Iota', 'Kappa', 'Lambda', 'Mu', 'Nu', 'Xi', 'Omicron', 'Pi', 'Rho', 'Sigma', 'Tau', 'Upsilon', 'Phi', 'Chi', 'Psi', 'Omega'];
-const CONSTELLATIONS = ['Centauri', 'Cygni', 'Draconis', 'Eridani', 'Hydrae', 'Leonis', 'Lyrae', 'Orionis', 'Pegasi', 'Phoenicis', 'Serpentis', 'Tauri', 'Ursae', 'Velorum', 'Aquilae', 'Bootis', 'Carinae', 'Crucis', 'Geminorum', 'Herculis', 'Librae', 'Puppis', 'Scorpii', 'Virginis'];
+const CONSTELLATIONS = ['Centauri', 'Cygni', 'Draconis', 'Eridani', 'Hydrae', 'Leonis', 'Lyrae', 'Orionis', 'Pegasi', 'Phoenicis', 'Serpentis', 'Tauri', 'Ursae', 'Velorum', 'Virginis'];
 const usedNames = new Set<string>();
 
 function generateSystemName(rng: Xoshiro256, index: number): string {
-  const greek = rng.nextChoice(GREEK);
-  const constellation = rng.nextChoice(CONSTELLATIONS);
-  let name = `${greek} ${constellation}`;
-  // Добавляем числовой суффикс если имя уже занято
-  if (usedNames.has(name)) {
-    let suffix = 2;
-    while (usedNames.has(`${name} ${suffix}`)) suffix++;
-    name = `${name} ${suffix}`;
+  // Пробуем сгенерировать уникальное имя
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const greek = rng.nextChoice(GREEK);
+    const constellation = rng.nextChoice(CONSTELLATIONS);
+    const suffix = attempt > 0 ? `-${rng.nextInt(1, 999)}` : '';
+    const name = `${greek} ${constellation}${suffix}`;
+    if (!usedNames.has(name)) {
+      usedNames.add(name);
+      return name;
+    }
   }
-  usedNames.add(name);
-  return name;
+  // Fallback — числовое имя
+  return `System-${index + 1}`;
 }
 
-/** Число → римская цифра */
-function toRoman(n: number): string {
-  const map: [number, string][] = [[10, 'X'], [9, 'IX'], [5, 'V'], [4, 'IV'], [1, 'I']];
+/** Конвертация числа в римские цифры */
+function toRoman(num: number): string {
+  const values = [1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1];
+  const numerals = ['M', 'CM', 'D', 'CD', 'C', 'XC', 'L', 'XL', 'X', 'IX', 'V', 'IV', 'I'];
   let result = '';
-  let num = n;
-  for (const [value, symbol] of map) {
-    while (num >= value) {
-      result += symbol;
-      num -= value;
+  let n = num;
+  for (let i = 0; i < values.length; i++) {
+    while (n >= values[i]) {
+      result += numerals[i];
+      n -= values[i];
     }
   }
   return result;

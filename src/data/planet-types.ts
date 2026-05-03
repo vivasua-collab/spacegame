@@ -2,6 +2,10 @@
  * Определения типов планет.
  * Все параметры из документации 03-planets.md.
  * Terrain weights, temperature ranges, atmosphere chances — строго по документации.
+ *
+ * G-01 fix: lifeChance приведены к спецификации §1.2
+ * G-04/G-06 fix: добавлен PLANET_TYPE_RADIUS и getSizeFromRadius() — размер из R⊕
+ * G-15/G-23 fix: добавлен ORBIT_SLOTS_BY_SIZE — орбитальные слоты по размеру
  */
 
 import type { PlanetDef, PlanetType, PlanetSize, HexTerrain } from '@/core/types';
@@ -17,15 +21,44 @@ export const PLANET_DENSITY: Record<PlanetType, { min: number; max: number; avg:
   dwarf:    { min: 2.0, max: 5.0, avg: 3.5 },
 };
 
-/** Диапазоны радиуса (км) по типу и размеру. Из 03-planets.md §1.1, §2.1 */
-export const PLANET_RADIUS_KM: Record<PlanetType, Record<PlanetSize, { min: number; max: number }>> = {
-  rocky:    { tiny: { min: 1000, max: 2000 }, small: { min: 2000, max: 4500 }, medium: { min: 4500, max: 7000 }, large: { min: 7000, max: 9000 }, huge: { min: 9000, max: 12700 } },
-  volcanic: { tiny: { min: 1500, max: 2500 }, small: { min: 2500, max: 5000 }, medium: { min: 5000, max: 8000 }, large: { min: 8000, max: 10500 }, huge: { min: 10500, max: 14000 } },
-  ice:      { tiny: { min: 500, max: 1500 }, small: { min: 1500, max: 3500 }, medium: { min: 3500, max: 6000 }, large: { min: 6000, max: 8500 }, huge: { min: 8500, max: 11000 } },
-  oceanic:  { tiny: { min: 2500, max: 4000 }, small: { min: 4000, max: 5500 }, medium: { min: 5500, max: 7500 }, large: { min: 7500, max: 10000 }, huge: { min: 10000, max: 13000 } },
-  desert:   { tiny: { min: 1000, max: 2000 }, small: { min: 2000, max: 4000 }, medium: { min: 4000, max: 6500 }, large: { min: 6500, max: 9000 }, huge: { min: 9000, max: 12000 } },
-  gas_giant:{ tiny: { min: 25000, max: 35000 }, small: { min: 35000, max: 45000 }, medium: { min: 45000, max: 55000 }, large: { min: 55000, max: 65000 }, huge: { min: 65000, max: 80000 } },
-  dwarf:    { tiny: { min: 500, max: 1000 }, small: { min: 1000, max: 1500 }, medium: { min: 1500, max: 2000 }, large: { min: 2000, max: 2500 }, huge: { min: 2500, max: 3000 } },
+/**
+ * G-04/G-06 fix: Диапазоны радиуса по типу планеты (км).
+ * Из 03-planets.md §1.1 — единый диапазон на тип, НЕ на размер.
+ * Размер сетки ВЫВОДИТСЯ из радиуса через getSizeFromRadius().
+ */
+export const PLANET_TYPE_RADIUS: Record<PlanetType, { min: number; max: number }> = {
+  rocky:    { min: 2000, max: 7000 },
+  volcanic: { min: 2500, max: 8000 },
+  ice:      { min: 1500, max: 6000 },
+  oceanic:  { min: 4000, max: 8000 },
+  desert:   { min: 2000, max: 6500 },
+  gas_giant:{ min: 25000, max: 80000 },
+  dwarf:    { min: 500, max: 2000 },
+};
+
+/**
+ * G-06 fix: Определение размера сетки из радиуса в R⊕.
+ * Из 03-planets.md §2.1 — единый источник истины.
+ */
+export function getSizeFromRadius(radiusKm: number): PlanetSize {
+  const R = radiusKm / 6371; // в Earth radii
+  if (R < 0.3) return 'tiny';
+  if (R < 0.7) return 'small';
+  if (R < 1.3) return 'medium';
+  if (R < 2.0) return 'large';
+  return 'huge';
+}
+
+/**
+ * G-15/G-23 fix: Орбитальные слоты по размеру планеты.
+ * Из 03-planets.md §3.2.3.
+ */
+export const ORBIT_SLOTS_BY_SIZE: Record<PlanetSize, number> = {
+  tiny: 3,
+  small: 4,
+  medium: 5,
+  large: 5,
+  huge: 6,
 };
 
 /**
@@ -65,7 +98,7 @@ export const PLANET_TYPES: PlanetDef[] = [
     baseGravity: 0.8,
     temperatureRange: [-50, 150],
     atmosphereChance: 0.4,
-    lifeChance: 0.05,
+    lifeChance: 0.5,  // G-01 fix: спец §1.2.1 — 50% с жизнью (микробы 30%, растения 15%, простая 5%)
     terrainWeights: { plains: 40, mountains: 30, desert: 20, ice: 0, ocean: 0, volcano: 0, jungle: 10 },
   },
   {
@@ -76,7 +109,7 @@ export const PLANET_TYPES: PlanetDef[] = [
     baseGravity: 0.9,
     temperatureRange: [200, 800],
     atmosphereChance: 0.6,
-    lifeChance: 0,
+    lifeChance: 0.05,  // G-01 fix: спец §1.2.2 — 5% (микробы-экстремофилы)
     terrainWeights: { plains: 25, mountains: 30, desert: 0, ice: 0, ocean: 0, volcano: 45, jungle: 0 },
   },
   {
@@ -87,7 +120,7 @@ export const PLANET_TYPES: PlanetDef[] = [
     baseGravity: 0.5,
     temperatureRange: [-230, -30],
     atmosphereChance: 0.2,
-    lifeChance: 0.01,
+    lifeChance: 0.15,  // G-01 fix: спец §1.2.3 — 15% (микробы)
     terrainWeights: { plains: 25, mountains: 25, desert: 0, ice: 50, ocean: 0, volcano: 0, jungle: 0 },
   },
   {
@@ -98,7 +131,7 @@ export const PLANET_TYPES: PlanetDef[] = [
     baseGravity: 1.0,
     temperatureRange: [-10, 60],
     atmosphereChance: 0.85,
-    lifeChance: 0.4,
+    lifeChance: 0.95,  // G-01 fix: спец §1.2.4 — 95% с жизнью
     terrainWeights: { plains: 15, mountains: 5, desert: 0, ice: 0, ocean: 65, volcano: 0, jungle: 15 },
   },
   {
@@ -109,7 +142,7 @@ export const PLANET_TYPES: PlanetDef[] = [
     baseGravity: 0.7,
     temperatureRange: [30, 250],
     atmosphereChance: 0.15,
-    lifeChance: 0.02,
+    lifeChance: 0.25,  // G-01 fix: спец §1.2.5 — 25% (микробы 20%, растения 5%)
     terrainWeights: { plains: 20, mountains: 25, desert: 55, ice: 0, ocean: 0, volcano: 0, jungle: 0 },
   },
   {
@@ -131,7 +164,7 @@ export const PLANET_TYPES: PlanetDef[] = [
     baseGravity: 0.2,
     temperatureRange: [-230, 50],
     atmosphereChance: 0.1,
-    lifeChance: 0,
+    lifeChance: 0.02,  // G-01 fix: спец §1.2.7 — 2% (микробы)
     terrainWeights: { plains: 50, mountains: 30, desert: 0, ice: 20, ocean: 0, volcano: 0, jungle: 0 },
   },
 ];
@@ -196,18 +229,36 @@ export const TYPE_NAMES: Record<PlanetType, string> = {
 
 /**
  * Количество атмосферных слотов для газовых гигантов.
+ * Из 03-planets.md §3.2.2.
  */
 export const GAS_GIANT_ATMOSPHERE_SLOTS = { min: 6, max: 12 };
 
 /**
  * Количество орбитальных слотов по типу планеты.
+ * G-15 note: Используется ТОЛЬКО для газовых гигантов (6-12).
+ * Для остальных типов — используйте ORBIT_SLOTS_BY_SIZE.
  */
 export const ORBIT_SLOTS: Record<PlanetType, { min: number; max: number }> = {
-  rocky: { min: 3, max: 5 },
-  volcanic: { min: 3, max: 5 },
-  ice: { min: 3, max: 5 },
-  oceanic: { min: 3, max: 5 },
-  desert: { min: 3, max: 5 },
-  gas_giant: { min: 6, max: 12 },
-  dwarf: { min: 2, max: 4 },
+  rocky: { min: 4, max: 5 },      // size small=4, medium=5, large=5
+  volcanic: { min: 4, max: 5 },    // size small=4, medium=5
+  ice: { min: 3, max: 5 },        // size tiny=3, small=4, medium=5
+  oceanic: { min: 4, max: 6 },    // size small=4, medium=5, large=5, huge=6
+  desert: { min: 4, max: 5 },     // size small=4, medium=5
+  gas_giant: { min: 6, max: 12 }, // спец диапазон для ГГ
+  dwarf: { min: 3, max: 3 },      // size tiny=3
+};
+
+/**
+ * G-09: Вероятности уровней жизни по типу планеты.
+ * Из 03-planets.md §1.2 — каждый тип имеет своё распределение.
+ * Порядок: [нет, микробы, растения, простая, сложная]
+ */
+export const LIFE_LEVEL_WEIGHTS: Record<PlanetType, [number, number, number, number, number]> = {
+  rocky:    [50, 30, 15, 5, 0],     // §1.2.1: нет 50%, микробы 30%, растения 15%, простая 5%, сложная 0%
+  volcanic: [95, 5, 0, 0, 0],       // §1.2.2: нет 95%, экстремофилы 5%
+  ice:      [85, 15, 0, 0, 0],      // §1.2.3: нет 85%, микробы 15%
+  oceanic:  [5, 10, 30, 35, 20],    // §1.2.4: нет 5%, микробы 10%, растения 30%, простая 35%, сложная 20%
+  desert:   [75, 20, 5, 0, 0],      // §1.2.5: нет 75%, микробы 20%, растения 5%
+  gas_giant:[100, 0, 0, 0, 0],      // §1.2.6: нет 100%
+  dwarf:    [98, 2, 0, 0, 0],       // §1.2.7: нет 98%, микробы 2%
 };
