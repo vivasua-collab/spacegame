@@ -63,6 +63,7 @@ export function generateGalaxy(config: Partial<GalaxyGenConfig> = {}): Galaxy {
   const cfg = { ...DEFAULT_CONFIG, ...config };
   const mainRng = new Xoshiro256(cfg.seed);
   nextId = 1; // сброс для воспроизводимости
+  usedNames.clear(); // L-02: сброс имён при новой генерации
 
   // P1-29: именованные под-seed'ы для воспроизводимости
   const armRng = mainRng.derive('arms');
@@ -336,15 +337,17 @@ function generatePlanet(systemId: EntityId, orbit: number, systemName: string, s
   };
 }
 
-/** P1-16: Генерация атмосферы */
+/** P1-16: Генерация атмосферы (C-01 fix: газовые гиганты обрабатываются первым приоритетом) */
 function generateAtmosphere(planetDef: typeof PLANET_TYPES[0], rng: Xoshiro256): Atmosphere {
-  const hasAtmosphere = rng.nextBool(planetDef.atmosphereChance);
+  // Газовые гиганты ВСЕГДА имеют атмосферу — обрабатываем первым
+  if (planetDef.type === 'gas_giant') {
+    const type = selectGasGiantAtmosphereType(rng);
+    const pressure = getAtmospherePressure(type, rng);
+    return { type, pressure, composition: [] };
+  }
 
-  if (!hasAtmosphere || planetDef.type === 'gas_giant' && !rng.nextBool(planetDef.atmosphereChance)) {
-    // Для газовых гигантов атмосфера всегда есть
-    if (planetDef.type === 'gas_giant') {
-      return { type: selectGasGiantAtmosphereType(rng), pressure: rng.nextFloat() * 5 + 1, composition: [] };
-    }
+  const hasAtmosphere = rng.nextBool(planetDef.atmosphereChance);
+  if (!hasAtmosphere) {
     return { type: 'none', pressure: 0, composition: [] };
   }
 
@@ -356,12 +359,14 @@ function generateAtmosphere(planetDef: typeof PLANET_TYPES[0], rng: Xoshiro256):
 }
 
 function selectGasGiantAtmosphereType(rng: Xoshiro256): AtmosphereType {
+  // H-02 fix: добавлен toxic (4%), inert исправлен на 5% по 03-planets.md §2.4
   const roll = rng.nextFloat() * 100;
   if (roll < 36) return 'dense';
   if (roll < 41) return 'standard';
   if (roll < 66) return 'methane';
   if (roll < 91) return 'co2';
-  return 'inert';
+  if (roll < 95) return 'inert';
+  return 'toxic';
 }
 
 function selectAtmosphereType(planetType: string, rng: Xoshiro256): AtmosphereType {
@@ -633,14 +638,23 @@ function ensureConnectivity(systems: StarSystem[], rng: Xoshiro256, cfg: GalaxyG
   }
 }
 
-/** Генерация имени системы */
-const GREEK = ['Alpha', 'Beta', 'Gamma', 'Delta', 'Epsilon', 'Zeta', 'Eta', 'Theta', 'Iota', 'Kappa', 'Lambda', 'Mu'];
-const CONSTELLATIONS = ['Centauri', 'Cygni', 'Draconis', 'Eridani', 'Hydrae', 'Leonis', 'Lyrae', 'Orionis', 'Pegasi', 'Phoenicis', 'Serpentis', 'Tauri', 'Ursae', 'Velorum'];
+/** Генерация имени системы (L-02 fix: расширены пулы + числовой суффикс для уникальности) */
+const GREEK = ['Alpha', 'Beta', 'Gamma', 'Delta', 'Epsilon', 'Zeta', 'Eta', 'Theta', 'Iota', 'Kappa', 'Lambda', 'Mu', 'Nu', 'Xi', 'Omicron', 'Pi', 'Rho', 'Sigma', 'Tau', 'Upsilon', 'Phi', 'Chi', 'Psi', 'Omega'];
+const CONSTELLATIONS = ['Centauri', 'Cygni', 'Draconis', 'Eridani', 'Hydrae', 'Leonis', 'Lyrae', 'Orionis', 'Pegasi', 'Phoenicis', 'Serpentis', 'Tauri', 'Ursae', 'Velorum', 'Aquilae', 'Bootis', 'Carinae', 'Crucis', 'Geminorum', 'Herculis', 'Librae', 'Puppis', 'Scorpii', 'Virginis'];
+const usedNames = new Set<string>();
 
 function generateSystemName(rng: Xoshiro256, index: number): string {
   const greek = rng.nextChoice(GREEK);
   const constellation = rng.nextChoice(CONSTELLATIONS);
-  return `${greek} ${constellation}`;
+  let name = `${greek} ${constellation}`;
+  // Добавляем числовой суффикс если имя уже занято
+  if (usedNames.has(name)) {
+    let suffix = 2;
+    while (usedNames.has(`${name} ${suffix}`)) suffix++;
+    name = `${name} ${suffix}`;
+  }
+  usedNames.add(name);
+  return name;
 }
 
 /** Число → римская цифра */

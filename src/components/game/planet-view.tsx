@@ -396,7 +396,9 @@ function HexInfoCard({ hex }: { hex: HexCell }) {
           <div className="space-y-0.5">
             <div className="text-[10px] text-slate-500 uppercase">Deposits</div>
             {hex.deposits.map((dep, i) => {
-              const elDef = ELEMENT_MAP.get(dep.elementId);
+              // M-04 fix: strip '-ore' suffix for ELEMENT_MAP lookup
+              const pureId = dep.elementId.replace('-ore', '');
+              const elDef = ELEMENT_MAP.get(pureId);
               return (
                 <div key={i} className="flex justify-between text-xs text-slate-400">
                   <span>{elDef?.symbol ?? dep.elementId}</span>

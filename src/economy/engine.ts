@@ -79,8 +79,8 @@ function processExtraction(planet: Planet): void {
       // Газовые гиганты имеют бонус к добыче из атмосферы
       const atmosphereMult = planet.type === 'gas_giant' ? 1.0 : getAtmosphereEfficiency(planet.atmosphere.type);
 
-      // Для атмосферных зданий — добыча газов (H, He, C, N)
-      const atmosphericElements = ['H', 'He', 'C', 'N'];
+      // C-02 fix: добавлен O — добывается из плотных/стандартных атмосфер по 04-buildings.md §2.3
+      const atmosphericElements = ['H', 'He', 'C', 'N', 'O'];
       for (const elementId of atmosphericElements) {
         const baseRate = 0.02 * levelMult * atmosphereMult;
         planet.resources[elementId] = (planet.resources[elementId] ?? 0) + baseRate;
@@ -252,6 +252,11 @@ export function buildOnHex(planet: Planet, hexIndex: number, buildingId: string)
   const buildingDef = BUILDING_MAP.get(buildingId);
   if (!buildingDef) return false;
 
+  // L-05: проверяем, что здание может строиться на поверхности
+  if (!buildingDef.layer.includes('surface')) {
+    return false;
+  }
+
   // P1-27: проверка атмосферы
   if (buildingDef.requiresAtmosphere && planet.atmosphere.type === 'none') {
     return false;
@@ -314,6 +319,7 @@ export function buildOnAtmosphereSlot(planet: Planet, slotIndex: number, buildin
   slot.buildingId = buildingId;
   slot.buildingLevel = 1;
 
+  recalcEnergyBalance(planet);
   gameBus.emit('building:constructed', { planetId: planet.id, hexIndex: -1 - slotIndex, buildingId });
   return true;
 }
@@ -344,6 +350,7 @@ export function buildOnOrbitSlot(planet: Planet, slotIndex: number, buildingId: 
   slot.buildingId = buildingId;
   slot.buildingLevel = 1;
 
+  recalcEnergyBalance(planet);
   gameBus.emit('building:constructed', { planetId: planet.id, hexIndex: -100 - slotIndex, buildingId });
   return true;
 }

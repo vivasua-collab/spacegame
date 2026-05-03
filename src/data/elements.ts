@@ -11,7 +11,7 @@ export const ELEMENTS: ElementDef[] = [
   { id: 'Fe', name: 'Железо', symbol: 'Fe', category: 'structural', baseValue: 1, density: 7.87, isAtmospheric: false },
   { id: 'Si', name: 'Кремний', symbol: 'Si', category: 'structural', baseValue: 1.2, density: 2.33, isAtmospheric: false },
   { id: 'Al', name: 'Алюминий', symbol: 'Al', category: 'structural', baseValue: 1.5, density: 2.70, isAtmospheric: false },
-  { id: 'C', name: 'Углерод', symbol: 'C', category: 'structural', baseValue: 0.8, density: 2.27, isAtmospheric: true },
+  { id: 'C', name: 'Углерод', symbol: 'C', category: 'structural', baseValue: 0.8, density: 2.27, isAtmospheric: false },
 
   // Топливные
   { id: 'H', name: 'Водород', symbol: 'H', category: 'fuel', baseValue: 0.5, density: 0.00009, isAtmospheric: true },
@@ -30,7 +30,7 @@ export const ELEMENTS: ElementDef[] = [
   // Химия
   { id: 'O', name: 'Кислород', symbol: 'O', category: 'chemical', baseValue: 0.3, density: 0.00143, isAtmospheric: true },
   { id: 'N', name: 'Азот', symbol: 'N', category: 'chemical', baseValue: 0.4, density: 0.00125, isAtmospheric: true },
-  { id: 'S', name: 'Сера', symbol: 'S', category: 'chemical', baseValue: 0.6, density: 2.07, isAtmospheric: true },
+  { id: 'S', name: 'Сера', symbol: 'S', category: 'chemical', baseValue: 0.6, density: 2.07, isAtmospheric: false },
 
   // Энергия
   { id: 'U', name: 'Уран', symbol: 'U', category: 'energy', baseValue: 10, density: 19.05, isAtmospheric: false },
