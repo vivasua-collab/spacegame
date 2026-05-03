@@ -26,14 +26,15 @@ const ZOOM_BUTTON_STEP = 1.4;
  * These get divided by `zoom` to produce SVG coordinates,
  * so that CSS transform scale(zoom) renders them at the desired screen size.
  */
-const DOT_R_SVG = 3;          // Star dot radius in SVG coords → grows with zoom
+const DOT_BASE_SVG = 3;       // Star dot base radius in SVG coords (at zoom=1)
 const DOT_MIN_SCREEN = 3;     // Minimum dot size on screen (px)
+const DOT_MAX_SCREEN = 8;     // Maximum dot size on screen (px) — caps growth at high zoom
 const FONT_SCREEN = 10;       // Label font size on screen (px)
 const FONT_SMALL_SCREEN = 8;  // Planet count font on screen (px)
 const TEXT_OFFSET_SCREEN = 10; // Label offset below dot on screen (px)
-const HIT_SCREEN = 8;         // Click target radius on screen (px)
+const HIT_SCREEN = 12;        // Click target radius on screen (px)
 const SELECT_MARGIN = 2;      // Selection ring margin on screen (px)
-const GLOW_MARGIN = 5;        // Glow margin in SVG coords → grows with zoom
+const GLOW_MARGIN = 5;        // Glow margin on screen (px)
 const STROKE_UNSTAB = 0.6;    // Unstabilized JP line width on screen (px)
 const STROKE_STAB = 1.2;      // Stabilized JP line width on screen (px)
 
@@ -243,24 +244,25 @@ export function GalaxyMap() {
 
   // ─── Convert screen-pixel constants to SVG coords ────────
   // CSS transform scale(zoom) multiplies SVG coords by zoom to get screen pixels.
-  // To get X screen pixels: SVG_value = X / zoom
-  // Exception: dot radius is fixed in SVG → naturally grows with zoom
+  // To get X screen pixels on screen: SVG_value = X / zoom
 
   const invZ = 1 / zoom; // precompute
 
-  // Dot: fixed SVG radius, grows with zoom; ensure minimum screen size
-  const dotR = Math.max(DOT_R_SVG, DOT_MIN_SCREEN * invZ);
+  // Dot: cap screen size between DOT_MIN_SCREEN and DOT_MAX_SCREEN
+  // At zoom=1: base dot is DOT_BASE_SVG (3px). As zoom increases, it grows but caps.
+  const dotScreenR = Math.min(DOT_MAX_SCREEN, Math.max(DOT_MIN_SCREEN, DOT_BASE_SVG * zoom));
+  const dotR = dotScreenR * invZ;  // Convert desired screen size back to SVG coords
 
-  // Glow margin: fixed in SVG, grows with zoom; ensure minimum
-  const glowR = dotR + Math.max(GLOW_MARGIN, 4 * invZ);
+  // Glow margin: constant screen size (counter-scaled)
+  const glowR = dotR + GLOW_MARGIN * invZ;
 
   // Text: counter-scaled → constant screen size
   const fontSize = FONT_SCREEN * invZ;
   const fontSmall = FONT_SMALL_SCREEN * invZ;
   const textOffset = TEXT_OFFSET_SCREEN * invZ;
 
-  // Hit area: counter-scaled → constant screen size
-  const hitR = Math.max(dotR + 2 * invZ, HIT_SCREEN * invZ);
+  // Hit area: constant screen size (counter-scaled)
+  const hitR = HIT_SCREEN * invZ;
 
   // Selection ring: dotR + constant screen margin
   const selectR = dotR + SELECT_MARGIN * invZ;
@@ -341,7 +343,7 @@ export function GalaxyMap() {
               onMouseLeave={() => setHoveredSystemId(null)}
               className="cursor-pointer"
             >
-              {/* Glow halo — grows with zoom */}
+              {/* Glow halo — constant screen margin */}
               {isBlackHole ? (
                 <>
                   <circle cx={cx} cy={cy} r={r + glowR * 0.6} fill="#5533aa" opacity={isHighlighted ? 0.4 : 0.15} />
@@ -362,7 +364,7 @@ export function GalaxyMap() {
                 />
               )}
 
-              {/* Star dot — grows with zoom */}
+              {/* Star dot — grows with zoom, capped at DOT_MAX_SCREEN */}
               <circle
                 cx={cx} cy={cy} r={r}
                 fill={starColor}
