@@ -20,7 +20,16 @@ import {
   ChevronLeft,
   Layers,
 } from 'lucide-react';
-import type { Planet, HexCell, HexTerrain } from '@/core/types';
+import type { Planet, HexCell, HexTerrain, AtmosphereType, LifeLevel, AtmosphericSlot, OrbitalSlot } from '@/core/types';
+
+const ATMO_DISPLAY: Record<AtmosphereType, string> = {
+  none: 'Нет', thin: 'Тонкая', standard: 'Стандартная', dense: 'Плотная',
+  toxic: 'Токсичная', inert: 'Инертная', methane: 'Метановая', co2: 'CO₂',
+};
+
+const LIFE_DISPLAY: Record<LifeLevel, string> = {
+  none: 'Нет', microbes: 'Микробы', plants: 'Растения', simple: 'Простая', complex: 'Сложная',
+};
 
 const HEX_SIZE = 24; // pixel size for hex rendering
 
@@ -117,11 +126,14 @@ export function PlanetView() {
               </div>
               <div className="flex justify-between text-slate-300">
                 <span className="flex items-center gap-1 text-slate-500"><Wind className="size-3" /> Atmosphere</span>
-                <span>{planet.atmosphere ? 'Yes' : 'None'}</span>
+                <span>{ATMO_DISPLAY[planet.atmosphere.type] ?? planet.atmosphere.type}{planet.atmosphere.type !== 'none' ? ` (${planet.atmosphere.pressure.toFixed(1)} атм)` : ''}</span>
               </div>
               <div className="flex justify-between text-slate-300">
                 <span className="flex items-center gap-1 text-slate-500"><Layers className="size-3" /> Life</span>
-                <span>{planet.hasLife ? 'Detected' : 'None'}</span>
+                <span>
+                  {LIFE_DISPLAY[planet.life.level] ?? planet.life.level}
+                  {planet.life.level !== 'none' ? ` (БИО ${planet.life.biodiversity.toFixed(2)})` : ''}
+                </span>
               </div>
               <div className="flex justify-between text-slate-300">
                 <span className="flex items-center gap-1 text-slate-500"><Zap className="size-3" /> Energy</span>
@@ -136,6 +148,35 @@ export function PlanetView() {
         {/* Hovered hex info */}
         {hoveredHexIndex !== null && planet.hexes[hoveredHexIndex] && (
           <HexInfoCard hex={planet.hexes[hoveredHexIndex]} />
+        )}
+
+        {/* Atmosphere Composition */}
+        {planet.atmosphere.type !== 'none' && planet.atmosphere.composition.length > 0 && (
+          <Card className="bg-[#0d0d24] border-white/10 text-white py-3 gap-3">
+            <CardContent className="px-4 py-0 space-y-2">
+              <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+                Atmosphere Composition
+              </div>
+              <div className="space-y-0.5">
+                {planet.atmosphere.composition.map((comp, i) => (
+                  <div key={i} className="flex justify-between text-xs text-slate-300">
+                    <span>{comp.element}</span>
+                    <span className="font-mono">{comp.percentage.toFixed(1)}%</span>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Atmospheric Slots (gas giants) */}
+        {planet.atmosphericSlots.length > 0 && (
+          <SlotCard title="Atmospheric Slots" slots={planet.atmosphericSlots} />
+        )}
+
+        {/* Orbital Slots */}
+        {planet.orbitSlots.length > 0 && (
+          <SlotCard title="Orbital Slots" slots={planet.orbitSlots} />
         )}
 
         {/* Resources */}
@@ -365,6 +406,39 @@ function HexInfoCard({ hex }: { hex: HexCell }) {
             })}
           </div>
         )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ============ Slot Card (Atmosphere / Orbit) ============
+
+function SlotCard({ title, slots }: { title: string; slots: (AtmosphericSlot | OrbitalSlot)[] }) {
+  const filledCount = slots.filter((s) => s.buildingId !== null).length;
+
+  return (
+    <Card className="bg-[#0d0d24] border-white/10 text-white py-3 gap-3">
+      <CardContent className="px-4 py-0 space-y-2">
+        <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+          {title} ({filledCount}/{slots.length})
+        </div>
+        <div className="space-y-1">
+          {slots.map((slot) => {
+            const buildingDef = slot.buildingId ? BUILDING_MAP.get(slot.buildingId) : null;
+            return (
+              <div key={slot.index} className="flex items-center justify-between text-xs">
+                <span className="text-slate-500 font-mono">#{slot.index + 1}</span>
+                {buildingDef ? (
+                  <span className="text-amber-400">
+                    {buildingDef.name} {slot.buildingLevel > 1 ? `(Lv.${slot.buildingLevel})` : ''}
+                  </span>
+                ) : (
+                  <span className="text-slate-600 italic">Empty</span>
+                )}
+              </div>
+            );
+          })}
+        </div>
       </CardContent>
     </Card>
   );

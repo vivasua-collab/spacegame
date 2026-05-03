@@ -1,5 +1,6 @@
 /**
- * Определения рецептов крафта — MVP.
+ * Определения рецептов крафта.
+ * Все рецепты соответствуют документации ARCHITECTURE.md §3.2.2.
  */
 
 import type { RecipeDef } from '@/core/types';
@@ -60,7 +61,7 @@ export const RECIPES: RecipeDef[] = [
     id: 'make_titanium_alloy',
     name: 'Титановый сплав',
     category: 'raw_to_material',
-    inputs: { Ti: 8, Al: 4 },
+    inputs: { Ti: 8, Al: 4, V: 1 }, // P1-14: добавлен V (Ванадий) по документации
     outputs: { titanium_alloy: 4 },
     energyCost: 8,
     time: 250,
@@ -90,7 +91,7 @@ export const RECIPES: RecipeDef[] = [
     id: 'make_superconductor',
     name: 'Сверхпроводник',
     category: 'raw_to_material',
-    inputs: { Cu: 2, O: 3 },
+    inputs: { Y: 1, Ba: 2, Cu: 3, O: 4 }, // P1-13: рецепт из документации ARCHITECTURE.md
     outputs: { superconductor: 1 },
     energyCost: 15,
     time: 400,
@@ -102,7 +103,7 @@ export const RECIPES: RecipeDef[] = [
     id: 'make_microchip',
     name: 'Микрочип',
     category: 'material_to_component',
-    inputs: { silicon_crystal: 1, Au: 1 },
+    inputs: { silicon_crystal: 1, Au: 0.1 }, // P1-15: Au=0.1 по документации (было 1)
     outputs: { microchip: 1 },
     energyCost: 5,
     time: 250,
@@ -136,6 +137,16 @@ export const RECIPES: RecipeDef[] = [
     outputs: { engine_section: 1 },
     energyCost: 10,
     time: 300,
+    buildingId: 'chemical_plant',
+  },
+  {
+    id: 'make_shield_generator',
+    name: 'Генератор щита',
+    category: 'material_to_component',
+    inputs: { superconductor: 3, microchip: 1 }, // Из ARCHITECTURE.md §3.2.2 уровень 3
+    outputs: { shield_generator: 1 },
+    energyCost: 15,
+    time: 350,
     buildingId: 'chemical_plant',
   },
 
@@ -185,7 +196,11 @@ export const RECIPES: RecipeDef[] = [
 export const RECIPE_MAP = new Map(RECIPES.map(r => [r.id, r]));
 
 /** Сырьевые руды (добываются шахтой/карьером) */
-export const RAW_ORES = ['Fe-ore', 'Si-ore', 'Ti-ore', 'Cu-ore', 'Al-ore', 'C-ore', 'Ni-ore', 'W-ore', 'U-ore', 'Co-ore', 'Au-ore', 'Pt-ore', 'Cr-ore', 'Li-ore', 'S-ore'];
+export const RAW_ORES = [
+  'Fe-ore', 'Si-ore', 'Ti-ore', 'Cu-ore', 'Al-ore', 'C-ore',
+  'Ni-ore', 'W-ore', 'U-ore', 'Co-ore', 'Au-ore', 'Pt-ore',
+  'Cr-ore', 'Li-ore', 'S-ore', 'V-ore', 'Y-ore', 'Ba-ore',
+];
 
 /** Категории рецептов */
 export const RECIPE_CATEGORY_NAMES: Record<string, string> = {

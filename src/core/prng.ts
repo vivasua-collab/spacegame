@@ -63,6 +63,23 @@ export class Xoshiro256 {
     return new Xoshiro256(this.childSeed());
   }
 
+  /**
+   * P1-29: Именованный под-seed.
+   * hash(main_seed, name) — воспроизводимый дочерний генератор
+   * с уникальным именем. Изменение в одном под-seed'е
+   * не влияет на другие.
+   */
+  derive(name: string): Xoshiro256 {
+    // Простой хеш имени для получения seed
+    let hash = 0;
+    for (let i = 0; i < name.length; i++) {
+      hash = ((hash << 5) - hash + name.charCodeAt(i)) | 0;
+    }
+    // Комбинируем текущее состояние с хешем имени
+    const combined = (this.state[0] ^ hash) >>> 0;
+    return new Xoshiro256(combined);
+  }
+
   weightedChoice<T>(items: readonly T[], weights: readonly number[]): T {
     const total = weights.reduce((a, b) => a + b, 0);
     let r = this.nextFloat() * total;

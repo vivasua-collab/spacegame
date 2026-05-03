@@ -16,7 +16,7 @@ import {
   ArrowLeftRight,
   ArrowRight,
 } from 'lucide-react';
-import type { StarSystem, Planet } from '@/core/types';
+import type { StarSystem, Planet, AtmosphereType, LifeLevel } from '@/core/types';
 
 export function SystemView() {
   const gameState = useGameStore((s) => s.gameState);
@@ -42,7 +42,8 @@ export function SystemView() {
     );
   }
 
-  const starDef = STAR_TYPE_MAP.get(system.star.type);
+  const primaryStar = system.stars[0];
+  const starDef = primaryStar ? STAR_TYPE_MAP.get(primaryStar.type) : undefined;
 
   return (
     <div className="h-full flex flex-col lg:flex-row gap-4">
@@ -51,34 +52,63 @@ export function SystemView() {
         {/* Star info card */}
         <Card className="bg-[#0d0d24] border-white/10 text-white py-3 gap-3">
           <CardContent className="px-4 py-0">
-            <div className="flex items-center gap-3 mb-3">
-              <div
-                className="size-10 rounded-full shrink-0"
-                style={{
-                  backgroundColor: system.star.color,
-                  boxShadow: `0 0 20px ${system.star.color}60, 0 0 40px ${system.star.color}30`,
-                }}
-              />
-              <div>
-                <div className="font-semibold text-sm">{system.star.name}</div>
-                <div className="text-xs text-slate-400">{starDef?.name ?? system.star.type}</div>
-              </div>
-            </div>
+            {primaryStar ? (
+              <>
+                <div className="flex items-center gap-3 mb-3">
+                  <div
+                    className="size-10 rounded-full shrink-0"
+                    style={{
+                      backgroundColor: primaryStar.color,
+                      boxShadow: `0 0 20px ${primaryStar.color}60, 0 0 40px ${primaryStar.color}30`,
+                    }}
+                  />
+                  <div>
+                    <div className="font-semibold text-sm">{primaryStar.name}</div>
+                    <div className="text-xs text-slate-400">{starDef?.name ?? primaryStar.type}</div>
+                  </div>
+                </div>
 
-            <div className="space-y-1.5 text-xs">
-              <div className="flex justify-between text-slate-300">
-                <span className="flex items-center gap-1 text-slate-500"><Thermometer className="size-3" /> Temperature</span>
-                <span className="font-mono">{formatTemp(system.star.temperature)}</span>
-              </div>
-              <div className="flex justify-between text-slate-300">
-                <span className="flex items-center gap-1 text-slate-500"><Sun className="size-3" /> Mass</span>
-                <span className="font-mono">{system.star.mass.toFixed(2)} M&#9737;</span>
-              </div>
-              <div className="flex justify-between text-slate-300">
-                <span className="flex items-center gap-1 text-slate-500"><Zap className="size-3" /> Luminosity</span>
-                <span className="font-mono">{system.star.luminosity.toFixed(2)} L&#9737;</span>
-              </div>
-            </div>
+                <div className="space-y-1.5 text-xs">
+                  <div className="flex justify-between text-slate-300">
+                    <span className="flex items-center gap-1 text-slate-500"><Thermometer className="size-3" /> Temperature</span>
+                    <span className="font-mono">{formatTemp(primaryStar.temperature)}</span>
+                  </div>
+                  <div className="flex justify-between text-slate-300">
+                    <span className="flex items-center gap-1 text-slate-500"><Sun className="size-3" /> Mass</span>
+                    <span className="font-mono">{primaryStar.mass.toFixed(2)} M&#9737;</span>
+                  </div>
+                  <div className="flex justify-between text-slate-300">
+                    <span className="flex items-center gap-1 text-slate-500"><Zap className="size-3" /> Luminosity</span>
+                    <span className="font-mono">{primaryStar.luminosity.toFixed(2)} L&#9737;</span>
+                  </div>
+                </div>
+
+                {/* Secondary/tertiary stars */}
+                {system.stars.length > 1 && (
+                  <>
+                    <Separator className="my-2 bg-white/10" />
+                    <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-1">
+                      Companion Stars ({system.stars.length - 1})
+                    </div>
+                    {system.stars.slice(1).map((star) => {
+                      const companionDef = STAR_TYPE_MAP.get(star.type);
+                      return (
+                        <div key={star.id} className="flex items-center gap-2 text-xs text-slate-400 mb-1">
+                          <div
+                            className="size-3 rounded-full shrink-0"
+                            style={{ backgroundColor: star.color }}
+                          />
+                          <span>{star.name}</span>
+                          <span className="text-slate-600">{companionDef?.name ?? star.type}</span>
+                        </div>
+                      );
+                    })}
+                  </>
+                )}
+              </>
+            ) : (
+              <div className="text-xs text-slate-500">No star data</div>
+            )}
           </CardContent>
         </Card>
 
@@ -185,7 +215,7 @@ function PlanetCard({
               </span>
               <span className="flex items-center gap-1">
                 <Wind className="size-3" />
-                {planet.atmosphere ? 'Atmo' : 'Vacuum'}
+                {ATMO_DISPLAY[planet.atmosphere.type] ?? planet.atmosphere.type}
               </span>
               <span className="flex items-center gap-1">
                 <Globe2 className="size-3" />
@@ -217,6 +247,15 @@ function getTypeColor(type: Planet['type']): string {
   };
   return colors[type] ?? '#666';
 }
+
+const ATMO_DISPLAY: Record<AtmosphereType, string> = {
+  none: 'Нет', thin: 'Тонкая', standard: 'Стандартная', dense: 'Плотная',
+  toxic: 'Токсичная', inert: 'Инертная', methane: 'Метановая', co2: 'CO₂',
+};
+
+const LIFE_DISPLAY: Record<LifeLevel, string> = {
+  none: 'Нет', microbes: 'Микробы', plants: 'Растения', simple: 'Простая', complex: 'Сложная',
+};
 
 function formatTemp(k: number): string {
   if (k >= 1_000_000) return `${(k / 1_000_000).toFixed(1)}MK`;

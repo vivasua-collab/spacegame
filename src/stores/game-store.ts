@@ -133,7 +133,7 @@ export const useGameStore = create<GameStore>((set, get) => {
 
       // Обрабатываем экономику каждый "дневной" тик
       const allPlanets = gameState.galaxy.systems.flatMap(s => s.planets);
-      processEconomyTick(allPlanets, gameState.productionQueues);
+      processEconomyTick(allPlanets, gameState.productionQueues, gameState.galaxy.systemMap);
 
       set({ gameState: { ...gameState } });
     },

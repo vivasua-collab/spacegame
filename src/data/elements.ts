@@ -1,5 +1,7 @@
 /**
- * Определения элементов — 20 стартовых для MVP.
+ * Определения элементов — 22 элемента для MVP.
+ * Базовые 20 + V (Ванадий, P1-12), Y (Иттрий), Ba (Барий) для рецепта сверхпроводника.
+ * Порядок и категории соответствуют документации ARCHITECTURE.md §3.1.3.
  */
 
 import type { ElementDef } from '@/core/types';
@@ -19,6 +21,7 @@ export const ELEMENTS: ElementDef[] = [
   { id: 'Ti', name: 'Титан', symbol: 'Ti', category: 'alloy', baseValue: 3, density: 4.51, isAtmospheric: false },
   { id: 'Cr', name: 'Хром', symbol: 'Cr', category: 'alloy', baseValue: 2.5, density: 7.19, isAtmospheric: false },
   { id: 'Ni', name: 'Никель', symbol: 'Ni', category: 'alloy', baseValue: 2.8, density: 8.91, isAtmospheric: false },
+  { id: 'V', name: 'Ванадий', symbol: 'V', category: 'alloy', baseValue: 5, density: 6.11, isAtmospheric: false },
 
   // Электроника
   { id: 'Cu', name: 'Медь', symbol: 'Cu', category: 'electronics', baseValue: 2, density: 8.96, isAtmospheric: false },
@@ -39,6 +42,10 @@ export const ELEMENTS: ElementDef[] = [
 
   // Лёгкие
   { id: 'Li', name: 'Литий', symbol: 'Li', category: 'light', baseValue: 6, density: 0.53, isAtmospheric: false },
+
+  // Для сверхпроводника (рецепт из ARCHITECTURE.md §3.2.2)
+  { id: 'Y', name: 'Иттрий', symbol: 'Y', category: 'rare', baseValue: 12, density: 4.47, isAtmospheric: false },
+  { id: 'Ba', name: 'Барий', symbol: 'Ba', category: 'rare', baseValue: 3, density: 3.51, isAtmospheric: false },
 ];
 
 export const ELEMENT_MAP = new Map(ELEMENTS.map(e => [e.id, e]));

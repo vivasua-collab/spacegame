@@ -1,5 +1,7 @@
 /**
  * Основные типы данных игры.
+ * Версия 2.0 — после аудита P1.
+ * Документация (docs/) является единственным источником истины.
  */
 
 // ============ Идентификаторы ============
@@ -35,28 +37,90 @@ export type GamePhase = 'menu' | 'playing' | 'paused';
 
 // ============ Звёзды ============
 
-export type StarType = 'O' | 'B' | 'A' | 'F' | 'G' | 'K' | 'M' | 'white_dwarf' | 'neutron' | 'black_hole';
+/**
+ * Типы звёзд — ID из документации (02-stars.md §1.1, §2.1).
+ * Формат: STAR_{класс} для основной последовательности,
+ * STAR_{аббревиатура} для специальных типов.
+ */
+export type StarType =
+  | 'STAR_O'       // Голубой сверхгигант
+  | 'STAR_B'       // Бело-голубой гигант
+  | 'STAR_A'       // Белая звезда
+  | 'STAR_F'       // Жёлто-белая
+  | 'STAR_G'       // Жёлтый карлик
+  | 'STAR_K'       // Оранжевый карлик
+  | 'STAR_M'       // Красный карлик
+  | 'STAR_WD'      // Белый карлик
+  | 'STAR_RG'      // Красный гигант
+  | 'STAR_NS'      // Нейтронная звезда
+  | 'STAR_PULSAR'  // Пульсар
+  | 'STAR_BH';     // Чёрная дыра
 
 export interface StarDef {
   type: StarType;
   name: string;
-  mass: number;      // в солнечных массах
-  luminosity: number; // в солнечных светимостях
-  temperature: number; // в K
-  radius: number;     // в солнечных радиусах
+  mass: number;      // в солнечных массах (среднее)
+  luminosity: number; // в солнечных светимостях (среднее)
+  temperature: number; // в K (среднее)
+  radius: number;     // в солнечных радиусах (среднее)
   color: string;      // hex цвет
   minPlanets: number;
   maxPlanets: number;
-  weight: number;     // вес для генерации
+  weight: number;     // вес для генерации (пропорционален частоте из документации)
 }
+
+// ============ Двойные/тройные системы (P1-07) ============
+
+/**
+ * Тип звёздной системы: одиночная, двойная, тройная.
+ * Из документации 02-stars.md §2.7.
+ */
+export type BinaryType = 'BINARY_NONE' | 'BINARY_CLOSE' | 'BINARY_WIDE' | 'BINARY_TRIPLE';
 
 // ============ Планеты ============
 
 export type PlanetType = 'rocky' | 'volcanic' | 'ice' | 'oceanic' | 'desert' | 'gas_giant' | 'dwarf';
 
+/**
+ * Классы размера планет.
+ * Из документации 03-planets.md §2.1 (источник истины) и 04-buildings.md §1.1.
+ * Количество гексов: tiny=19, small=37, medium=61, large=91, huge=127.
+ */
 export type PlanetSize = 'tiny' | 'small' | 'medium' | 'large' | 'huge';
 
-export type HexTerrain = 'plains' | 'mountains' | 'desert' | 'ice' | 'ocean' | 'volcano' | 'jungle' | 'crater';
+/**
+ * Типы местности гексов.
+ * Из документации 03-planets.md §3.3 — 7 типов (без crater, P1-20).
+ */
+export type HexTerrain = 'plains' | 'mountains' | 'desert' | 'ice' | 'ocean' | 'volcano' | 'jungle';
+
+/**
+ * Типы атмосферы (P1-16).
+ * Из документации 03-planets.md §2.4.
+ */
+export type AtmosphereType = 'none' | 'thin' | 'standard' | 'dense' | 'toxic' | 'inert' | 'methane' | 'co2';
+
+export interface Atmosphere {
+  type: AtmosphereType;
+  pressure: number;          // в атмосферах (атм)
+  composition: {             // процентный состав (сумма = 100%)
+    element: string;         // химический символ
+    percentage: number;      // 0–100
+  }[];
+}
+
+/**
+ * Уровни жизни на планете (P1-17).
+ * Из документации 03-planets.md §2.5.
+ */
+export type LifeLevel = 'none' | 'microbes' | 'plants' | 'simple' | 'complex';
+
+export interface PlanetLife {
+  level: LifeLevel;
+  biodiversity: number;             // 0.0 – 1.0 — разнообразие
+  compatibleWithColonists: boolean; // совместимость биохимии
+  hazardLevel: number;              // 0–3 — уровень угрозы
+}
 
 export interface PlanetDef {
   type: PlanetType;
@@ -88,17 +152,24 @@ export interface ElementDef {
 
 export type BuildingCategory = 'extraction' | 'processing' | 'production' | 'energy' | 'military' | 'research' | 'logistics';
 
+export type BuildingLayer = 'surface' | 'atmosphere' | 'orbit';
+
 export interface BuildingDef {
   id: string;
   name: string;
   description: string;
   category: BuildingCategory;
-  size: PlanetSize[];     // на каких планетах можно строить
+  /** На каком слое можно строить здание */
+  layer: BuildingLayer[];
+  /** На каких размерах планет можно строить (для surface-зданий) */
+  size: PlanetSize[];
   energyConsumption: number;
   baseProductionTime: number; // тиков на 1 цикл
   levels: number;
   costPerLevel: Record<string, number>; // elementId → количество
   terrainBonus: Partial<Record<HexTerrain, number>>; // множитель на определённой местности
+  /** Требование атмосферы (для газового экстрактора и др.) */
+  requiresAtmosphere: boolean;
 }
 
 // ============ Рецепты ============
@@ -118,7 +189,11 @@ export interface RecipeDef {
 
 // ============ Корабли ============
 
-export type HullSize = 'small' | 'medium' | 'large' | 'capital';
+/**
+ * Классы корпусов кораблей (P1-31).
+ * Из документации 05-ships.md §2.1: 7 конкретных классов.
+ */
+export type HullSize = 'scout' | 'fighter' | 'frigate' | 'cruiser' | 'battleship' | 'transport' | 'flagship';
 
 export interface HullDef {
   id: string;
@@ -159,6 +234,20 @@ export interface HexCell {
   deposits: ResourceDeposit[];
 }
 
+/** Слот атмосферы газового гиганта (P1-01) */
+export interface AtmosphericSlot {
+  index: number;
+  buildingId: string | null;
+  buildingLevel: number;
+}
+
+/** Слот орбитальной станции (P1-01) */
+export interface OrbitalSlot {
+  index: number;
+  buildingId: string | null;
+  buildingLevel: number;
+}
+
 export interface Planet {
   id: EntityId;
   systemId: EntityId;
@@ -167,10 +256,17 @@ export interface Planet {
   size: PlanetSize;
   gravity: number;
   temperature: number;
-  atmosphere: boolean;
-  hasLife: boolean;
+  /** Атмосфера — полноценная структура вместо boolean (P1-16) */
+  atmosphere: Atmosphere;
+  /** Жизнь на планете — полноценная структура вместо boolean (P1-17) */
+  life: PlanetLife;
   orbitalRadius: number; // AU
+  /** Гекс-сетка поверхности (0 для газовых гигантов) */
   hexes: HexCell[];
+  /** Атмосферные слоты (газовые гиганты, 6-12) */
+  atmosphericSlots: AtmosphericSlot[];
+  /** Орбитальные слоты (все планеты, 3-12) */
+  orbitSlots: OrbitalSlot[];
   resources: Record<string, number>; // elementId → количество на складе
   energyBalance: number;
   owner: EntityId | null; // factionId или playerId
@@ -199,7 +295,10 @@ export interface StarSystem {
   id: EntityId;
   name: string;
   position: Vec2;
-  star: Star;
+  /** Тип системы: одиночная, двойная, тройная (P1-07) */
+  binaryType: BinaryType;
+  /** Звёзды в системе (1-3, в зависимости от binaryType) */
+  stars: Star[];
   planets: Planet[];
   asteroidFields: number;
   jumpPoints: JumpPoint[];

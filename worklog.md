@@ -68,3 +68,222 @@ Stage Summary:
 - 31 файл изменён, ~3736 строк добавлено
 - Lint: 0 ошибок
 - Dev server: компиляция без ошибок
+
+---
+Task ID: 15
+Agent: General Agent
+Task: P1-25 — Создать doc_temp/ores-and-chains.md — документ со всеми рудами и цепочками трансформации
+
+Work Log:
+- Изучены все исходные файлы: elements.ts (19 элементов), recipes.ts (15 RAW_ORES, 16 рецептов), buildings.ts (8 зданий), 04-buildings.md (5 добывающих зданий), 03-planets.md (7 типов планет), ARCHITECTURE.md (экономика), audit_final.md (69 расхождений)
+- Определено 22 элемента (20 базовых + Y, Ba для сверхпроводника) → 24 вида руд/соединений
+- Создан doc_temp/ores-and-chains.md (8 разделов + 2 приложения):
+  - §1: Обзор концепции цепочки руда → элемент, 6 уровней переработки
+  - §2: Полная таблица руд (13 шахтных, 8+ карьерных, 9 атмосферных газов, 5 ледяных, 13 глубинных)
+  - §3: Атмосферные соединения — таблица доступности газов по типам атмосферы
+  - §4: Ледяные соединения — с бонусами температуры и цепочками переработки
+  - §5: Глубинные ресурсы — 3 уровня глубины (ур.1-4, 5-7, 8-10), связь с рецептом сверхпроводника
+  - §6: 8 визуальных цепочек трансформации (строительные, электроника, топливо, сплавы, химия, энергия, редкие, полная цепочка до ионного двигателя)
+  - §7: Сводные таблицы: элемент→источник→переработка, здание→список руд, распределение по источникам
+  - §8: TypeScript структуры данных (OreDef), исправление бага Р3-01 (deposits должны производить руды, не элементы)
+  - Приложение А: Таблица распространённости руд по типам планет (resource_availability)
+  - Приложение Б: Полный список недостающих рецептов (14 плавильня + 8 химзавод + 3 исправления)
+- Документ на русском языке, согласован с ARCHITECTURE.md и 04-buildings.md
+
+Stage Summary:
+- Создан полный справочник руд и цепочек трансформации: 50+ руд/соединений определено
+- Исправление критического бага Р3-01 задокументировано (deposit.oreId вместо deposit.elementId)
+- Определены все недостающие рецепты для recipes.ts (22 новых + 3 исправления)
+- Цепочка «руда → ионный двигатель» полностью прослежена и задокументирована
+
+---
+Task ID: 1 (audit)
+Agent: General Agent
+Task: P1-01 & P1-02 — Update docs/03-planets.md (Gas Giant Building Layers + Unify Size System)
+
+Work Log:
+- **P1-01: Gas Giant Building Layers**
+  - Updated §1.1 summary table: gas giant row now references §3.2 layers instead of "0 гексов (нет застройки)"
+  - Updated §1.2.6 Gas Giant description: added references to upper atmosphere (6-12 slots) and orbit (6-12 slots) layers
+  - Added 3 new rows to gas giant parameter table: surface (0 hexes → see §3.2), upper atmosphere (6-12 slots), orbit layer (6-12 slots)
+  - Updated gas giant "Игровая роль" to reference atmospheric platforms and §3.2
+  - Added new §3.2 "Слои застройки" with 3 subsections:
+    - §3.2.1 Surface (solid planets only, 19-127 hex grid)
+    - §3.2.2 Upper atmosphere (gas giants only, 6-12 slots, atmospheric buildings only)
+    - §3.2.3 Orbit (all planets, 3-6 slots for solid, 6-12 for gas giants)
+  - Added TypeScript interfaces: AtmosphericSlot, AtmosphericBuildingType, AtmosphericBuilding
+  - Added getOrbitSlots() function
+  - Updated §3.1 to introduce the 3-layer system
+  - Renumbered §3.2→§3.3 (Размер сетки поверхности), §3.3→§3.4 (Типы местности), §3.4→§3.5 (Здания на гексах)
+  - Updated §3.4 to note that atmosphere and orbit layers don't have terrain types
+  - Updated §3.5 to reference atmosphere and orbit layers
+  - Updated §6.1 orbital station limits to use new orbit layer slot numbers (3-6 by size, 6-12 gas giant)
+  - Added atmosphericSlots and orbitSlots fields to Planet interface (§7.1)
+  - Updated generatePlanet() to include atmosphericSlots and orbitSlots generation
+
+- **P1-02: Unify Size System**
+  - Replaced §2.1 size table: old (Карликовая/6, Малая/12, Средняя/24, Крупная/36) → new (Крошечная/19, Малая/37, Средняя/61, Большая/91, Огромная/127)
+  - Size classes now based on Earth-radius (R⊕), not km ranges
+  - Updated getGridSize() to use radiusInEarthRadii parameter and new thresholds (0.3/0.7/1.3/2.0)
+  - Removed getSizeMultiplier() function (no longer needed with unified system)
+  - Added source-of-truth note: "Единственный источник истины для размеров планет — данный файл (03-planets.md)"
+  - Updated §1.1 table size class column: Карликовая→Крошечная, Крупная→Большая, added Огромная
+  - Updated §1.3 satellite note: "Крошечная (19 гексов) или Малая (37 гексов)"
+  - Updated §3.3 size table with new hex counts (19/37/61/91/127)
+  - All sizes are complete hexagonal rings (no truncation needed): 2-6 rings
+  - New visual schemas for Крошечная (19 hex, 2 rings) and Малая (37 hex, 3 rings)
+  - Updated generateHexGrid() to use ringsBySize lookup, return full rings (no slice)
+  - Updated PlanetSizeClass type: 'tiny' | 'small' | 'medium' | 'large' | 'huge'
+  - Updated PLANET_CONFIG.GRID_SIZES: { tiny: 19, small: 37, medium: 61, large: 91, huge: 127, gas_giant: 0 }
+  - Added ORBIT_SLOTS and ATMOSPHERE_SLOTS to PLANET_CONFIG
+  - Marked MAX_ORBITAL_STATIONS as deprecated (refers to ORBIT_SLOTS)
+  - Updated 04-buildings.md §1.1: added cross-reference note to 03-planets.md §2.1
+
+- **Consistency fixes throughout 03-planets.md:**
+  - "крупные планеты" → "большие планеты" (§1.3)
+  - "крупных колоний" → "больших колоний" (§1.2.7)
+  - generatePlanet(): added radiusInEarthRadii calculation, conditional hexGrid for gas giants
+  - Updated return object with atmosphericSlots and orbitSlots
+
+Stage Summary:
+- Two audit items (P1-01, P1-02) fully resolved in docs/03-planets.md
+- 04-buildings.md §1.1 updated with cross-reference note
+- New unified size system: 5 classes (Крошечная/Малая/Средняя/Большая/Огромная) with 19/37/61/91/127 hexes
+- New 3-layer building system: Surface + Upper Atmosphere + Orbit
+- All old size references (6/12/24/36) eliminated from both docs files
+
+---
+Task ID: 17
+Agent: General Agent
+Task: Fix all UI components that reference old types after type system migration
+
+Work Log:
+- Read all 5 target component files + types.ts + data files (planet-types.ts, star-types.ts)
+- **system-view.tsx**: Fixed `system.star` → `system.stars[0]` with null safety (primaryStar variable), updated PlanetCard atmosphere display from boolean `planet.atmosphere ? 'Atmo' : 'Vacuum'` → `ATMO_DISPLAY[planet.atmosphere.type]`, added ATMO_DISPLAY and LIFE_DISPLAY constant maps, added companion stars display section for binary/triple systems, added Separator import usage
+- **planet-view.tsx**: Fixed atmosphere display from `planet.atmosphere ? 'Yes' : 'None'` → `ATMO_DISPLAY[planet.atmosphere.type]` + pressure, fixed life display from `planet.hasLife ? 'Detected' : 'None'` → `LIFE_DISPLAY[planet.life.level]` + biodiversity, added ATMO_DISPLAY/LIFE_DISPLAY constant maps, added AtmosphereComposition card showing element percentages, added SlotCard component for AtmosphericSlot[] and OrbitalSlot[] display, imported new types (AtmosphereType, LifeLevel, AtmosphericSlot, OrbitalSlot)
+- **galaxy-map.tsx**: Fixed `sys.star.color` → `sys.stars[0]?.color ?? '#666'` in both glow circle and star dot circle elements (2 occurrences)
+- **building-dialog.tsx**: Verified — no crater references found, terrain typing already uses HexTerrain which excludes crater
+- **resource-panel.tsx**: Verified — no type issues, only uses ElementCategory and ELEMENT_MAP which are unchanged
+- TypeScript compilation: 0 errors in game components (5 pre-existing errors in unrelated files: examples/, skills/, generator.ts)
+
+Stage Summary:
+- 3 files modified (system-view.tsx, planet-view.tsx, galaxy-map.tsx)
+- 2 files verified clean (building-dialog.tsx, resource-panel.tsx)
+- All old type references (system.star, planet.atmosphere boolean, planet.hasLife boolean, sys.star) updated to new types
+- New UI: companion star display, atmosphere pressure+composition, life level+biodiversity, atmosphere/orbit slot panels
+- Display helpers ATMO_DISPLAY and LIFE_DISPLAY added to both system-view.tsx and planet-view.tsx
+
+---
+Task ID: 14
+Agent: General Agent
+Task: P1-24 — Верификация 04-buildings.md против ARCHITECTURE.md §3.1.4
+
+Work Log:
+- Прочитаны ARCHITECTURE.md §3.1.4 (9 обобщённых зданий) и 04-buildings.md §10.1 (27 детальных зданий)
+- Прочитан src/data/buildings.ts (8 зданий в коде)
+- Сравнение завершено, выявлены расхождения:
+  - ARCHITECTURE.md: 9 обобщённых типов (Шахта, Завод, Верфь, Электростанция, Лаборатория, Склад, Сканер, Оборонительная платформа, Торговый хаб)
+  - 04-buildings.md: 27 специализированных зданий — детализация обобщённых категорий + логистика + спецздания
+  - 3 здания из архитектуры отсутствуют в 04-buildings.md: Сканер, Оборонительная платформа, Торговый хаб (все post-MVP)
+  - 20 зданий из 04-buildings.md не упомянуты явно в архитектуре — это логичная детализация обобщённых категорий
+  - Баг ID: код использует `nuclear_plant`, док — `nuclear_reactor`
+- Создан doc_temp/buildings-verification.md (8 разделов):
+  - §1: Список зданий ARCHITECTURE.md (9 шт.)
+  - §2: Список зданий 04-buildings.md (27 шт., с разбивкой по категориям)
+  - §3: Здания только в архитектуре (3 шт.) + рекомендации
+  - §4: Здания только в детальном документе (20 шт.) + обоснование
+  - §5: Расхождение ID (nuclear_plant vs nuclear_reactor)
+  - §6: Статус реализации в коде (8 есть, 19 отсутствуют)
+  - §7: Итоговая матрица соответствия
+  - §8: Выводы и рекомендации
+
+Stage Summary:
+- Верификация завершена: 04-buildings.md — качественная детализация архитектурного черновика
+- Критических противоречий нет; 3 здания из архитектуры нужно добавить в 04-buildings.md (post-MVP)
+- Обнаружен баг ID: nuclear_plant (код) vs nuclear_reactor (док)
+- MVP-дополнение: warehouse, electronics_plant, hull_plant (указаны в Приложении A 04-buildings.md)
+
+---
+Task ID: 13
+Agent: General Agent
+Task: P1-08 — Создать объединённую двухуровневую систему исследований (research-unification.md)
+
+Work Log:
+- Изучены ARCHITECTURE.md §3.2.1 (6 фундаментальных веток: Химия, Физика, Инженерия, Биология, Военные науки, Ксеноархеология)
+- Изучен docs/06-research.md §2.1 (6 специализированных веток: Энергетика, Материаловедение, Военные науки, Вычислительные системы, Биотехнологии, Ксеноархеология)
+- Выявлено расхождение: списки не идентичны (Химия не имеет прямого специализированного аналога, Вычислительные системы не имеют фундаментального аналога)
+- Создан doc_temp/research-unification.md (8 разделов + 2 приложения):
+  - §1: Проблема двух списков — сравнение фундаментальных и специализированных веток
+  - §2: Двухуровневая модель — определения, принципы, аналогия
+  - §3: Таблица соответствия — полный маппинг фундаментальные ↔ специализированные + обратный маппинг
+  - §4: Схема зависимостей — правила доступа (primary unlock/ceiling, secondary ceiling, partial bonus, свободная ветка)
+  - §5: Механика ограничения — формулы, пример прогрессии, таблица стоимости фундаментальных уровней
+  - §6: Визуализация двухуровневого дерева + диаграмма связей
+  - §7: Структуры данных — TypeScript-типы (FundamentalBranch, BranchLink, BranchLinkType), константа BRANCH_LINKS, функции расчёта (isSpecializedUnlocked, getEffectiveMaxLevel, getPartialBonus)
+  - §8: Влияние на существующие документы — конкретные изменения для ARCHITECTURE.md и 06-research.md
+  - Приложение А: Сводная таблица всех 8 связей
+  - Приложение Б: Глоссарий терминов
+- Обновлён docs/ARCHITECTURE.md §3.2.1:
+  - Добавлено описание двухуровневой системы с перекрёстными ссылками на 06-research.md и research-unification.md
+  - Простой список заменён на таблицу с ID и маппингом на специализированные ветки
+  - Добавлено описание роли фундаментальных уровней (разблокировка + потолок, базовая стоимость 200 RP)
+- Обновлён docs/06-research.md:
+  - Добавлено описание двухуровневой системы в §1 с перекрёстными ссылками
+  - В §2.1 добавлен столбец «Фундаментальная ветка» с типами связей (primary/secondary/partial)
+  - Добавлено пояснение о типах связей и ссылке на research-unification.md
+
+Stage Summary:
+- Создан полный документ унификации: двухуровневая система исследований фундаментальный ↔ специализированный
+- Маппинг: 8 связей между 6 фундаментальными и 6 специализированными ветками
+- 3 типа связей: primary (разблокировка + потолок), secondary (потолок), partial (бонус скорости)
+- Вычислительные системы — свободная ветка (доступна с начала, бонус от Химии)
+- Оба исходных документа обновлены с перекрёстными ссылками
+- TypeScript-структуры данных готовы для реализации
+
+---
+Task ID: Main-P1-Audit-Fix
+Agent: Main Agent
+Task: Выполнение исправлений по результатам аудита P1 (31 пункт)
+
+Work Log:
+- P1-01: Газовые гиганты — 0 гексов поверхности + 3 слоя застройки (поверхность/атмосфера/орбита)
+- P1-02: Унификация размеров планет (19/37/61/91/127) — единый источник истины в 03-planets.md
+- P1-03: Добавлены типы звёзд STAR_RG (красный гигант) и STAR_PULSAR (пульсар)
+- P1-04: ID звёзд приведены к формату документации (STAR_O, STAR_WD и т.д.)
+- P1-05: Пропущен (не нужен для MVP)
+- P1-06: Пропущен (не нужен для MVP, ИИ не готов)
+- P1-07: Реализованы двойные/тройные системы (BinaryType, 4 типа)
+- P1-08: Создана двухуровневая система исследований (fundamental ↔ specialized)
+- P1-09: Параметры звёзд приведены к усреднённым значениям из документации
+- P1-10: Веса вероятностей звёзд приведены к частотам из документации
+- P1-11: Мин/макс планет у звёзд приведены к документации
+- P1-12: Добавлен элемент V (Ванадий) + Y (Иттрий), Ba (Барий) для сверхпроводника
+- P1-13: Рецепт сверхпроводника: Y(1) + Ba(2) + Cu(3) + O(4) + Energy(15)
+- P1-14: Рецепт титанового сплава: Ti(8) + Al(4) + V(1) + Energy(8)
+- P1-15: Рецепт микрочипа: Au(0.1) вместо Au(1)
+- P1-16: Атмосфера: boolean → AtmosphereType (8 типов) + Atmosphere интерфейс
+- P1-17: Жизнь: boolean → LifeLevel (5 уровней) + PlanetLife интерфейс
+- P1-18: Вероятность атмосферы приведена к документации
+- P1-19: Температурные диапазоны планет приведены к документации
+- P1-20: Удалён тип местности 'crater' из HexTerrain
+- P1-21: Веса местности приведены к документации
+- P1-22: Пропущен (MVP)
+- P1-23: JP: макс 6, ограничение по расстоянию, гарантия связности (BFS)
+- P1-24: Верификация зданий — создан doc_temp/buildings-verification.md
+- P1-25: Создан doc_temp/ores-and-chains.md — все руды и цепочки трансформации
+- P1-26: Солнечная станция зависит от светимости звезды и расстояния
+- P1-27: Газовый экстрактор требует атмосферу (requiresAtmosphere)
+- P1-28: Пропущен (не нужен на данном этапе)
+- P1-29: Именованные под-seed'ы через PRNG.derive(name)
+- P1-30: Отложено (следующий этап)
+- P1-31: HullSize: 7 конкретных классов вместо 4 абстрактных
+
+Stage Summary:
+- 20 файлов изменено в src/, docs/, doc_temp/
+- Типы: StarType (12), BinaryType (4), AtmosphereType (8), LifeLevel (5), HullSize (7)
+- Здания: добавлены layer[] и requiresAtmosphere
+- Планеты: 3 слоя застройки, атмосфера как объект, жизнь как объект
+- 22 элемента (было 19), 18 рецептов (+ щит, V-ore, Y-ore, Ba-ore)
+- Генератор: двойные системы, именованные seed'ы, JP с проверками
+- Экономика: светимость звезды, проверка атмосферы
+- Lint: 0 ошибок

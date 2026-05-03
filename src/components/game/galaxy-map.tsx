@@ -146,7 +146,7 @@ export function GalaxyMap() {
                 cx={cx}
                 cy={cy}
                 r={dotRadius + 6}
-                fill={sys.star.color}
+                fill={sys.stars[0]?.color ?? '#666'}
                 opacity={isSelected ? 0.3 : isHovered ? 0.2 : 0.08}
               />
 
@@ -155,7 +155,7 @@ export function GalaxyMap() {
                 cx={cx}
                 cy={cy}
                 r={dotRadius}
-                fill={sys.star.color}
+                fill={sys.stars[0]?.color ?? '#666'}
                 stroke={isSelected ? '#fff' : 'transparent'}
                 strokeWidth={isSelected ? 1.5 : 0}
                 className="transition-all duration-150"
