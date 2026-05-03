@@ -1,0 +1,126 @@
+/**
+ * Определения зданий — 8 зданий для MVP.
+ */
+
+import type { BuildingDef } from '@/core/types';
+
+export const BUILDINGS: BuildingDef[] = [
+  {
+    id: 'mine',
+    name: 'Шахта',
+    description: 'Добыча металлических руд из недр планеты',
+    category: 'extraction',
+    size: ['tiny', 'small', 'medium', 'large'],
+    energyConsumption: 2,
+    baseProductionTime: 100,
+    levels: 10,
+    costPerLevel: { Fe: 5, Si: 3 },
+    terrainBonus: { mountains: 1.5, volcano: 1.3 },
+  },
+  {
+    id: 'quarry',
+    name: 'Карьер',
+    description: 'Добыча неметаллических ресурсов',
+    category: 'extraction',
+    size: ['tiny', 'small', 'medium', 'large'],
+    energyConsumption: 1,
+    baseProductionTime: 80,
+    levels: 10,
+    costPerLevel: { Fe: 3, Si: 5 },
+    terrainBonus: { plains: 1.3, desert: 1.2 },
+  },
+  {
+    id: 'gas_extractor',
+    name: 'Газовый экстрактор',
+    description: 'Добыча газов из атмосферы',
+    category: 'extraction',
+    size: ['small', 'medium', 'large', 'huge'],
+    energyConsumption: 3,
+    baseProductionTime: 120,
+    levels: 10,
+    costPerLevel: { Fe: 4, Al: 3 },
+    terrainBonus: {},
+  },
+  {
+    id: 'smelter',
+    name: 'Плавильня',
+    description: 'Переработка руды в чистые металлы',
+    category: 'processing',
+    size: ['small', 'medium', 'large'],
+    energyConsumption: 5,
+    baseProductionTime: 150,
+    levels: 10,
+    costPerLevel: { Fe: 8, Si: 5, C: 3 },
+    terrainBonus: {},
+  },
+  {
+    id: 'chemical_plant',
+    name: 'Химзавод',
+    description: 'Химическая переработка и синтез',
+    category: 'processing',
+    size: ['medium', 'large'],
+    energyConsumption: 4,
+    baseProductionTime: 200,
+    levels: 10,
+    costPerLevel: { Fe: 6, Si: 4, Cu: 2 },
+    terrainBonus: {},
+  },
+  {
+    id: 'solar_plant',
+    name: 'Солнечная станция',
+    description: 'Выработка энергии из солнечного излучения',
+    category: 'energy',
+    size: ['tiny', 'small', 'medium', 'large', 'huge'],
+    energyConsumption: 0,
+    baseProductionTime: 0,
+    levels: 10,
+    costPerLevel: { Si: 8, Al: 5 },
+    terrainBonus: { desert: 1.4, plains: 1.1 },
+  },
+  {
+    id: 'nuclear_plant',
+    name: 'Ядерный реактор',
+    description: 'Выработка энергии из ядерного топлива',
+    category: 'energy',
+    size: ['medium', 'large'],
+    energyConsumption: 0,
+    baseProductionTime: 0,
+    levels: 10,
+    costPerLevel: { Fe: 10, Ti: 5, U: 2 },
+    terrainBonus: {},
+  },
+  {
+    id: 'shipyard',
+    name: 'Верфь',
+    description: 'Сборка и ремонт космических кораблей',
+    category: 'production',
+    size: ['medium', 'large'],
+    energyConsumption: 8,
+    baseProductionTime: 500,
+    levels: 10,
+    costPerLevel: { Fe: 15, Ti: 8, Si: 10 },
+    terrainBonus: {},
+  },
+];
+
+export const BUILDING_MAP = new Map(BUILDINGS.map(b => [b.id, b]));
+
+export const CATEGORY_NAMES: Record<string, string> = {
+  extraction: 'Добыча',
+  processing: 'Переработка',
+  production: 'Производство',
+  energy: 'Энергия',
+  military: 'Военные',
+  research: 'Исследования',
+  logistics: 'Логистика',
+};
+
+export const CATEGORY_ICONS: Record<string, string> = {
+  extraction: '⛏️',
+  processing: '🔥',
+  production: '🏗️',
+  energy: '⚡',
+  military: '⚔️',
+  research: '🔬',
+  logistics: '🚚',
+};
