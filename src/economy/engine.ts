@@ -117,8 +117,9 @@ function processProductionQueue(planet: Planet, queues: Map<EntityId, Production
     return;
   }
 
-  // Проверяем энергобаланс
-  if (planet.energyBalance < recipe.energyCost && recipe.energyCost > 0) {
+  // P3-02: проверяем энергобаланс по стоимости за тик, а не по полной стоимости рецепта
+  const perTickCost = recipe.energyCost / item.total;
+  if (planet.energyBalance < perTickCost && recipe.energyCost > 0) {
     return;
   }
 
@@ -167,8 +168,8 @@ export function recalcEnergyBalance(planet: Planet, system?: StarSystem): void {
   let production = 0;
   let consumption = 0;
 
-  // Get star luminosity if available
-  const starLuminosity = system?.stars[0]?.luminosity ?? 1.0;
+  // Get star luminosity if available (P2-26: guard against black holes with ~0 luminosity)
+  const starLuminosity = Math.max(0.0001, system?.stars[0]?.luminosity ?? 1.0);
   const distanceFactor = Math.max(0.01, planet.orbitalRadius);
 
   // Surface buildings
@@ -183,8 +184,11 @@ export function recalcEnergyBalance(planet: Planet, system?: StarSystem): void {
       if (buildingDef.id === 'solar_plant') {
         // P1-26: power_output = base_output × level × star_luminosity / distance_factor
         production += 10 * levelMult * starLuminosity / distanceFactor;
+      } else if (buildingDef.id === 'nuclear_plant') {
+        // P2-06/P2-07: nuclear plant base output = 25, no luminosity factor
+        production += 25 * levelMult;
       } else {
-        production += 10 * levelMult;
+        production += 10 * levelMult; // fallback for unknown energy buildings
       }
     } else {
       consumption += buildingDef.energyConsumption * levelMult;
@@ -199,7 +203,14 @@ export function recalcEnergyBalance(planet: Planet, system?: StarSystem): void {
 
     const levelMult = 1 + slot.buildingLevel * 0.2;
     if (buildingDef.category === 'energy') {
-      production += 10 * levelMult * starLuminosity / distanceFactor;
+      if (buildingDef.id === 'solar_plant') {
+        production += 10 * levelMult * starLuminosity / distanceFactor;
+      } else if (buildingDef.id === 'nuclear_plant') {
+        // P2-06/P2-07: nuclear plant base output = 25
+        production += 25 * levelMult;
+      } else {
+        production += 10 * levelMult;
+      }
     } else {
       consumption += buildingDef.energyConsumption * levelMult;
     }
@@ -216,6 +227,9 @@ export function recalcEnergyBalance(planet: Planet, system?: StarSystem): void {
       if (buildingDef.id === 'solar_plant') {
         // Орбитальные солнечные станции работают эффективнее
         production += 10 * levelMult * starLuminosity / distanceFactor * 1.2;
+      } else if (buildingDef.id === 'nuclear_plant') {
+        // P2-06/P2-07: nuclear plant base output = 25
+        production += 25 * levelMult;
       } else {
         production += 10 * levelMult;
       }
@@ -240,6 +254,11 @@ export function buildOnHex(planet: Planet, hexIndex: number, buildingId: string)
 
   // P1-27: проверка атмосферы
   if (buildingDef.requiresAtmosphere && planet.atmosphere.type === 'none') {
+    return false;
+  }
+
+  // P3-04: проверяем, что здание подходит по размеру планеты
+  if (!buildingDef.size.includes(planet.size)) {
     return false;
   }
 
@@ -368,6 +387,12 @@ export function enqueueProduction(
 ): boolean {
   const recipe = RECIPE_MAP.get(recipeId);
   if (!recipe) return false;
+
+  // P3-06: проверяем, что требуемое здание существует на планете
+  const hasBuilding = planet.hexes.some(h => h.buildingId === recipe.buildingId) ||
+    planet.atmosphericSlots.some(s => s.buildingId === recipe.buildingId) ||
+    planet.orbitSlots.some(s => s.buildingId === recipe.buildingId);
+  if (!hasBuilding) return false;
 
   let queue = queues.get(planet.id);
   if (!queue) {

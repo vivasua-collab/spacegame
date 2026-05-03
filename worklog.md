@@ -287,3 +287,115 @@ Stage Summary:
 - Генератор: двойные системы, именованные seed'ы, JP с проверками
 - Экономика: светимость звезды, проверка атмосферы
 - Lint: 0 ошибок
+
+---
+Task ID: 2
+Agent: Critical Fix Agent
+Task: Р3-01 + Р2-03 — Fix ore deposits producing pure elements + add missing smelting recipes
+
+Work Log:
+- Read worklog.md, generator.ts, recipes.ts, engine.ts, elements.ts to understand current state
+- **Problem 1 (Р3-01)**: Fixed `assignResourceDeposits()` in `src/galaxy/generator.ts`:
+  - Added `mineableElements = ELEMENTS.filter(e => !e.isAtmospheric)` to skip atmospheric elements (H, He, O, N, C, S) from deposit generation — these are extracted via gas_extractor from atmosphere slots
+  - Changed `elementId: element.id` → `elementId: \`${element.id}-ore\`` so deposits produce ore IDs (e.g., 'Fe-ore') instead of pure element IDs (e.g., 'Fe')
+- **Problem 2 (Р2-03)**: Added 14 missing smelting recipes to `src/data/recipes.ts`:
+  - smelt_al: Al-ore(10) → Al(8), energyCost=2, time=150
+  - smelt_c: C-ore(10) → C(7), energyCost=2, time=150
+  - smelt_ni: Ni-ore(10) → Ni(7), energyCost=3, time=180
+  - smelt_w: W-ore(10) → W(6), energyCost=4, time=200
+  - smelt_u: U-ore(10) → U(5), energyCost=5, time=250
+  - smelt_co: Co-ore(10) → Co(7), energyCost=3, time=180
+  - smelt_au: Au-ore(10) → Au(6), energyCost=4, time=200
+  - smelt_pt: Pt-ore(10) → Pt(5), energyCost=5, time=250
+  - smelt_cr: Cr-ore(10) → Cr(7), energyCost=3, time=180
+  - smelt_li: Li-ore(10) → Li(6), energyCost=3, time=180
+  - smelt_s: S-ore(10) → S(8), energyCost=2, time=150
+  - smelt_v: V-ore(10) → V(6), energyCost=4, time=200
+  - smelt_y: Y-ore(10) → Y(4), energyCost=5, time=250
+  - smelt_ba: Ba-ore(10) → Ba(6), energyCost=3, time=200
+- **Problem 3**: Verified `processExtraction` in `src/economy/engine.ts` — uses `deposit.elementId` directly, which will now correctly be ore IDs. Atmospheric extraction from slots produces pure element IDs (H, He, C, N) as before. No changes needed.
+- **Problem 4**: Verified `giveStarterResources` in `src/economy/engine.ts` — already provides ore resources with correct IDs (Fe-ore, Si-ore, etc.). V-ore, Y-ore, Ba-ore already present. No changes needed.
+- Lint: 0 errors
+- Dev server: compiles successfully
+
+Stage Summary:
+- Critical economic bug fixed: mines now produce ores (Fe-ore), not pure elements (Fe)
+- 14 smelting recipes added — full coverage for all 18 mineable ores (4 existing + 14 new)
+- Atmospheric elements (H, He, O, N, C, S) excluded from surface deposits — only available via gas_extractor
+- Smelting chain now works: mine → ore → smelter → pure element → crafting
+- 2 files modified (generator.ts, recipes.ts), 0 new files created
+
+---
+Task ID: 3
+Agent: Bugfix Agent
+Task: Fix Critical Engine Bugs in SpaceGame (6 fixes)
+
+Work Log:
+- Read current files: src/economy/engine.ts, src/stores/game-store.ts, src/data/buildings.ts
+- **Fix 1 (P2-06/P2-07)**: Nuclear plant base output changed from 10 to 25 in all 3 energy loops of recalcEnergyBalance (surface hexes, atmospheric slots, orbit slots). Added `else if (buildingDef.id === 'nuclear_plant')` branch with `production += 25 * levelMult` (no luminosity factor). Fallback remains `10 * levelMult` for unknown energy buildings.
+- **Fix 2 (P3-02)**: Energy balance check in processProductionQueue now uses per-tick cost (`recipe.energyCost / item.total`) instead of full recipe cost (`recipe.energyCost`). Prevents production from being blocked when per-tick cost is affordable but full cost isn't.
+- **Fix 3 (P3-04)**: Added building size validation in `buildOnHex` — checks `buildingDef.size.includes(planet.size)` after atmosphere check and before resource check. Prevents building structures on planets that are too small/large.
+- **Fix 4 (P3-06)**: Added building existence check in `enqueueProduction` — verifies that the recipe's required building (`recipe.buildingId`) exists on the planet across all 3 layers (hexes, atmosphericSlots, orbitSlots) before adding to queue.
+- **Fix 5 (P2-26)**: Added `Math.max(0.0001, ...)` guard on `starLuminosity` in `recalcEnergyBalance` to prevent division by zero for black holes or stars with ~0 luminosity.
+- **Fix 6 (P3-05)**: Economy tick now scales with game speed in `game-store.ts` `tick()` method. Processes economy `Math.min(gameState.speed, 50)` times per tick (capped at 50 to avoid lag).
+- Lint: 0 errors
+- Dev server: compiles without errors
+
+Stage Summary:
+- 2 files modified: src/economy/engine.ts, src/stores/game-store.ts
+- 6 critical engine bugs fixed (P2-06/P2-07, P3-02, P3-04, P3-06, P2-26, P3-05)
+- Nuclear plant now produces 2.5x more energy than solar (25 vs 10 base)
+- Production queue no longer blocked by full energy cost check
+- Building placement validates planet size compatibility
+- Production requires building to exist on planet
+- Black hole star luminosity safely clamped to prevent division by zero
+- Game speed properly scales economy processing (up to 50x)
+
+---
+Task ID: 4
+Agent: General Agent
+Task: Fix Documentation Issues (5 fixes: Р2-02/Р2-17, Р2-04, Р2-11, Р3-11, Р1-45)
+
+Work Log:
+- **Fix 1 (Р2-02/Р2-17)**: Gravity formula error in docs/03-planets.md §2.2
+  - Changed `(radius / earthRadius)² × (density / earthDensity)` → `(radius / earthRadius) × (density / earthDensity)` (removed erroneous square)
+  - Added derivation note: g = GM/r² = G(4/3)πρr³/r² = (4/3)πGρr → g/g_E = (ρ/ρ_E)(r/r_E)
+  - Added Mars verification: r=3390km, ρ=3.93 → g = 0.532 × 0.713 = 0.38g ✓
+  - Added Р2-17 self-contradiction note: gas giant gravity 1.5–3.0g is consistent with linear formula only (squared would give ~33g)
+
+- **Fix 2 (Р2-04)**: Temperature formula missing unit conversion in docs/03-planets.md §2.3
+  - Changed `T_star × sqrt(R_star / (2 × D))` → `T_star × sqrt(R_star × 0.00465 / (2 × D_AU))`
+  - Added unit specifications: R_star in R☉, D_AU in AU, conversion factor 0.00465 (1 R☉ = 0.00465 AU)
+  - Added Earth verification: 5778 × sqrt(0.00465/2) − 273 = 5.5°C ✓
+
+- **Fix 3 (Р2-11)**: Added 'карликовая' (dwarf) to ARCHITECTURE.md §3.1.2 surface type list
+  - Changed: "скалистая, вулканическая, ледяная, газовый гигант, океаническая, пустынная" → added "карликовая" (7 types)
+
+- **Fix 4 (Р3-11)**: Fixed "50 vs 20 elements" contradiction in ARCHITECTURE.md
+  - §3.1.3: Changed "Система из **50 элементов**" → "Система из **50 элементов** (полная версия; MVP: 22 ключевых)"
+  - §3.1.3 note: Changed generic warning → explicit clarification that §3.1.3 describes full target, §5.1 defines MVP scope
+  - §5.1: Changed "Начать с 20 элементов" → "Начать с 22 ключевых элементов"
+
+- **Fix 5 (Р1-45)**: Updated file structure in ARCHITECTURE.md §8 to match actual project
+  - `src/core/galaxy/star.ts` → `src/data/star-types.ts`
+  - `src/core/galaxy/planet.ts` → `src/data/planet-types.ts`
+  - `src/core/economy/elements.ts` → `src/data/elements.ts`
+  - `src/core/economy/recipes.ts` → `src/data/recipes.ts`
+  - `src/data/*.json` → `src/data/*.ts` (TypeScript, not JSON)
+  - `src/core/game-loop/` → `src/core/game-loop.ts` (single file)
+  - Added `src/core/event-bus.ts`, `src/core/prng.ts`, `src/core/types.ts`
+  - Added `src/stores/game-store.ts` (not in hooks/)
+  - Added `src/hooks/use-mobile.ts` and `src/hooks/use-toast.ts` (shadcn hooks)
+  - Added `src/galaxy/` module (generator.ts, hex-grid.ts, index.ts)
+  - Added `src/economy/` module (engine.ts, index.ts)
+  - `src/components/game/` updated to actual files (7 components)
+  - Added commented section for planned-but-not-yet-implemented modules (ships/, ai/, tech/, save/)
+
+Stage Summary:
+- 2 documentation files modified: docs/03-planets.md, docs/ARCHITECTURE.md
+- 0 source code files modified (documentation-only changes)
+- Gravity formula corrected from squared to linear radius ratio
+- Temperature formula corrected with R☉→AU unit conversion factor
+- ARCHITECTURE.md surface types now match 03-planets.md (7 types including карликовая)
+- Element count contradiction resolved: §3.1.3 = full target (50), §5.1 = MVP (22)
+- §8 file structure now reflects actual codebase layout

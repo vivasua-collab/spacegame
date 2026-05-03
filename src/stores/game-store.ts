@@ -131,9 +131,12 @@ export const useGameStore = create<GameStore>((set, get) => {
       gameState.time.day = Math.floor(gameState.time.tick / TICKS_PER_DAY);
       gameState.time.year = Math.floor(gameState.time.day / 365);
 
-      // Обрабатываем экономику каждый "дневной" тик
+      // P3-05: обрабатываем экономику пропорционально скорости (с ограничением для избежания лагов)
       const allPlanets = gameState.galaxy.systems.flatMap(s => s.planets);
-      processEconomyTick(allPlanets, gameState.productionQueues, gameState.galaxy.systemMap);
+      const economyTicks = Math.min(gameState.speed, 50); // Cap to avoid lag
+      for (let i = 0; i < economyTicks; i++) {
+        processEconomyTick(allPlanets, gameState.productionQueues, gameState.galaxy.systemMap);
+      }
 
       set({ gameState: { ...gameState } });
     },

@@ -479,6 +479,10 @@ function selectPlanetType(orbit: number, starDef: typeof STAR_TYPES[0], rng: Xos
 
 /** Назначить ресурсные залежи на гексах */
 function assignResourceDeposits(hexes: HexCell[], rng: Xoshiro256): void {
+  // Р3-01: Deposits produce ores, not pure elements.
+  // Atmospheric elements (H, He, O, N, C, S) are extracted via gas_extractor, not mines.
+  const mineableElements = ELEMENTS.filter(e => !e.isAtmospheric);
+
   for (const hex of hexes) {
     // Не на океане
     if (hex.terrain === 'ocean') continue;
@@ -489,9 +493,9 @@ function assignResourceDeposits(hexes: HexCell[], rng: Xoshiro256): void {
     // 1-3 элемента в залежи
     const depositCount = rng.nextInt(1, 3);
     for (let i = 0; i < depositCount; i++) {
-      const element = rng.nextChoice(ELEMENTS);
+      const element = rng.nextChoice(mineableElements);
       hex.deposits.push({
-        elementId: element.id,
+        elementId: `${element.id}-ore`, // Р3-01: ore ID, not pure element
         availability: 0.2 + rng.nextFloat() * 0.7,
         quantity: rng.nextInt(50, 500) * (element.category === 'rare' ? 0.1 : 1),
         depth: rng.nextInt(1, 5),
