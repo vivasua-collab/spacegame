@@ -1,6 +1,6 @@
 # Аудит генерации галактики — код vs docs/03-planets.md
 
-> **Дата:** 2026-03-06  
+> **Дата:** 2026-05-03  
 > **Цель:** Полная документация текущей реализации генерации, чтобы каждый раз не искать микробаг в коде, а сразу видеть проблемы и расхождения со спецификацией.  
 > **Спецификация:** `docs/03-planets.md` (единый источник истины), дополнительно `docs/02-stars.md`, `docs/01-galaxy.md`  
 > **Код:** `src/galaxy/generator.ts`, `src/galaxy/hex-grid.ts`, `src/data/planet-types.ts`, `src/data/star-types.ts`, `src/core/types.ts`, `src/core/prng.ts`
