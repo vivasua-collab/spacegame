@@ -254,6 +254,11 @@ export interface Planet {
   name: string;
   type: PlanetType;
   size: PlanetSize;
+  /** Радиус планеты в км */
+  radiusKm: number;
+  /** Плотность планеты в г/см³ */
+  density: number;
+  /** Гравитация в g (вычисляется: gravity = (radiusKm/6371) × (density/5.51)) */
   gravity: number;
   temperature: number;
   /** Атмосфера — полноценная структура вместо boolean (P1-16) */
@@ -272,9 +277,30 @@ export interface Planet {
   atmosphericSlots: AtmosphericSlot[];
   /** Орбитальные слоты (все планеты, 3-12) */
   orbitSlots: OrbitalSlot[];
+  /** Сводная таблица ресурсных залежей планеты (агрегация из гексов + атмосферных) */
+  resourceDeposits: PlanetResourceDeposit[];
   resources: Record<string, number>; // elementId → количество на складе
   energyBalance: number;
   owner: EntityId | null; // factionId или playerId
+}
+
+/**
+ * Сводная залежь ресурса на планете.
+ * Агрегирует все залежи одного элемента со всех гексов.
+ * Три уровня: профильный, редкий, ультраредкий (уникальный для планеты).
+ */
+export interface PlanetResourceDeposit {
+  elementId: string;
+  /** Суммарное количество ресурса (тыс. тонн) */
+  totalQuantity: number;
+  /** Средняя доступность (0-1) */
+  avgAvailability: number;
+  /** Категория: 'profile' | 'rare' | 'ultra_rare' */
+  tier: 'profile' | 'rare' | 'ultra_rare';
+  /** Количество гексов, где ресурс присутствует */
+  hexCount: number;
+  /** Максимальная доступность среди всех залежей этого элемента */
+  maxAvailability: number;
 }
 
 export interface Star {

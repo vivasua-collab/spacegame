@@ -68,16 +68,35 @@ export class Xoshiro256 {
    * hash(main_seed, name) — воспроизводимый дочерний генератор
    * с уникальным именем. Изменение в одном под-seed'е
    * не влияет на другие.
+   *
+   * Использует FNV-1a хеш для качественного распределения
+   * даже для похожих строк (system_0, system_1, ...).
+   * Результат комбинируется со всеми 4 словами состояния
+   * через SplitMix64 для гарантии независимости.
    */
   derive(name: string): Xoshiro256 {
-    // Простой хеш имени для получения seed
-    let hash = 0;
+    // FNV-1a хеш имени — качественное распределение
+    let h1 = 0x811c9dc5 >>> 0; // FNV offset basis (32-bit)
+    let h2 = 0x9e3779b9 >>> 0; // Второй хеш для diversity
     for (let i = 0; i < name.length; i++) {
-      hash = ((hash << 5) - hash + name.charCodeAt(i)) | 0;
+      h1 ^= name.charCodeAt(i);
+      h1 = Math.imul(h1, 0x01000193) >>> 0; // FNV prime
+      h2 ^= name.charCodeAt(i) + i;
+      h2 = Math.imul(h2, 0x9e3779b9) >>> 0;
     }
-    // Комбинируем текущее состояние с хешем имени
-    const combined = (this.state[0] ^ hash) >>> 0;
-    return new Xoshiro256(combined);
+    // Комбинируем ВСЕ 4 слова состояния с хешем имени
+    const combined = (this.state[0] ^ h1 ^ (this.state[1] >>> 16)) >>> 0;
+    const extra = (this.state[2] ^ h2 ^ (this.state[3] >>> 16)) >>> 0;
+    // Двойной SplitMix64 для максимально независимого seed
+    let z = (combined + 0x9e3779b97f4a7c15) | 0;
+    z = Math.imul(z ^ (z >>> 30), 0xbf58476d1ce4e5b9);
+    z = Math.imul(z ^ (z >>> 27), 0x94d049bb133111eb);
+    z = z ^ (z >>> 31);
+    let w = (extra + 0x9e3779b97f4a7c15) | 0;
+    w = Math.imul(w ^ (w >>> 30), 0xbf58476d1ce4e5b9);
+    w = Math.imul(w ^ (w >>> 27), 0x94d049bb133111eb);
+    w = w ^ (w >>> 31);
+    return new Xoshiro256(z ^ w);
   }
 
   weightedChoice<T>(items: readonly T[], weights: readonly number[]): T {

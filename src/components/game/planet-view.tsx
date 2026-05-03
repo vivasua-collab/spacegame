@@ -5,7 +5,7 @@ import { useGameStore } from '@/stores/game-store';
 import { axialToPixel } from '@/galaxy';
 import { TERRAIN_COLORS, TERRAIN_NAMES, TYPE_NAMES, SIZE_NAMES } from '@/data/planet-types';
 import { BUILDING_MAP } from '@/data/buildings';
-import { ELEMENT_MAP } from '@/data/elements';
+import { ELEMENT_MAP, ELEMENTS } from '@/data/elements';
 import { BuildingDialog } from './building-dialog';
 import { ResourcePanel } from './resource-panel';
 import { Card, CardContent } from '@/components/ui/card';
@@ -22,8 +22,11 @@ import {
   Ruler,
   Clock,
   Orbit,
+  Gem,
+  Info,
+  Weight,
 } from 'lucide-react';
-import type { Planet, HexCell, HexTerrain, AtmosphereType, LifeLevel, AtmosphericSlot, OrbitalSlot } from '@/core/types';
+import type { Planet, HexCell, HexTerrain, AtmosphereType, LifeLevel, AtmosphericSlot, OrbitalSlot, PlanetResourceDeposit } from '@/core/types';
 
 const ATMO_DISPLAY: Record<AtmosphereType, string> = {
   none: 'Нет', thin: 'Тонкая', standard: 'Стандартная', dense: 'Плотная',
@@ -32,6 +35,23 @@ const ATMO_DISPLAY: Record<AtmosphereType, string> = {
 
 const LIFE_DISPLAY: Record<LifeLevel, string> = {
   none: 'Нет', microbes: 'Микробы', plants: 'Растения', simple: 'Простая', complex: 'Сложная',
+};
+
+const TIER_DISPLAY: Record<PlanetResourceDeposit['tier'], { label: string; color: string; bgColor: string }> = {
+  profile: { label: 'Профильный', color: 'text-emerald-400', bgColor: 'bg-emerald-900/30' },
+  rare: { label: 'Редкий', color: 'text-amber-400', bgColor: 'bg-amber-900/30' },
+  ultra_rare: { label: 'Ультраредкий', color: 'text-purple-400', bgColor: 'bg-purple-900/30' },
+};
+
+const CATEGORY_NAMES: Record<string, string> = {
+  structural: 'Строительные',
+  fuel: 'Топливные',
+  alloy: 'Сплавы',
+  electronics: 'Электроника',
+  chemical: 'Химия',
+  energy: 'Энергия',
+  rare: 'Редкие',
+  light: 'Лёгкие',
 };
 
 /** Форматирование орбитального периода */
@@ -43,7 +63,16 @@ function formatOrbitalPeriod(days: number): string {
   return `${Math.round(years)} лет`;
 }
 
+/** Форматирование количества ресурса */
+function formatQuantity(q: number): string {
+  if (q >= 1000000) return `${(q / 1000000).toFixed(1)}M`;
+  if (q >= 1000) return `${(q / 1000).toFixed(1)}K`;
+  return q.toString();
+}
+
 const HEX_SIZE = 24; // pixel size for hex rendering
+
+type PlanetTab = 'overview' | 'resources';
 
 export function PlanetView() {
   const gameState = useGameStore((s) => s.gameState);
@@ -54,6 +83,7 @@ export function PlanetView() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [selectedHexIndex, setSelectedHexIndex] = useState<number | null>(null);
   const [hoveredHexIndex, setHoveredHexIndex] = useState<number | null>(null);
+  const [activeTab, setActiveTab] = useState<PlanetTab>('overview');
 
   if (!gameState || !selectedPlanetId) {
     return (
@@ -89,7 +119,7 @@ export function PlanetView() {
     <div className="h-full flex flex-col lg:flex-row gap-4">
       {/* Hex map area */}
       <div className="flex-1 min-w-0 flex flex-col">
-        {/* Back button + title */}
+        {/* Back button + title + tabs */}
         <div className="flex items-center gap-2 mb-2">
           <button
             className="text-xs text-slate-400 hover:text-white flex items-center gap-1 transition-colors"
@@ -106,17 +136,45 @@ export function PlanetView() {
           <Badge variant="outline" className="text-[9px] h-4 px-1">
             {SIZE_NAMES[planet.size] ?? planet.size}
           </Badge>
+          <div className="flex-1" />
+          {/* Tab buttons */}
+          <div className="flex gap-1">
+            <button
+              className={`text-[10px] px-2 py-0.5 rounded transition-colors ${
+                activeTab === 'overview' ? 'bg-white/15 text-white' : 'text-slate-500 hover:text-slate-300'
+              }`}
+              onClick={() => setActiveTab('overview')}
+            >
+              <Info className="size-3 inline mr-0.5" />
+              Обзор
+            </button>
+            <button
+              className={`text-[10px] px-2 py-0.5 rounded transition-colors ${
+                activeTab === 'resources' ? 'bg-white/15 text-white' : 'text-slate-500 hover:text-slate-300'
+              }`}
+              onClick={() => setActiveTab('resources')}
+            >
+              <Gem className="size-3 inline mr-0.5" />
+              Ресурсы ({planet.resourceDeposits.length})
+            </button>
+          </div>
         </div>
 
-        {/* Hex Grid */}
-        <div className="flex-1 min-h-0">
-          <HexGrid
-            hexes={planet.hexes}
-            onHexClick={handleHexClick}
-            onHexHover={setHoveredHexIndex}
-            hoveredHexIndex={hoveredHexIndex}
-          />
-        </div>
+        {/* Content area */}
+        {activeTab === 'overview' ? (
+          <div className="flex-1 min-h-0">
+            <HexGrid
+              hexes={planet.hexes}
+              onHexClick={handleHexClick}
+              onHexHover={setHoveredHexIndex}
+              hoveredHexIndex={hoveredHexIndex}
+            />
+          </div>
+        ) : (
+          <div className="flex-1 min-h-0">
+            <ResourcesTabContent planet={planet} />
+          </div>
+        )}
       </div>
 
       {/* Right sidebar */}
@@ -131,6 +189,14 @@ export function PlanetView() {
               <div className="flex justify-between text-slate-300">
                 <span className="flex items-center gap-1 text-slate-500"><Globe2 className="size-3" /> Гравитация</span>
                 <span className="font-mono">{planet.gravity.toFixed(2)}g</span>
+              </div>
+              <div className="flex justify-between text-slate-300">
+                <span className="flex items-center gap-1 text-slate-500"><Weight className="size-3" /> Плотность</span>
+                <span className="font-mono">{planet.density.toFixed(1)} г/см³</span>
+              </div>
+              <div className="flex justify-between text-slate-300">
+                <span className="flex items-center gap-1 text-slate-500"><Ruler className="size-3" /> Радиус</span>
+                <span className="font-mono">{planet.radiusKm.toLocaleString()} км</span>
               </div>
               <div className="flex justify-between text-slate-300">
                 <span className="flex items-center gap-1 text-slate-500"><Thermometer className="size-3" /> Температура</span>
@@ -170,7 +236,7 @@ export function PlanetView() {
         </Card>
 
         {/* Hovered hex info */}
-        {hoveredHexIndex !== null && planet.hexes[hoveredHexIndex] && (
+        {activeTab === 'overview' && hoveredHexIndex !== null && planet.hexes[hoveredHexIndex] && (
           <HexInfoCard hex={planet.hexes[hoveredHexIndex]} />
         )}
 
@@ -203,7 +269,7 @@ export function PlanetView() {
           <SlotCard title="Орбитальные слоты" slots={planet.orbitSlots} />
         )}
 
-        {/* Resources */}
+        {/* Resources summary (in sidebar) */}
         <Card className="bg-[#0d0d24] border-white/10 text-white py-3 gap-3">
           <CardContent className="px-4 py-0">
             <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
@@ -222,6 +288,116 @@ export function PlanetView() {
         hexIndex={selectedHexIndex}
         terrain={selectedHex?.terrain ?? null}
       />
+    </div>
+  );
+}
+
+// ============ Resources Tab ============
+
+function ResourcesTabContent({ planet }: { planet: Planet }) {
+  const deposits = planet.resourceDeposits;
+
+  // Group by tier
+  const profileDeposits = deposits.filter(d => d.tier === 'profile');
+  const rareDeposits = deposits.filter(d => d.tier === 'rare');
+  const ultraRareDeposits = deposits.filter(d => d.tier === 'ultra_rare');
+
+  return (
+    <ScrollArea className="h-full max-h-[calc(100vh-160px)]">
+      <div className="p-2 space-y-4">
+        {/* Profile resources */}
+        <ResourceSection
+          title="Профильные ресурсы"
+          subtitle="Значительные запасы — основа экономики планеты"
+          deposits={profileDeposits}
+          tierInfo={TIER_DISPLAY.profile}
+        />
+
+        {/* Rare resources */}
+        <ResourceSection
+          title="Редкие ресурсы"
+          subtitle="Следовые количества — нужны для высоких технологий"
+          deposits={rareDeposits}
+          tierInfo={TIER_DISPLAY.rare}
+        />
+
+        {/* Ultra-rare resources */}
+        <ResourceSection
+          title="Ультраредкие ресурсы"
+          subtitle="Уникальные находки — единичные экземпляры"
+          deposits={ultraRareDeposits}
+          tierInfo={TIER_DISPLAY.ultra_rare}
+        />
+      </div>
+    </ScrollArea>
+  );
+}
+
+function ResourceSection({
+  title,
+  subtitle,
+  deposits,
+  tierInfo,
+}: {
+  title: string;
+  subtitle: string;
+  deposits: PlanetResourceDeposit[];
+  tierInfo: { label: string; color: string; bgColor: string };
+}) {
+  if (deposits.length === 0) return null;
+
+  return (
+    <div>
+      <div className="flex items-center gap-2 mb-1">
+        <Gem className={`size-4 ${tierInfo.color}`} />
+        <span className="text-sm font-semibold text-white">{title}</span>
+        <Badge className={`text-[9px] h-4 px-1 ${tierInfo.bgColor} ${tierInfo.color} border-0`}>
+          {deposits.length}
+        </Badge>
+      </div>
+      <div className="text-[10px] text-slate-500 mb-2">{subtitle}</div>
+      <div className="space-y-1">
+        {deposits.map((dep) => {
+          const elDef = ELEMENT_MAP.get(dep.elementId);
+          if (!elDef) return null;
+          return (
+            <div
+              key={dep.elementId}
+              className="flex items-center gap-2 px-2 py-1.5 rounded bg-white/[0.03] hover:bg-white/[0.06] transition-colors"
+            >
+              {/* Element symbol */}
+              <div className={`w-8 h-8 rounded flex items-center justify-center text-xs font-bold ${tierInfo.bgColor} ${tierInfo.color} shrink-0`}>
+                {elDef.symbol}
+              </div>
+              {/* Name and category */}
+              <div className="flex-1 min-w-0">
+                <div className="text-xs text-slate-200 font-medium">{elDef.name}</div>
+                <div className="text-[9px] text-slate-500">
+                  {CATEGORY_NAMES[elDef.category] ?? elDef.category}
+                  {dep.hexCount > 0 && ` • ${dep.hexCount} гексов`}
+                </div>
+              </div>
+              {/* Quantity */}
+              <div className="text-right shrink-0">
+                <div className="text-xs font-mono text-slate-300">{formatQuantity(dep.totalQuantity)}</div>
+                <div className="text-[9px] text-slate-500">
+                  доступн. {(dep.avgAvailability * 100).toFixed(0)}%
+                </div>
+              </div>
+              {/* Availability bar */}
+              <div className="w-12 h-1.5 bg-white/5 rounded-full overflow-hidden shrink-0">
+                <div
+                  className={`h-full rounded-full ${
+                    dep.avgAvailability > 0.4 ? 'bg-emerald-500' :
+                    dep.avgAvailability > 0.15 ? 'bg-amber-500' : 'bg-red-500'
+                  }`}
+                  style={{ width: `${Math.min(100, dep.avgAvailability * 100)}%` }}
+                />
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

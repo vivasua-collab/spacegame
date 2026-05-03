@@ -6,10 +6,10 @@
  */
 
 import { Xoshiro256 } from '@/core/prng';
-import type { Galaxy, StarSystem, Star, Planet, JumpPoint, Vec2, EntityId, ResourceDeposit, HexTerrain, PlanetSize, BinaryType, Atmosphere, AtmosphereType, PlanetLife, LifeLevel, AtmosphericSlot, OrbitalSlot } from '@/core/types';
+import type { Galaxy, StarSystem, Star, Planet, JumpPoint, Vec2, EntityId, ResourceDeposit, HexTerrain, PlanetSize, BinaryType, Atmosphere, AtmosphereType, PlanetLife, LifeLevel, AtmosphericSlot, OrbitalSlot, PlanetResourceDeposit } from '@/core/types';
 import { STAR_TYPES, STAR_WEIGHTS } from '@/data/star-types';
-import { PLANET_TYPES, SIZE_HEX_COUNT, ORBIT_SLOTS, GAS_GIANT_ATMOSPHERE_SLOTS } from '@/data/planet-types';
-import { ELEMENTS } from '@/data/elements';
+import { PLANET_TYPES, SIZE_HEX_COUNT, ORBIT_SLOTS, GAS_GIANT_ATMOSPHERE_SLOTS, PLANET_DENSITY, PLANET_RADIUS_KM, PROFILE_ELEMENTS, RARE_ELEMENTS, ULTRA_RARE_ELEMENTS } from '@/data/planet-types';
+import { ELEMENTS, ELEMENT_MAP } from '@/data/elements';
 import { generateHexGrid } from './hex-grid';
 
 let nextId = 1;
@@ -269,17 +269,22 @@ function createStar(systemId: EntityId, systemName: string, starDef: typeof STAR
  * Генерация планеты.
  *
  * Физика:
+ * - Радиус: по типу + размеру с случайной вариацией
+ * - Плотность: по типу планеты (из 03-planets.md §2.2)
+ * - Гравитация: g = (radiusKm/6371) × (density/5.51) (из 03-planets.md §2.2)
  * - Равновесная температура: T_eq = 278K × (L/L☉)^(1/4) × (1AU/r)^(1/2)
- *   (упрощённый закон Стефана-Больцмана)
  * - Парниковый эффект зависит от типа атмосферы
- * - Тип планеты модифицирует температуру (альбедо, геотермалка и т.д.)
  * - Орбитальный период: P = 365.25 × sqrt(r³ / M) дней (3-й закон Кеплера)
+ * - Ресурсы: ВСЯ таблица «Менделеева» на каждой планете (профильные/редкие/ультраредкие)
  */
 function generatePlanet(systemId: EntityId, orbit: number, systemName: string, starDef: typeof STAR_TYPES[0], rng: Xoshiro256): Planet {
   const planetId = genId('planet');
 
-  // Тип планеты зависит от орбиты и звезды
-  const planetDef = selectPlanetType(orbit, starDef, rng);
+  // Орбитальный радиус: AU, растёт с номером орбиты (примерно по Тициусу-Боде)
+  const orbitalRadius = 0.3 + orbit * (0.5 + rng.nextFloat() * 0.3);
+
+  // Тип планеты зависит от РЕАЛЬНОГО орбитального радиуса и звезды
+  const planetDef = selectPlanetType(orbitalRadius, starDef, rng);
 
   // Размер с вариацией
   const sizes: PlanetSize[] = ['tiny', 'small', 'medium', 'large', 'huge'];
@@ -288,11 +293,17 @@ function generatePlanet(systemId: EntityId, orbit: number, systemName: string, s
   const sizeVar = rng.nextInt(Math.max(0, sizeIndex - 1), Math.min(sizes.length - 1, sizeIndex + 1));
   const size = sizes[sizeVar];
 
-  // Гравитация
-  const gravity = planetDef.baseGravity * (0.8 + rng.nextFloat() * 0.4);
+  // Радиус в км — из диапазона по типу и размеру
+  const radiusRange = PLANET_RADIUS_KM[planetDef.type]?.[size] ?? { min: 3000, max: 7000 };
+  const radiusKm = radiusRange.min + rng.nextFloat() * (radiusRange.max - radiusRange.min);
 
-  // Орбитальный радиус: AU, растёт с номером орбиты (примерно по Тициусу-Боде)
-  const orbitalRadius = 0.3 + orbit * (0.5 + rng.nextFloat() * 0.3);
+  // Плотность — из диапазона по типу планеты (03-planets.md §2.2)
+  const densityRange = PLANET_DENSITY[planetDef.type] ?? { min: 3.0, max: 6.0, avg: 4.5 };
+  const density = densityRange.min + rng.nextFloat() * (densityRange.max - densityRange.min);
+
+  // Гравитация из физической формулы: g = (R/R⊕) × (ρ/ρ⊕)
+  // earthRadius=6371km, earthDensity=5.51 г/см³
+  const gravity = (radiusKm / 6371) * (density / 5.51);
 
   // Орбитальный период по 3-му закону Кеплера: P = sqrt(r³ / M) лет
   const orbitalPeriodYears = Math.sqrt(Math.pow(orbitalRadius, 3) / starDef.mass);
@@ -312,7 +323,7 @@ function generatePlanet(systemId: EntityId, orbit: number, systemName: string, s
     ? []
     : generateHexGrid(size, planetDef.terrainWeights, rng.derive('hexes'));
 
-  // Ресурсные залежи на некоторых гексах
+  // Ресурсные залежи на гексах — ВСЯ таблица «Менделеева»
   if (hexes.length > 0) {
     assignResourceDeposits(hexes, rng.derive('deposits'), planetDef.type);
   }
@@ -333,12 +344,17 @@ function generatePlanet(systemId: EntityId, orbit: number, systemName: string, s
   // Имя планеты
   const planetName = `${systemName} ${toRoman(orbit)}`;
 
+  // Сводная таблица ресурсов планеты (агрегация из гексов)
+  const resourceDeposits = aggregateResourceDeposits(hexes, planetDef.type, rng.derive('ultra'));
+
   return {
     id: planetId,
     systemId,
     name: planetName,
     type: planetDef.type,
     size,
+    radiusKm: Math.round(radiusKm),
+    density: Math.round(density * 100) / 100,
     gravity: Math.round(gravity * 100) / 100,
     temperature: Math.round(temperature),
     atmosphere,
@@ -349,6 +365,7 @@ function generatePlanet(systemId: EntityId, orbit: number, systemName: string, s
     hexes,
     atmosphericSlots,
     orbitSlots,
+    resourceDeposits,
     resources: {},
     energyBalance: 0,
     owner: null,
@@ -548,50 +565,76 @@ function generateLife(planetDef: typeof PLANET_TYPES[0], atmosphere: Atmosphere,
   };
 }
 
-function selectPlanetType(orbit: number, starDef: typeof STAR_TYPES[0], rng: Xoshiro256): typeof PLANET_TYPES[0] {
-  // Зона обитаемости зависит от светимости звезды:
-  // Внутренний край HZ: r_in = sqrt(L/1.1) AU
-  // Внешний край HZ: r_out = sqrt(L/0.53) AU
-  // Это определяет, какие типы планет на каких орбитах вероятны.
+/**
+ * Выбор типа планеты на основе РЕАЛЬНОГО орбитального радиуса и типа звезды.
+ *
+ * Ключевые отличия от предыдущей версии:
+ * 1. Использует РЕАЛЬНЫЙ orbitalRadius, а не фиксированную оценку
+ * 2. Все 7 типов планет доступны в КАЖДОЙ зоне (с разными весами)
+ * 3. 10% шанс «аномальной» планеты — тип не из основной зоны
+ * 4. Карликовые планеты добавлены во все зоны
+ */
+function selectPlanetType(orbitalRadius: number, starDef: typeof STAR_TYPES[0], rng: Xoshiro256): typeof PLANET_TYPES[0] {
   const L = Math.max(0.001, starDef.luminosity);
   const hzInner = Math.sqrt(L / 1.1);
   const hzOuter = Math.sqrt(L / 0.53);
+  const r = Math.max(0.05, orbitalRadius);
 
-  // Оцениваем расстояние для данной орбиты (примерно Тициус-Боде)
-  const estimatedR = 0.3 + orbit * 0.6;
+  // 10% шанс аномальной планеты (любой тип с равными весами)
+  if (rng.nextBool(0.10)) {
+    return rng.weightedChoice(
+      PLANET_TYPES,
+      [15, 10, 12, 8, 10, 20, 15], // rocky, volcanic, ice, oceanic, desert, gas_giant, dwarf
+    );
+  }
 
-  // Определяем зону относительно обитаемой зоны
-  const inHZ = estimatedR >= hzInner && estimatedR <= hzOuter;
-  const innerThanHZ = estimatedR < hzInner;
-  const outerThanHZ = estimatedR > hzOuter;
+  // Определяем зону
+  const inHZ = r >= hzInner && r <= hzOuter;
+  const innerThanHZ = r < hzInner;
 
   if (innerThanHZ) {
-    // Ближе к звезде → горячие планеты
-    // Чем ближе к звезде, тем больше вулканических
-    const closeness = Math.max(0, 1 - estimatedR / hzInner);
-    const volcanicW = 30 + closeness * 40;
-    const rockyW = 50 - closeness * 20;
-    const dwarfW = 20 - closeness * 20;
+    // Внутренняя зона → горячие планеты преобладают
+    const closeness = Math.max(0, 1 - r / Math.max(0.01, hzInner));
     return rng.weightedChoice(
-      [PLANET_TYPES[1], PLANET_TYPES[0], PLANET_TYPES[6]], // volcanic, rocky, dwarf
-      [Math.max(5, volcanicW), Math.max(5, rockyW), Math.max(5, dwarfW)],
+      PLANET_TYPES, // rocky, volcanic, ice, oceanic, desert, gas_giant, dwarf
+      [
+        Math.max(5, 25 + closeness * 15),  // rocky — частый
+        Math.max(5, 30 + closeness * 30),  // volcanic — очень частый у звезды
+        Math.max(2, 3),                     // ice — редко
+        Math.max(2, 5),                     // oceanic — редко
+        Math.max(3, 10 + closeness * 10),  // desert — умеренно
+        Math.max(1, 2),                     // gas_giant — крайне редко внутри
+        Math.max(3, 15 - closeness * 10),  // dwarf — частый (мелкие обломки)
+      ],
     );
   } else if (inHZ) {
-    // Обитаемая зона → землеподобные / океанические / пустынные
+    // Обитаемая зона → землеподобные
     return rng.weightedChoice(
-      [PLANET_TYPES[0], PLANET_TYPES[3], PLANET_TYPES[4]], // rocky, oceanic, desert
-      [35, 35, 30],
+      PLANET_TYPES,
+      [
+        30,  // rocky — частый
+        5,   // volcanic — редкий
+        3,   // ice — крайне редкий
+        25,  // oceanic — частый
+        15,  // desert — умеренно
+        5,   // gas_giant — редкий
+        12,  // dwarf — умеренно
+      ],
     );
   } else {
-    // Внешняя зона → ледяные / газовые гиганты
-    // Чем дальше, тем больше газовых гигантов
-    const farness = Math.min(1, (estimatedR - hzOuter) / 10);
-    const gasW = 25 + farness * 35;
-    const iceW = 30 + farness * 15;
-    const oceanicW = 30 - farness * 20;
+    // Внешняя зона → холодные и газовые
+    const farness = Math.min(1, (r - hzOuter) / Math.max(0.1, hzOuter));
     return rng.weightedChoice(
-      [PLANET_TYPES[5], PLANET_TYPES[2], PLANET_TYPES[3]], // gas_giant, ice, oceanic
-      [Math.max(5, gasW), Math.max(5, iceW), Math.max(5, oceanicW)],
+      PLANET_TYPES,
+      [
+        Math.max(3, 10 - farness * 8),   // rocky — убывает
+        Math.max(1, 3 - farness * 2),     // volcanic — редко
+        Math.max(5, 20 + farness * 25),  // ice — возрастает
+        Math.max(2, 5 - farness * 3),     // oceanic — убывает
+        Math.max(2, 8 - farness * 5),     // desert — убывает
+        Math.max(5, 25 + farness * 30),  // gas_giant — возрастает
+        Math.max(5, 15 + farness * 10),  // dwarf — возрастает
+      ],
     );
   }
 }
@@ -599,85 +642,205 @@ function selectPlanetType(orbit: number, starDef: typeof STAR_TYPES[0], rng: Xos
 /** Назначить ресурсные залежи на гексах.
  *
  * Философия: на каждой планете есть ВСЯ таблица элементов (как таблица Менделеева).
- * Профильные ресурсы (соответствующие типу планеты) — в больших количествах.
- * Непрофильные — в малых, но всегда есть (微量).
+ * Профильные ресурсы (соответствующие типу планеты) — в ЗНАЧИТЕЛЬНОМ количестве.
+ * Редкие — в следовых количествах (но всегда есть).
+ * Ультраредкие — 1-2 уникальных для планеты.
+ *
  * Атмосферные элементы (H, He, O, N, C, S) добываются газовым экстрактором,
- * а не шахтами, но залежи в породе тоже есть.
+ * но их залежи в породе тоже присутствуют в меньших количествах.
  */
-function assignResourceDeposits(hexes: HexCell[], rng: Xoshiro256, planetType?: string): void {
+function assignResourceDeposits(hexes: HexCell[], rng: Xoshiro256, planetType: string): void {
   if (hexes.length === 0) return;
-
-  // Множители количества по типу планеты
-  const typeMultipliers: Record<string, Record<string, number>> = {
-    rocky:    { structural: 2.0, fuel: 0.3, alloy: 1.5, electronics: 1.0, chemical: 0.5, energy: 0.5, rare: 0.3, light: 0.5 },
-    volcanic: { structural: 1.5, fuel: 0.2, alloy: 2.0, electronics: 0.8, chemical: 1.0, energy: 1.5, rare: 0.8, light: 0.3 },
-    ice:      { structural: 0.5, fuel: 1.0, alloy: 0.3, electronics: 0.2, chemical: 1.5, energy: 0.2, rare: 0.1, light: 0.8 },
-    oceanic:  { structural: 0.8, fuel: 0.5, alloy: 0.5, electronics: 0.5, chemical: 1.5, energy: 0.3, rare: 0.2, light: 0.5 },
-    desert:   { structural: 1.0, fuel: 0.2, alloy: 0.8, electronics: 0.5, chemical: 0.3, energy: 0.5, rare: 0.5, light: 0.3 },
-    dwarf:    { structural: 0.5, fuel: 0.2, alloy: 0.3, electronics: 0.2, chemical: 0.2, energy: 0.2, rare: 0.1, light: 0.2 },
-    gas_giant:{ structural: 0.1, fuel: 3.0, alloy: 0.1, electronics: 0.1, chemical: 2.0, energy: 0.1, rare: 0.1, light: 1.0 },
-  };
-  const multipliers = typeMultipliers[planetType ?? 'rocky'] ?? typeMultipliers.rocky;
-
-  // Разбиваем элементы по гексам: каждый гекс получает подмножество,
-  // но СОВОКУПНО все элементы покрыты.
-  // Стратегия: распределяем ВСЕ элементы по гексам, профильные — в несколько гексов,
-  // непрофильные — хотя бы в один.
 
   const nonOceanHexes = hexes.filter(h => h.terrain !== 'ocean');
   if (nonOceanHexes.length === 0) return;
 
-  // Сначала гарантируем: каждый элемент хотя бы в 1 гексе
+  const profileSet = new Set(PROFILE_ELEMENTS[planetType as keyof typeof PROFILE_ELEMENTS] ?? []);
+  const rareSet = new Set(RARE_ELEMENTS);
+
+  // Множители количества по категории для каждого типа планеты
+  const categoryMultipliers: Record<string, Record<string, number>> = {
+    rocky:    { structural: 2.5, fuel: 0.5, alloy: 1.5, electronics: 0.8, chemical: 0.6, energy: 0.5, rare: 0.3, light: 0.5 },
+    volcanic: { structural: 1.8, fuel: 0.3, alloy: 2.5, electronics: 0.6, chemical: 1.2, energy: 2.0, rare: 0.8, light: 0.2 },
+    ice:      { structural: 0.4, fuel: 2.0, alloy: 0.3, electronics: 0.2, chemical: 1.8, energy: 0.2, rare: 0.15, light: 1.0 },
+    oceanic:  { structural: 0.7, fuel: 1.0, alloy: 0.5, electronics: 0.5, chemical: 1.8, energy: 0.3, rare: 0.2, light: 0.6 },
+    desert:   { structural: 1.2, fuel: 0.2, alloy: 1.0, electronics: 0.6, chemical: 0.3, energy: 0.6, rare: 0.5, light: 0.3 },
+    gas_giant:{ structural: 0.1, fuel: 3.0, alloy: 0.1, electronics: 0.1, chemical: 2.5, energy: 0.1, rare: 0.1, light: 1.5 },
+    dwarf:    { structural: 0.6, fuel: 0.3, alloy: 0.4, electronics: 0.2, chemical: 0.3, energy: 0.2, rare: 0.15, light: 0.3 },
+  };
+  const catMult = categoryMultipliers[planetType] ?? categoryMultipliers.rocky;
+
+  // Для КАЖДОГО элемента из таблицы — создаём залежи
   for (const element of ELEMENTS) {
     const cat = element.category;
-    const mult = multipliers[cat] ?? 0.3;
+    const mult = catMult[cat] ?? 0.3;
+    const isProfile = profileSet.has(element.id);
+    const isRare = rareSet.has(element.id);
 
-    // Базовое количество зависит от категории и множителя типа планеты
+    // Количество зависит от принадлежности к профилю/редкости
     let baseQuantity: number;
-    if (cat === 'rare') {
-      baseQuantity = 10 + rng.nextFloat() * 40;  // редкие: 10-50
-    } else if (cat === 'energy') {
-      baseQuantity = 5 + rng.nextFloat() * 30;    // уран: мало
-    } else if (element.isAtmospheric) {
-      baseQuantity = 20 + rng.nextFloat() * 80;   // атмосферные в породе: 20-100
-    } else {
-      baseQuantity = 30 + rng.nextFloat() * 200;  // остальные: 30-230
-    }
-    baseQuantity *= mult;
+    let hexFraction: number; // доля гексов с этим ресурсом
+    let baseAvailability: number;
 
-    // Сколько гексов содержит этот элемент
-    // Профильные — много гексов, непрофильные — минимум 1
+    if (isProfile) {
+      // Профильные — ЗНАЧИТЕЛЬНОЕ количество, много гексов, высокая доступность
+      baseQuantity = (200 + rng.nextFloat() * 800) * mult * 3.0;  // ×3 профильный бонус
+      hexFraction = Math.min(0.6, 0.2 + mult * 0.3);
+      baseAvailability = 0.3 + rng.nextFloat() * 0.5;
+    } else if (isRare) {
+      // Редкие — следовые количества, минимум 1 гекс, низкая доступность
+      baseQuantity = (5 + rng.nextFloat() * 30) * mult * 0.15;  // следовые
+      hexFraction = Math.max(1 / nonOceanHexes.length, 0.05 + mult * 0.1);
+      baseAvailability = 0.02 + rng.nextFloat() * 0.12;
+    } else if (element.isAtmospheric) {
+      // Атмосферные в породе — умеренные
+      baseQuantity = (15 + rng.nextFloat() * 60) * mult;
+      hexFraction = Math.max(1 / nonOceanHexes.length, 0.05 + mult * 0.1);
+      baseAvailability = 0.05 + rng.nextFloat() * 0.2;
+    } else {
+      // Обычные непрофильные — малые/средние количества
+      baseQuantity = (20 + rng.nextFloat() * 120) * mult;
+      hexFraction = Math.max(1 / nonOceanHexes.length, 0.05 + mult * 0.15);
+      baseAvailability = 0.1 + rng.nextFloat() * 0.3;
+    }
+
+    // Количество гексов для этого элемента
     const hexCount = Math.max(1, Math.min(
       nonOceanHexes.length,
-      Math.ceil(mult * nonOceanHexes.length * 0.3),
+      Math.ceil(hexFraction * nonOceanHexes.length),
     ));
 
     // Выбираем случайные гексы
     const shuffled = [...nonOceanHexes].sort(() => rng.nextFloat() - 0.5);
     for (let h = 0; h < hexCount && h < shuffled.length; h++) {
+      const quantityVariance = 0.5 + rng.nextFloat();
       shuffled[h].deposits.push({
         elementId: `${element.id}-ore`,
-        availability: 0.1 + rng.nextFloat() * 0.8 * mult,
-        quantity: Math.max(1, Math.round(baseQuantity * (0.5 + rng.nextFloat()))),
-        depth: element.category === 'rare' ? rng.nextInt(3, 5) : rng.nextInt(1, 4),
+        availability: Math.min(1, baseAvailability * (0.7 + rng.nextFloat() * 0.6)),
+        quantity: Math.max(1, Math.round(baseQuantity * quantityVariance)),
+        depth: isRare ? rng.nextInt(3, 5) : rng.nextInt(1, 4),
       });
     }
   }
 
-  // Дополнительно: случайные богатые залежи на 10-20% гексов
+  // Дополнительно: случайные богатые залежи профильных ресурсов на 15% гексов
   for (const hex of nonOceanHexes) {
     if (rng.nextBool(0.15)) {
-      const element = rng.nextChoice(ELEMENTS.filter(e => !e.isAtmospheric));
+      const profileElements = ELEMENTS.filter(e => profileSet.has(e.id));
+      const element = profileElements.length > 0
+        ? rng.nextChoice(profileElements)
+        : rng.nextChoice(ELEMENTS.filter(e => !e.isAtmospheric));
       const cat = element.category;
-      const mult = multipliers[cat] ?? 0.3;
+      const mult = catMult[cat] ?? 0.3;
       hex.deposits.push({
         elementId: `${element.id}-ore`,
         availability: 0.5 + rng.nextFloat() * 0.5,
-        quantity: Math.round((100 + rng.nextFloat() * 400) * mult),
+        quantity: Math.round((200 + rng.nextFloat() * 800) * mult * 2),
         depth: rng.nextInt(1, 3),
       });
     }
   }
+}
+
+/**
+ * Агрегация ресурсных залежей из гексов в сводную таблицу планеты.
+ * Также добавляет ультраредкие ресурсы (1-2 уникальных для планеты).
+ */
+function aggregateResourceDeposits(
+  hexes: HexCell[],
+  planetType: string,
+  rng: Xoshiro256,
+): PlanetResourceDeposit[] {
+  const profileSet = new Set(PROFILE_ELEMENTS[planetType as keyof typeof PROFILE_ELEMENTS] ?? []);
+  const rareSet = new Set(RARE_ELEMENTS);
+  const deposits = new Map<string, { totalQuantity: number; totalAvailability: number; hexCount: number; maxAvailability: number }>();
+
+  // Агрегируем из гексов
+  for (const hex of hexes) {
+    for (const dep of hex.deposits) {
+      const elId = dep.elementId.replace('-ore', '');
+      const existing = deposits.get(elId);
+      if (existing) {
+        existing.totalQuantity += dep.quantity;
+        existing.totalAvailability += dep.availability;
+        existing.hexCount++;
+        existing.maxAvailability = Math.max(existing.maxAvailability, dep.availability);
+      } else {
+        deposits.set(elId, {
+          totalQuantity: dep.quantity,
+          totalAvailability: dep.availability,
+          hexCount: 1,
+          maxAvailability: dep.availability,
+        });
+      }
+    }
+  }
+
+  // Гарантируем ВСЕ элементы из таблицы (для газовых гигантов без гексов — генерируем напрямую)
+  for (const element of ELEMENTS) {
+    if (!deposits.has(element.id)) {
+      const isProfile = profileSet.has(element.id);
+      const isRare = rareSet.has(element.id);
+      const mult = planetType === 'gas_giant' ? (element.category === 'fuel' ? 3 : element.category === 'chemical' ? 2 : 0.2) : 0.3;
+      const quantity = isProfile
+        ? Math.round((300 + rng.nextFloat() * 1000) * mult)
+        : isRare
+          ? Math.round((3 + rng.nextFloat() * 15) * mult * 0.1)
+          : Math.round((10 + rng.nextFloat() * 50) * mult);
+
+      deposits.set(element.id, {
+        totalQuantity: Math.max(1, quantity),
+        totalAvailability: isProfile ? 0.4 + rng.nextFloat() * 0.4 : isRare ? 0.02 + rng.nextFloat() * 0.08 : 0.05 + rng.nextFloat() * 0.15,
+        hexCount: 0, // атмосферные/газовые — не привязаны к гексам
+        maxAvailability: isProfile ? 0.5 + rng.nextFloat() * 0.5 : 0.1 + rng.nextFloat() * 0.2,
+      });
+    }
+  }
+
+  // Добавляем 1-2 ультраредких элемента (уникальных для планеты)
+  const ultraCount = rng.nextInt(1, 2);
+  const availableUltra = ULTRA_RARE_ELEMENTS.filter(e => !profileSet.has(e));
+  for (let i = 0; i < ultraCount && i < availableUltra.length; i++) {
+    const elId = rng.nextChoice(availableUltra);
+    if (!deposits.has(elId) || (deposits.get(elId)?.totalQuantity ?? 0) < 10) {
+      deposits.set(elId, {
+        totalQuantity: Math.max(1, Math.round(1 + rng.nextFloat() * 5)),  // 1-6 тыс. тонн — уникальная находка
+        totalAvailability: 0.01 + rng.nextFloat() * 0.04,  // минимальная доступность
+        hexCount: 1,
+        maxAvailability: 0.05,
+      });
+    }
+  }
+
+  // Собираем результат
+  const result: PlanetResourceDeposit[] = [];
+  for (const [elementId, data] of deposits) {
+    const isProfile = profileSet.has(elementId);
+    const isRare = rareSet.has(elementId);
+    const isUltra = !isProfile && !isRare && (data.totalQuantity < 20 || data.maxAvailability < 0.05);
+
+    let tier: 'profile' | 'rare' | 'ultra_rare';
+    if (isProfile) tier = 'profile';
+    else if (isUltra) tier = 'ultra_rare';
+    else if (isRare) tier = 'rare';
+    else if (data.totalAvailability / Math.max(1, data.hexCount) < 0.1 && data.totalQuantity < 50) tier = 'ultra_rare';
+    else tier = 'rare';
+
+    result.push({
+      elementId,
+      totalQuantity: data.totalQuantity,
+      avgAvailability: data.hexCount > 0 ? Math.round((data.totalAvailability / data.hexCount) * 1000) / 1000 : Math.round(data.totalAvailability * 1000) / 1000,
+      tier,
+      hexCount: data.hexCount,
+      maxAvailability: Math.round(data.maxAvailability * 1000) / 1000,
+    });
+  }
+
+  // Сортировка: профильные → редкие → ультраредкие, внутри группы — по количеству
+  const tierOrder = { profile: 0, rare: 1, ultra_rare: 2 };
+  result.sort((a, b) => tierOrder[a.tier] - tierOrder[b.tier] || b.totalQuantity - a.totalQuantity);
+
+  return result;
 }
 
 /**

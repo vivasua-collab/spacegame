@@ -510,3 +510,106 @@ Stage Summary:
 - Save/load system fully functional with SQLite backend
 - First screen shows New Galaxy + Load Game tabs
 - 5 files modified
+
+---
+Task ID: 5
+Agent: General Agent
+Task: Audit Galaxy Generator — verify star type distribution and planet diversity
+
+Work Log:
+- Read all relevant source files: generator.ts, star-types.ts, planet-types.ts, prng.ts, types.ts
+- Created `scripts/audit-generator.ts` — comprehensive audit script covering:
+  - Star type distribution vs STAR_WEIGHTS expected percentages
+  - Planet type diversity per star type
+  - Per-system planet type diversity (same stars → same planets?)
+  - Planet size distribution (all 5 sizes present?)
+  - Gravity ranges per planet type vs documented ranges
+  - Temperature ranges per planet type vs documented ranges
+  - Planet type determinism analysis (same star + same orbit → same planet type?)
+  - selectPlanetType zone assignment analysis
+  - Root cause analysis
+- Ran the audit script with `bun run scripts/audit-generator.ts`
+
+CRITICAL FINDINGS:
+
+1. **PRNG derive() is BROKEN** — Only 2 of 12 star types generated in 500 systems
+   - ROOT CAUSE: The `derive(name)` method in Xoshiro256 uses a weak DJB2 hash. For names like "system_0" through "system_499", the hash values differ by only 1 (e.g., 1976086048, 1976086049, ...). When XORed with a constant `state[0]`, the resulting seeds differ by only 1 (e.g., 1134423584, 1134423585, ...). The `splitMix64` initialization with nearly-identical seeds produces IDENTICAL initial PRNG states.
+   - EVIDENCE: The first 5 `nextU32()` outputs for system_0, system_1, system_2 are ALL IDENTICAL: 1073748232, 769177224, 296597624, 3994400302, 3368919562.
+   - RESULT: All 500 systems pick the same star type (STAR_M or STAR_K depending on which weightedChoice bucket the identical float falls into). Only companion star generation (which uses derive with different name patterns) occasionally produces STAR_K.
+   - FIX NEEDED: Replace the weak DJB2 hash in `derive()` with SplitMix64 or a proper hash, OR use `child()` which correctly advances the main PRNG state.
+
+2. **Only 2 of 7 planet types generated** — No rocky, volcanic, ice, desert, or dwarf planets at all
+   - Of 1037 planets: 769 gas_giant (74.2%) + 268 oceanic (25.8%)
+   - ROOT CAUSE (secondary to #1): Because only STAR_K and STAR_M are generated, and their HZ is extremely narrow (K: [0.5..0.8] AU, M: [0.1..0.2] AU), ALL orbits fall in the OUTER zone → only gas_giant/ice/oceanic choices. Within the OUTER zone, the weighted choice heavily favors gas_giant and oceanic, rarely selecting ice.
+
+3. **selectPlanetType uses fixed estimate, not actual radius**
+   - `estimatedR = 0.3 + orbit * 0.6` is deterministic for a given orbit number
+   - But actual `orbitalRadius = 0.3 + orbit * (0.5 + rng * 0.3)` has randomness
+   - selectPlanetType ignores the actual radius and uses the fixed estimate
+   - This means zone assignment (INNER/HZ/OUTER) is completely determined by orbit number + star luminosity
+   - For STAR_K/M, ALL orbits 1-5 are in OUTER zone → no variety
+
+4. **Missing planet size: tiny** — 0 of 1037 planets are tiny
+   - Because no dwarf planets are generated (dwarf has baseSize='tiny')
+   - oceanic has baseSize='medium' → varies to small/medium/large
+   - gas_giant has baseSize='huge' → varies to large/huge
+
+5. **Oceanic temperature ranges wildly off** — actual [-211..134]°C vs documented [-10..60]°C
+   - 100% of oceanic planets have temperatures outside documented range
+   - Because all orbits are OUTER zone → far from star → very cold equilibrium temperatures
+
+6. **Per-system planet diversity is extremely low** — Only 2 distinct planet-type combinations per star type across 500 systems
+   - STAR_K systems: either "oceanic" only or "gas_giant" only
+   - STAR_M systems: either "oceanic" only or "gas_giant" only
+   - No system has a mix of different planet types
+
+SUGGESTED FIXES (not implemented — audit only):
+1. **Fix PRNG.derive()** — Use SplitMix64 to hash the name instead of DJB2, or use child()/childSeed()
+2. **Use actual orbital radius in selectPlanetType** — Not the fixed estimate
+3. **Add more planet type options per zone** — e.g., dwarf in HZ, desert in outer, rocky in all zones
+4. **Add randomness to zone boundaries** — Fuzzy edges between INNER/HZ/OUTER
+5. **Allow anomalous planet types** — Small probability (5-10%) of any type outside its primary zone
+
+Stage Summary:
+- Created 1 new file: scripts/audit-generator.ts
+- 0 existing files modified (audit only)
+- Found 6 critical issues, root cause identified: PRNG derive() produces correlated seeds for sequential names
+- All 12 star types should appear but only 2 do (STAR_K, STAR_M)
+- All 7 planet types should appear but only 2 do (gas_giant, oceanic)
+- The game is effectively unplayable in its current state — no rocky/volcanic/ice/desert/dwarf planets means no surface hex grids to build on
+
+---
+Task ID: 7
+Agent: General Agent
+Task: Update docs/03-planets.md §5 — Resource philosophy
+
+Work Log:
+- Read worklog.md, docs/03-planets.md (full file, ~1300 lines), src/data/planet-types.ts, src/core/types.ts, src/data/elements.ts
+- Identified old section 5: lines 900–1077 (178 lines), subsections 5.1–5.5
+- Replaced old section 5 entirely with new version reflecting three-tier resource philosophy:
+  - §5.1 Философия ресурсов — core principle: every planet has ALL 22 MVP elements
+  - §5.2 Три уровня ресурсов (tiers) — profile (3.0-5.0x), rare (0.1-0.3x), ultra-rare (0.02-0.05x)
+    - §5.2.1 Профильные — PROFILE_ELEMENTS per planet type with rationale table
+    - §5.2.2 Редкие — RARE_ELEMENTS (W, Co, Pt, Y, Ba, Au, U) present on every planet
+    - §5.2.3 Ультраредкие — ULTRA_RARE_ELEMENTS pool, 1-2 per planet, 1-6k tons, 1-5% availability
+  - §5.3 Структура данных — TypeScript interfaces matching code
+    - §5.3.1 PlanetResourceDeposit — matches src/core/types.ts (elementId, totalQuantity, avgAvailability, tier, hexCount, maxAvailability)
+    - §5.3.2 ResourceDeposit — updated hex-level deposit with elementId (ore IDs like "Fe-ore")
+    - §5.3.3 Константы в коде — references PROFILE_ELEMENTS, RARE_ELEMENTS, ULTRA_RARE_ELEMENTS from planet-types.ts
+  - §5.4 Доступность и скорость добычи — availability table with tier mapping
+  - §5.5 Количество и исчерпаемость — quantity ranges by tier with depletion mechanics
+  - §5.6 Генерация ресурсов — 3-stage generation algorithm
+    - Stage 1: Tier assignment (profile → rare → ultra_rare)
+    - Stage 2: Parameter generation by tier (full TypeScript function)
+    - Stage 3: Star type influence on resource quantities
+  - §5.7 Сводная таблица — all 22 elements with profile/rare/ultra_rare assignment per planet type
+- Verified sections 1-4 and 6-7 unchanged
+- Document written entirely in Russian, consistent with existing style
+
+Stage Summary:
+- docs/03-planets.md §5 rewritten (old: 178 lines → new: 280 lines)
+- Core change: "some planets lack elements" → "every planet has ALL elements, difference is in quantity/tier"
+- Three tiers replace old guaranteed/probable element system
+- ResourceDeposit interface updated to match PlanetResourceDeposit in src/core/types.ts
+- All 22 MVP elements mapped to tiers per planet type
+- Sections 1-4, 6-7 unchanged

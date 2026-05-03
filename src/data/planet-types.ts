@@ -6,6 +6,56 @@
 
 import type { PlanetDef, PlanetType, PlanetSize, HexTerrain } from '@/core/types';
 
+/** Диапазоны плотности по типу планеты (г/см³). Из 03-planets.md §2.2 */
+export const PLANET_DENSITY: Record<PlanetType, { min: number; max: number; avg: number }> = {
+  rocky:    { min: 3.5, max: 6.5, avg: 5.0 },
+  volcanic: { min: 4.0, max: 7.0, avg: 5.5 },
+  ice:      { min: 2.0, max: 4.5, avg: 3.0 },
+  oceanic:  { min: 3.5, max: 5.5, avg: 4.5 },
+  desert:   { min: 3.0, max: 5.5, avg: 4.0 },
+  gas_giant:{ min: 0.8, max: 2.5, avg: 1.5 },
+  dwarf:    { min: 2.0, max: 5.0, avg: 3.5 },
+};
+
+/** Диапазоны радиуса (км) по типу и размеру. Из 03-planets.md §1.1, §2.1 */
+export const PLANET_RADIUS_KM: Record<PlanetType, Record<PlanetSize, { min: number; max: number }>> = {
+  rocky:    { tiny: { min: 1000, max: 2000 }, small: { min: 2000, max: 4500 }, medium: { min: 4500, max: 7000 }, large: { min: 7000, max: 9000 }, huge: { min: 9000, max: 12700 } },
+  volcanic: { tiny: { min: 1500, max: 2500 }, small: { min: 2500, max: 5000 }, medium: { min: 5000, max: 8000 }, large: { min: 8000, max: 10500 }, huge: { min: 10500, max: 14000 } },
+  ice:      { tiny: { min: 500, max: 1500 }, small: { min: 1500, max: 3500 }, medium: { min: 3500, max: 6000 }, large: { min: 6000, max: 8500 }, huge: { min: 8500, max: 11000 } },
+  oceanic:  { tiny: { min: 2500, max: 4000 }, small: { min: 4000, max: 5500 }, medium: { min: 5500, max: 7500 }, large: { min: 7500, max: 10000 }, huge: { min: 10000, max: 13000 } },
+  desert:   { tiny: { min: 1000, max: 2000 }, small: { min: 2000, max: 4000 }, medium: { min: 4000, max: 6500 }, large: { min: 6500, max: 9000 }, huge: { min: 9000, max: 12000 } },
+  gas_giant:{ tiny: { min: 25000, max: 35000 }, small: { min: 35000, max: 45000 }, medium: { min: 45000, max: 55000 }, large: { min: 55000, max: 65000 }, huge: { min: 65000, max: 80000 } },
+  dwarf:    { tiny: { min: 500, max: 1000 }, small: { min: 1000, max: 1500 }, medium: { min: 1500, max: 2000 }, large: { min: 2000, max: 2500 }, huge: { min: 2500, max: 3000 } },
+};
+
+/**
+ * Профильные элементы для каждого типа планеты.
+ * Профильные = в ЗНАЧИТЕЛЬНОМ количестве (множитель 3.0–5.0).
+ * Из 03-planets.md §1.2 (ключевые ресурсы каждого типа).
+ */
+export const PROFILE_ELEMENTS: Record<PlanetType, string[]> = {
+  rocky:    ['Fe', 'Si', 'Al', 'C', 'O'],
+  volcanic: ['Fe', 'Ti', 'Cr', 'Ni', 'S', 'V'],
+  ice:      ['H', 'O', 'N', 'He'],
+  oceanic:  ['H', 'O', 'N', 'C', 'S'],
+  desert:   ['Si', 'Fe', 'Al', 'Ti'],
+  gas_giant:['H', 'He', 'C', 'N'],
+  dwarf:    ['Fe', 'Si', 'C', 'Ni'],
+};
+
+/**
+ * Редкие элементы — присутствуют на КАЖДОЙ планете в следовых количествах.
+ * Множитель 0.1–0.3 от базового количества.
+ */
+export const RARE_ELEMENTS = ['W', 'Co', 'Pt', 'Y', 'Ba', 'Au', 'U'];
+
+/**
+ * Ультраредкие элементы — 1-2 уникальных для планеты.
+ * Присутствуют в минимальных количествах (множитель 0.02–0.05).
+ * Какой именно ультраредкий элемент достанется планете — определяется при генерации.
+ */
+export const ULTRA_RARE_ELEMENTS = ['W', 'Co', 'Pt', 'Y', 'Ba', 'Au', 'U', 'Li', 'V'];
+
 export const PLANET_TYPES: PlanetDef[] = [
   {
     type: 'rocky',
