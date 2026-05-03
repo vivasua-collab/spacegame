@@ -587,6 +587,39 @@ Work Log:
 - Read worklog.md, docs/03-planets.md (full file, ~1300 lines), src/data/planet-types.ts, src/core/types.ts, src/data/elements.ts
 - Identified old section 5: lines 900–1077 (178 lines), subsections 5.1–5.5
 - Replaced old section 5 entirely with new version reflecting three-tier resource philosophy:
+
+---
+Task ID: 3
+Agent: Buildings Update Agent
+Task: Update docs/04-buildings.md with universal processor concept
+
+Work Log:
+- Read full docs/04-buildings.md (1270+ lines) and worklog.md to understand context
+- Updated version from 1.0 → 2.0 with date 2026-05-05 and change history note
+- Replaced §3.1-3.4 (Плавильня, Химический завод, Нефтехимический завод, Очистительный комплекс) with new structure:
+  - §3.1 Переработчик (Processor) — universal building, any ore/compound → pure elements (purity 0.7-0.85), menu system, capacity division with multiplicity penalty (5% per recipe), 20 base capacity, level unlock tiers
+  - §3.2 Очистительный комплекс (Refinery) — same universal principle, high purity (0.95-0.99), 10 base capacity, 2x energy cost
+  - §3.3 Синтезатор (Synthesizer) — Level 1→2 processing, pure elements → alloys/materials/compounds, 15 base capacity
+  - §3.4 Сравнительная таблица переработчиков — comparison table of all 3 types
+- Updated §3.5 Цепочки зданий — building names updated
+- Updated §4.4 Очередь приоритетов — processing buildings renamed
+- Updated §5.1-5.4 Бонусы смежных зданий — all references to Плавильня → Переработчик
+- Updated §9.4 Потери при переработке — yield table column headers and formulas
+- Updated §10.1 Полная таблица — 4 rows → 3 rows (processor/refinery/synthesizer)
+- Updated §10.2 энергопотребление — recalculated average
+- Updated §11.2 пример — building name
+- Updated §12.1-12.3 TypeScript interfaces — added universal processor fields (isUniversalProcessor, baseCapacity, capacityPerLevel, multiplicityPenalty, recipeCategories, ProcessorRecipeCategory, ProcessorRecipe, activeRecipes, recipeCategory)
+- Updated Appendix A sprint plan and MVP buildings
+- Updated Appendix B constants — smelterBaseYield → processorBaseYield
+- Verified no remaining references to old building names except in version history notes
+
+Stage Summary:
+- 1 file modified: docs/04-buildings.md (MAJOR revision, v1.0 → v2.0)
+- 4 specialized processing buildings → 3 universal processors (Processor/Refinery/Synthesizer)
+- New mechanics: menu-based recipe selection, multiplicity penalty, capacity-based processing
+- All cross-references updated across sections 3, 4, 5, 9, 10, 11, 12, Appendix A, Appendix B
+- TypeScript interfaces extended with universal processor fields
+- 0 code changes (documentation only)
   - §5.1 Философия ресурсов — core principle: every planet has ALL 22 MVP elements
   - §5.2 Три уровня ресурсов (tiers) — profile (3.0-5.0x), rare (0.1-0.3x), ultra-rare (0.02-0.05x)
     - §5.2.1 Профильные — PROFILE_ELEMENTS per planet type with rationale table
@@ -663,3 +696,39 @@ Stage Summary:
 - 8 files modified (buildings.ts, types.ts, engine.ts, index.ts, game-store.ts, system-view.tsx, game-layout.tsx, planet-view.tsx, building-dialog.tsx)
 - New GamePhase: 'colonization' (between menu and playing)
 - No more auto-start: player must choose where to colonize
+
+---
+Task ID: 2
+Agent: Doc Update Agent
+Task: Supplement doc_temp/ores-and-chains.md with missing ores
+
+Work Log:
+- Read current ores-and-chains.md (v1.0, 771 lines, 22 elements, 24 ore/compound types)
+- Read ARCHITECTURE.md §3.1.3 for 50-element target (4 categories × 10 = 40 + extras)
+- Updated version from 1.0 → 2.0
+- §2.1 Mine: Added 8 new ores (Ag-ore, Cd-ore, Mn-ore, Mo-ore, Pb-ore, Se-ore, Sn-ore, Zn-ore), re-sorted table alphabetically by element symbol (13 → 21 rows)
+- §2.2 Quarry: Added 3 new ores (K-ore сильвинит, B-ore борная руда, F-ore флюорит), updated quarry notes (5 → 8 main table + 4 notes)
+- §2.3 Summary: Completely rewritten with 5 sub-tables by ARCHITECTURE.md category (Повсеместные 10, Распространённые 10, Редкие 10, Уникальные 10, Дополнительные 16), total 56 elements
+- §2.4 NEW: Added "Чистые/самородные элементы" section — documents native forms of S, C, Cu, Ag, Au, Pt with probability mechanic
+- §3.1 Atmospheric: Added Ne (неон) and Ar (аргон) as pure noble gases
+- §3.2 Atmosphere table: Added Ne and Ar columns, updated all 8 atmosphere types
+- §5.1 Deep ores: Added 5 rare earth ores (In-ore, Nd-ore, Ce-ore, La-ore, Dy-ore), updated §5 layer overview
+- §7.1: Expanded from 22 to 56 element rows
+- §7.2: Updated building→ore counts (Mine 21, Quarry 12, Gas 11, Drill 18, Ice 5)
+- §7.3: Updated distribution summary
+- §8.3: Expanded ORE_MAP with all new elements
+- §8.4: Updated ALL_ORES array (67 entries total)
+- Appendix A: Added 17 new element rows for resource_availability (K, Mn, Zn, Sn, Pb, Mo, Ag, F, B, Cd, Se, Nd, Ce, La, Dy, P)
+- Appendix B: Added 16 new smelting recipes + 3 chemical plant recipes
+- Updated footer to version 2.0
+
+Stage Summary:
+- Document expanded from 771 to 935 lines (v1.0 → v2.0)
+- Element count: 22 → 56 (covers 40 from ARCHITECTURE.md + 16 practical additions)
+- Ore/compound types: 24 → 67
+- Mine ores: 13 → 21 (+Mn, Zn, Sn, Pb, Mo, Ag, Cd, Se)
+- Quarry ores: 8 → 12 (+K, B, F)
+- Atmospheric gases: 9 → 11 (+Ne, Ar)
+- Deep ores: 13 → 18 (+In, Nd, Ce, La, Dy)
+- New §2.4 "Чистые/самородные элементы" section added
+- No code changes — documentation only
