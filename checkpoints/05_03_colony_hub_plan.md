@@ -2,7 +2,7 @@
 
 **Дата:** 2026-05-03 22:01 MSK
 **Фаза:** 2 — UI/UX + Gameplay Start
-**Статус:** in_progress
+**Статус:** ✅ completed
 
 ## Предыдущие результаты (из 05_03_colony_start.md)
 - ✅ G-24: PRNG derive() исправлен (6/6 тестов PASS)
@@ -64,8 +64,16 @@
 - buildings.ts CATEGORY_NAMES: добавить 'colonization': 'Колонизация'
 
 ### Порядок действий
-1. buildings.ts → colony_hub + CATEGORY_NAMES
-2. engine.ts → colony_hub в processExtraction + recalcEnergyBalance
-3. game-store.ts → colonizePlanet() + фаза 'colonization'
-4. UI → кнопки колонизации + индикаторы
-5. Lint + dev check
+1. ✅ buildings.ts → colony_hub + CATEGORY_NAMES + CATEGORY_ICONS
+2. ✅ engine.ts → colony_hub в processExtraction + recalcEnergyBalance + colonizePlanet()
+3. ✅ game-store.ts → colonizePlanet() + фаза 'colonization' (нет автосолнечной станции)
+4. ✅ UI → кнопки колонизации + индикаторы (system-view, planet-view, building-dialog, game-layout)
+5. ✅ Lint + dev check — чисто, HTTP 200
+
+### Итог проверки (2026-05-03)
+Все 4 пункта реализованы полностью:
+- **buildings.ts**: colony_hub определён, CATEGORY_NAMES['colonization']='Колонизация', CATEGORY_ICONS['colonization']='🏠'
+- **engine.ts**: colony_hub добывает 50% от шахты (0.005 rate), энергия 5×levelMult, colonizePlanet() ставит на лучший гекс
+- **game-store.ts**: phase='colonization' при старте, colonizePlanet action, после колонизации → phase='playing', speed=1
+- **UI**: system-view — кнопка «Колонизировать» + Badge «Колония» + TYPE_NAMES/SIZE_NAMES; planet-view — cyan цвет для colony_hub; building-dialog — colony_hub исключён из списка; game-layout — баннер колонизации
+- Dev-сервер: PID 22126, порт 3000, HTTP 200, lint чист
