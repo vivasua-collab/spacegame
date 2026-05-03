@@ -399,3 +399,36 @@ Stage Summary:
 - ARCHITECTURE.md surface types now match 03-planets.md (7 types including карликовая)
 - Element count contradiction resolved: §3.1.3 = full target (50), §5.1 = MVP (22)
 - §8 file structure now reflects actual codebase layout
+
+---
+Task ID: 5
+Agent: Main Agent
+Task: Improve galaxy map zoom — cursor-centered zoom, higher max zoom, minimap, better labels
+
+Work Log:
+- Analyzed user screenshot showing cluttered galaxy map with overlapping labels
+- Identified core issues: max zoom (15x) insufficient, zoom not centered on cursor, labels don't adapt to zoom
+- Completely rewrote src/components/game/galaxy-map.tsx with new zoom system:
+  - Increased ZOOM_MAX from 15 to 80 (8000%)
+  - Decreased ZOOM_MIN from 0.3 to 0.15 (15%)
+  - Implemented cursor-centered zoom: SVG point under cursor stays under cursor after zoom
+  - Added zoom +/− buttons with center-based zoom
+  - Changed from manual coordinate calculation to CSS transform approach (transform: translate + scale)
+  - Added minimap component that appears at zoom > 3x showing full galaxy with viewport rectangle
+  - Minimap is clickable to navigate to any area
+  - Improved label visibility: show all labels at zoom > 1.5x, hide at low zoom
+  - Counter-scaled dot sizes and font sizes so they remain readable at any zoom level
+  - Zoom to system on click (4x zoom, centered on clicked system)
+  - Added ResizeObserver for proper container size tracking
+  - Used refs for zoom/pan in wheel handler to avoid stale closures
+- Fixed lint error: moved zoom-to-selected-system from useEffect to click handler
+- Lint: 0 errors
+- Dev server: 200 OK
+
+Stage Summary:
+- Galaxy map zoom completely redesigned with cursor-centered zoom
+- Max zoom increased from 15x to 80x for detailed system exploration
+- Minimap appears at high zoom for navigation context
+- Click on system zooms to 4x centered on that system
+- CSS transform approach replaces manual coordinate math for smoother zoom
+- Better label visibility logic adapted to zoom level
