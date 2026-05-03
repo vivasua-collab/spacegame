@@ -265,7 +265,16 @@ function createStar(systemId: EntityId, systemName: string, starDef: typeof STAR
   };
 }
 
-/** Генерация планеты */
+/**
+ * Генерация планеты.
+ *
+ * Физика:
+ * - Равновесная температура: T_eq = 278K × (L/L☉)^(1/4) × (1AU/r)^(1/2)
+ *   (упрощённый закон Стефана-Больцмана)
+ * - Парниковый эффект зависит от типа атмосферы
+ * - Тип планеты модифицирует температуру (альбедо, геотермалка и т.д.)
+ * - Орбитальный период: P = 365.25 × sqrt(r³ / M) дней (3-й закон Кеплера)
+ */
 function generatePlanet(systemId: EntityId, orbit: number, systemName: string, starDef: typeof STAR_TYPES[0], rng: Xoshiro256): Planet {
   const planetId = genId('planet');
 
@@ -279,11 +288,18 @@ function generatePlanet(systemId: EntityId, orbit: number, systemName: string, s
   const sizeVar = rng.nextInt(Math.max(0, sizeIndex - 1), Math.min(sizes.length - 1, sizeIndex + 1));
   const size = sizes[sizeVar];
 
-  // Параметры
+  // Гравитация
   const gravity = planetDef.baseGravity * (0.8 + rng.nextFloat() * 0.4);
-  const tempRange = planetDef.temperatureRange;
-  const temperature = tempRange[0] + rng.nextFloat() * (tempRange[1] - tempRange[0]);
+
+  // Орбитальный радиус: AU, растёт с номером орбиты (примерно по Тициусу-Боде)
   const orbitalRadius = 0.3 + orbit * (0.5 + rng.nextFloat() * 0.3);
+
+  // Орбитальный период по 3-му закону Кеплера: P = sqrt(r³ / M) лет
+  const orbitalPeriodYears = Math.sqrt(Math.pow(orbitalRadius, 3) / starDef.mass);
+  const orbitalPeriodDays = Math.round(orbitalPeriodYears * 365.25);
+
+  // Температура: физическая модель на основе светимости и расстояния
+  const temperature = calculatePlanetTemperature(starDef, orbitalRadius, planetDef, rng);
 
   // Атмосфера (P1-16: полноценная структура вместо boolean)
   const atmosphere = generateAtmosphere(planetDef, rng);
@@ -327,7 +343,9 @@ function generatePlanet(systemId: EntityId, orbit: number, systemName: string, s
     temperature: Math.round(temperature),
     atmosphere,
     life,
+    orbitNumber: orbit,
     orbitalRadius: Math.round(orbitalRadius * 100) / 100,
+    orbitalPeriod: orbitalPeriodDays,
     hexes,
     atmosphericSlots,
     orbitSlots,
@@ -335,6 +353,74 @@ function generatePlanet(systemId: EntityId, orbit: number, systemName: string, s
     energyBalance: 0,
     owner: null,
   };
+}
+
+/**
+ * Расчёт температуры планеты на основе физики.
+ *
+ * 1. Равновесная температура (равновесие излучения звезды):
+ *    T_eq = 278K × (L/L☉)^(1/4) × (1AU/r)^(1/2)
+ *
+ * 2. Парниковый эффект зависит от атмосферы:
+ *    - нет/тонкая → почти нет парника
+ *    - стандартная → +30..60K
+ *    - плотная → +80..200K
+ *    - CO2/метан → сильный парник +100..300K
+ *
+ * 3. Тип планеты модифицирует (альбедо, геотермалка):
+ *    - volcanic → геотермальный нагрев +100..400K
+ *    - ice → высокое альбедо, охлаждение
+ *    - gas_giant → внутренний нагрев
+ */
+function calculatePlanetTemperature(
+  starDef: typeof STAR_TYPES[0],
+  orbitalRadiusAU: number,
+  planetDef: typeof PLANET_TYPES[0],
+  rng: Xoshiro256,
+): number {
+  // Защита от деления на ноль и отрицательных значений
+  const r = Math.max(0.05, orbitalRadiusAU);
+  const L = Math.max(0.001, starDef.luminosity);
+
+  // Равновесная температура в Кельвинах (по закону Стефана-Больцмана)
+  // T_eq = 278 * L^(1/4) * r^(-1/2) K
+  const T_eq = 278 * Math.pow(L, 0.25) * Math.pow(r, -0.5);
+
+  // Парниковый эффект (будет уточнён после генерации атмосферы, но здесь предварительный)
+  const atmoChance = planetDef.atmosphereChance;
+  const hasAtmo = rng.nextBool(atmoChance);
+  let greenhouseK = 0;
+  if (hasAtmo) {
+    const atmoRoll = rng.nextFloat();
+    if (atmoRoll < 0.3) greenhouseK = 10 + rng.nextFloat() * 30;     // тонкая
+    else if (atmoRoll < 0.6) greenhouseK = 30 + rng.nextFloat() * 60; // стандартная
+    else if (atmoRoll < 0.75) greenhouseK = 80 + rng.nextFloat() * 120; // плотная
+    else if (atmoRoll < 0.85) greenhouseK = 100 + rng.nextFloat() * 200; // CO2
+    else greenhouseK = 80 + rng.nextFloat() * 150; // метан/токсичная
+  }
+
+  // Модификатор типа планеты
+  let typeModifierK = 0;
+  switch (planetDef.type) {
+    case 'volcanic':
+      typeModifierK = 100 + rng.nextFloat() * 300; // геотермальный нагрев
+      break;
+    case 'ice':
+      typeModifierK = -20 - rng.nextFloat() * 30; // высокое альбедо → охлаждение
+      break;
+    case 'gas_giant':
+      typeModifierK = 20 + rng.nextFloat() * 60; // внутренний нагрев
+      break;
+    case 'desert':
+      typeModifierK = -5 + rng.nextFloat() * 20; // низкое альбедо днём, быстрое охлаждение ночью
+      break;
+    default:
+      break;
+  }
+
+  // Итоговая температура в Кельвинах → перевод в °C
+  const T_final = T_eq + greenhouseK + typeModifierK;
+  return T_final - 273.15; // K → °C
 }
 
 /** P1-16: Генерация атмосферы (C-01 fix: газовые гиганты обрабатываются первым приоритетом) */

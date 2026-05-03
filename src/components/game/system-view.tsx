@@ -15,6 +15,9 @@ import {
   Zap,
   ArrowLeftRight,
   ArrowRight,
+  Orbit,
+  Clock,
+  Ruler,
 } from 'lucide-react';
 import type { StarSystem, Planet, AtmosphereType, LifeLevel } from '@/core/types';
 
@@ -210,6 +213,10 @@ function PlanetCard({
 
             <div className="flex items-center gap-3 text-xs text-slate-400">
               <span className="flex items-center gap-1">
+                <Ruler className="size-3" />
+                {planet.orbitalRadius.toFixed(2)} AU
+              </span>
+              <span className="flex items-center gap-1">
                 <Thermometer className="size-3" />
                 {planet.temperature > 0 ? '+' : ''}{planet.temperature}&deg;C
               </span>
@@ -220,6 +227,16 @@ function PlanetCard({
               <span className="flex items-center gap-1">
                 <Globe2 className="size-3" />
                 {planet.gravity.toFixed(1)}g
+              </span>
+            </div>
+            <div className="flex items-center gap-3 text-[10px] text-slate-500 mt-0.5">
+              <span className="flex items-center gap-1">
+                <Orbit className="size-3" />
+                Орбита {planet.orbitNumber}
+              </span>
+              <span className="flex items-center gap-1">
+                <Clock className="size-3" />
+                {formatOrbitalPeriod(planet.orbitalPeriod)}
               </span>
             </div>
           </div>
@@ -261,4 +278,13 @@ function formatTemp(k: number): string {
   if (k >= 1_000_000) return `${(k / 1_000_000).toFixed(1)}MK`;
   if (k >= 1_000) return `${(k / 1_000).toFixed(0)}kK`;
   return `${k.toFixed(0)}K`;
+}
+
+/** Форматирование орбитального периода */
+function formatOrbitalPeriod(days: number): string {
+  if (days < 1) return '<1 дня';
+  if (days < 365) return `${days} дн.`;
+  const years = days / 365.25;
+  if (years < 10) return `${years.toFixed(1)} лет`;
+  return `${Math.round(years)} лет`;
 }

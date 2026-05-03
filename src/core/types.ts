@@ -260,7 +260,12 @@ export interface Planet {
   atmosphere: Atmosphere;
   /** Жизнь на планете — полноценная структура вместо boolean (P1-17) */
   life: PlanetLife;
-  orbitalRadius: number; // AU
+  /** Номер орбиты (1 = ближайшая к звезде) */
+  orbitNumber: number;
+  /** Расстояние от звезды в а.е. */
+  orbitalRadius: number;
+  /** Орбитальный период в земных днях (по третьему закону Кеплера) */
+  orbitalPeriod: number;
   /** Гекс-сетка поверхности (0 для газовых гигантов) */
   hexes: HexCell[];
   /** Атмосферные слоты (газовые гиганты, 6-12) */
