@@ -33,6 +33,7 @@ export interface GameStore {
   isInitialized: boolean;
   currentSaveId: string | null;
   isSaving: boolean;
+  saveError: string | null;
   isLoading: boolean;
 
   // === Действия ===
@@ -78,15 +79,14 @@ export interface GameStore {
 
 /**
  * Сериализует GameState в JSON-строку.
- * Конвертирует Map → массив пар [key, value] для JSON-совместимости.
+ * systemMap исключается (Map не сериализуется, восстанавливается из systems).
+ * productionQueues конвертируется Map → массив пар [key, value].
  */
 function serializeGameState(state: GameState): string {
+  const { systemMap: _systemMap, ...galaxyWithoutMap } = state.galaxy;
   const serializable = {
     ...state,
-    galaxy: {
-      ...state.galaxy,
-      systemMap: Array.from(state.galaxy.systemMap.entries()),
-    },
+    galaxy: galaxyWithoutMap,
     productionQueues: Array.from(state.productionQueues.entries()),
   };
   return JSON.stringify(serializable);
@@ -94,14 +94,29 @@ function serializeGameState(state: GameState): string {
 
 /**
  * Десериализует GameState из JSON-строки.
- * Восстанавливает Map из массива пар [key, value].
+ * Восстанавливает systemMap Map из массива systems (единые ссылки на объекты).
+ * Восстанавливает productionQueues Map из массива пар [key, value].
+ * Обратно совместим: старые сохранения с systemMap как массив пар тоже поддерживаются.
  */
 function deserializeGameState(json: string): GameState {
   const raw = JSON.parse(json);
 
-  // Восстановить systemMap
-  const systemMapEntries: [string, StarSystem][] = raw.galaxy.systemMap || [];
-  const systemMap = new Map(systemMapEntries);
+  // Восстановить systemMap: из systems (новый формат) или из systemMap-entries (старый)
+  const systems: StarSystem[] = raw.galaxy.systems || [];
+  const systemMap = new Map<string, StarSystem>();
+
+  if (systems.length > 0) {
+    // Новый формат: systemMap восстанавливается из systems
+    for (const sys of systems) {
+      systemMap.set(sys.id, sys);
+    }
+  } else if (Array.isArray(raw.galaxy.systemMap)) {
+    // Старый формат: systemMap хранился как массив пар [id, system]
+    const entries: [string, StarSystem][] = raw.galaxy.systemMap;
+    for (const [id, sys] of entries) {
+      systemMap.set(id, sys);
+    }
+  }
 
   // Восстановить productionQueues
   const queueEntries: [string, ProductionQueue][] = raw.productionQueues || [];
@@ -112,7 +127,7 @@ function deserializeGameState(json: string): GameState {
     galaxy: {
       ...raw.galaxy,
       systemMap,
-      systems: raw.galaxy.systems || [],
+      systems: systems.length > 0 ? systems : Array.from(systemMap.values()),
     },
     productionQueues,
     fleets: raw.fleets || [],
@@ -149,6 +164,7 @@ export const useGameStore = create<GameStore>((set, get) => {
     isInitialized: false,
     currentSaveId: null,
     isSaving: false,
+    saveError: null,
     isLoading: false,
 
     newGame: (config = {}) => {
@@ -369,22 +385,52 @@ export const useGameStore = create<GameStore>((set, get) => {
       const { gameState, currentSaveId } = get();
       if (!gameState) return false;
 
-      set({ isSaving: true });
+      // ── Шаг 1: Поставить игру на паузу, остановить все расчёты ──
+      const savedSpeed = gameState.speed;
+      const savedPhase = gameState.phase;
+
+      if (gameState.phase === 'playing' || gameState.phase === 'colonization') {
+        gameState.phase = 'paused';
+        gameState.speed = 0;
+        set({ gameState: { ...gameState } });
+      }
+
+      set({ isSaving: true, saveError: null });
+
+      // ── Шаг 2: Дать React очистить интервал тиков (микрозадержка) ──
+      await new Promise<void>((resolve) => setTimeout(resolve, 50));
+
       try {
+        // ── Шаг 3: Сериализовать состояние (пока на паузе — никто не мутирует) ──
         const saveName = name || `Galaxy #${gameState.galaxy.seed}`;
         const stateJson = serializeGameState(gameState);
 
+        // Функция fetch с таймаутом (30 секунд)
+        const fetchWithTimeout = async (url: string, options: RequestInit) => {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 30000);
+          try {
+            const res = await fetch(url, { ...options, signal: controller.signal });
+            return res;
+          } finally {
+            clearTimeout(timeoutId);
+          }
+        };
+
         if (currentSaveId) {
           // Обновить существующее сохранение
-          const res = await fetch(`/api/save/${currentSaveId}`, {
+          const res = await fetchWithTimeout(`/api/save/${currentSaveId}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ name: saveName, state: stateJson, tick: gameState.time.tick }),
           });
-          if (!res.ok) throw new Error('Failed to update save');
+          if (!res.ok) {
+            const errText = await res.text().catch(() => 'Unknown error');
+            throw new Error(`Failed to update save (${res.status}): ${errText}`);
+          }
         } else {
           // Создать новое сохранение
-          const res = await fetch('/api/save', {
+          const res = await fetchWithTimeout('/api/save', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -394,15 +440,27 @@ export const useGameStore = create<GameStore>((set, get) => {
               tick: gameState.time.tick,
             }),
           });
-          if (!res.ok) throw new Error('Failed to create save');
+          if (!res.ok) {
+            const errText = await res.text().catch(() => 'Unknown error');
+            throw new Error(`Failed to create save (${res.status}): ${errText}`);
+          }
           const data = await res.json();
           set({ currentSaveId: data.id });
         }
+        set({ saveError: null });
         return true;
-      } catch (e) {
+      } catch (e: unknown) {
+        const errorMsg = e instanceof Error ? e.message : String(e);
         console.error('Save failed:', e);
+        set({ saveError: errorMsg });
         return false;
       } finally {
+        // ── Шаг 4: Снять с паузы, восстановить скорость ──
+        if (savedPhase === 'playing' || savedPhase === 'colonization') {
+          gameState.phase = savedPhase === 'colonization' ? 'colonization' : 'playing';
+          gameState.speed = savedSpeed || 1;
+          set({ gameState: { ...gameState } });
+        }
         set({ isSaving: false });
       }
     },

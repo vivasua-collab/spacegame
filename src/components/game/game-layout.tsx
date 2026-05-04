@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { TYPE_NAMES } from '@/data/planet-types';
 import type { GameState, EntityId } from '@/core/types';
+import { toast } from '@/hooks/use-toast';
 import {
   Map,
   Sun,
@@ -316,9 +317,19 @@ function SaveButton() {
     const ok = await saveGame();
     if (ok) {
       setJustSaved(true);
-      setTimeout(() => setJustSaved(false), 1500);
+      setTimeout(() => setJustSaved(false), 2000);
+      toast({
+        title: 'Игра сохранена',
+        description: currentSaveId ? 'Сохранение обновлено' : 'Создано новое сохранение',
+      });
+    } else {
+      toast({
+        title: 'Ошибка сохранения',
+        description: 'Не удалось сохранить игру. Проверьте консоль для деталей.',
+        variant: 'destructive',
+      });
     }
-  }, [saveGame]);
+  }, [saveGame, currentSaveId]);
 
   return (
     <Button
@@ -327,7 +338,9 @@ function SaveButton() {
       className={`h-7 text-xs transition-colors ${
         justSaved
           ? 'text-green-400'
-          : 'text-slate-400 hover:text-white'
+          : isSaving
+            ? 'text-amber-400'
+            : 'text-slate-400 hover:text-white'
       }`}
       onClick={handleSave}
       disabled={isSaving}
@@ -339,7 +352,7 @@ function SaveButton() {
       ) : (
         <Save className="size-3 mr-1" />
       )}
-      {justSaved ? 'Saved' : currentSaveId ? 'Save' : 'Save'}
+      {isSaving ? 'Сохранение...' : justSaved ? 'Сохранено' : 'Save'}
     </Button>
   );
 }
