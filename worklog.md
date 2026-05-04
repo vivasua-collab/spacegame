@@ -1393,3 +1393,78 @@ Stage Summary:
 - docs/mendeleev.md обновлён до v1.1 с 10 трансурановыми элементами
 - Новая категория: `transuranic` — для типов в будущей реализации
 - Все 3 уровня детально документированы с механиками добычи
+
+---
+Task ID: 2
+Agent: modularity-doc-writer
+Task: Create docs/modularity.md from mendeleev.md section 4
+
+Work Log:
+- Read worklog.md for context from previous agents
+- Read docs/mendeleev.md §4 (lines 1028-1116) — Принцип модульности
+- Read src/data/elements.ts — ELEMENTS array (55 elements), ELEMENT_MAP, getElementsByCategory()
+- Read src/data/processing-chains.ts (full 1384 lines) — ORE_DEFINITIONS, DEEP_ORES, ATMOSPHERIC_COMPOUNDS, ICE_COMPOUNDS, REFINERY_PROCESSING, ORE_FOR_ELEMENT_MAP, buildElementSourcesMap(), getProcessingChain(), and all helper functions
+- Created docs/modularity.md with 5 sections + Table of Contents:
+  - §1: Введение — explains modular architecture principle
+  - §2: Как добавить новый элемент — copied ENTIRE §4.1 from mendeleev.md (3 steps: add element, create ore, create recipe) with exact code examples
+  - §3: Как новая руда автоматически вписывается в цепочку — copied ENTIRE §4.2 from mendeleev.md (auto-mapping, flowchart diagram) + added §3.1 with detailed descriptions of ORE_FOR_ELEMENT_MAP, buildElementSourcesMap(), getProcessingChain(), and побочные элементы
+  - §4: Структуры данных — described all key data structures: ELEMENTS (4.1), ORE_DEFINITIONS/DEEP_ORES (4.2), ORE_FOR_ELEMENT_MAP (4.3), buildElementSourcesMap() (4.4), getProcessingChain() (4.5)
+  - §5: Зависимости — references to mendeleev.md, ores.md, 04-buildings.md, ARCHITECTURE.md
+
+Stage Summary:
+- Created docs/modularity.md — code architecture document for the modular resource system
+- Key decisions: extracted §4 content exactly from mendeleev.md, added detailed §3.1 subsections for each auto-mapping mechanism, added §4 with descriptions of all key TypeScript structures derived from actual code
+- Document covers: element addition workflow, automatic chain integration, all data structures (OreDefinition, ContainedElement, ElementSource, ProcessingChain, ProcessingStep), and cross-references to related docs
+
+---
+Task ID: 1
+Agent: ore-doc-writer
+Task: Create docs/ores.md from mendeleev.md ore sections
+
+Work Log:
+- Read worklog.md for context from previous agents
+- Read docs/mendeleev.md fully (1275 lines) to identify ore-related sections
+- Extracted §1.2 (calculation logic diagram) and §1.3 (example calculation CuFeS₂)
+- Extracted §5 (formulas: molar mass, mass fraction, yield calculation, efficiency coefficient, correctness check)
+- Extracted §3 in its entirety (all ore tables with chemical calculations):
+  - §3.1: 21 mine ores (Fe-ore through U-ore) with full calculation tables and notes
+  - §3.2: 8 quarry ores (Si-ore through NaCl) with full calculation tables and notes
+  - §3.3: 18 drilling rig ores (Y-ore through Re-ore) with full calculation tables and notes
+  - §3.4: 3 summary tables (mine, quarry, drilling rig)
+- Created docs/ores.md (862 lines) with:
+  - Header: version 1.0, date 2026-05-05, purpose, dependency on mendeleev.md
+  - Table of Contents
+  - Section 1: Введение (purpose, reference to mendeleev.md, calculation diagram, example)
+  - Section 2: Формулы расчёта (5 subsections from mendeleev.md §5)
+  - Section 3: Таблица руд с химическим расчётом (all 47 ore entries + 3 summary tables)
+  - Section 4: Зависимости (reference to mendeleev.md)
+- All ore calculations, tables, notes, and remarks copied exactly without abbreviation
+- File is self-contained for ore calculations but references mendeleev.md for element definitions
+
+Stage Summary:
+- Created docs/ores.md with 47 ore entries (21 mine + 8 quarry + 18 drilling rig) and formulas
+- Key decisions: renumbered sections (§1 intro, §2 formulas, §3 ores, §4 dependencies), added TOC, kept all content verbatim from mendeleev.md
+
+
+---
+Task ID: 3
+Agent: main
+Task: Restructure docs/mendeleev.md — split into 3 files and analyze doc_temp/ores-and-chains.md
+
+Work Log:
+- Read full mendeleev.md (1275 lines) to understand structure
+- Launched 2 parallel subagents to create docs/ores.md and docs/modularity.md
+- Updated mendeleev.md: removed sections 3 (ores), 4 (modularity), 5 (formulas)
+- Rewrote mendeleev.md (v2.0) with only element tables, intro, and appendices
+- Analyzed doc_temp/ores-and-chains.md for borrowable content
+
+Stage Summary:
+- Created 3-file documentation structure:
+  - docs/mendeleev.md (v2.0) — only element list (66 elements, 370 lines)
+  - docs/ores.md (v1.0) — ores with chemical calculations (47 ores, 862 lines)
+  - docs/modularity.md — code architecture for adding elements/ores
+- Key analysis of doc_temp/ores-and-chains.md vs docs/ores.md:
+  - MISSING from ores.md (can borrow): Atmospheric compounds (11 gases + atmosphere-type matrix), Ice compounds (5 types + temp bonuses), Self-native elements (6 elements with native form probability)
+  - ALREADY COVERED: Mine/Quarry/Drilling ores with chemical calculations
+  - PARTIALLY USEFUL: Transformation chain diagrams (§6) — good for game design but may duplicate recipes.ts; Element→source mapping (§7) — useful reference; Data structures (§8) — outdated, superseded by modularity.md
+  - NOT USEFUL: Outdated yield numbers (doc_temp uses arbitrary values like "4 Ag" vs chemistry-based "8.7 Ag")
