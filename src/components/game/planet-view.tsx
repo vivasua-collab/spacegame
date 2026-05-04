@@ -8,7 +8,7 @@ import { BUILDING_MAP } from '@/data/buildings';
 import { ELEMENT_MAP } from '@/data/elements';
 import { getCurrentLookups, findResourceDisplay } from '@/data/baked-lookups';
 import { CATEGORY_LABELS } from '@/data/element-helpers';
-import { getUsedCapacity, getOrbitBufferUsed } from '@/data/warehouse';
+import { getUsedCapacity, getOrbitBufferUsed, getSpecInfo, getResourceType, getResourceCategory } from '@/data/warehouse';
 import { BuildingDialog } from './building-dialog';
 import { ResourcePanel } from './resource-panel';
 import { Card, CardContent } from '@/components/ui/card';
@@ -689,10 +689,10 @@ const ROLE_NAMES: Record<ColonyRole, string> = {
 
 const SPEC_NAMES: Record<WarehouseSpecialization, string> = {
   universal: 'Универсальный',
-  ore: 'Рудный (+10%)',
-  metal: 'Металлургический (+10%)',
-  gas: 'Газовый (+10%)',
-  component: 'Компонентный (+10%)',
+  ore: 'Рудный (+25%)',
+  metal: 'Металлургический (+20%)',
+  gas: 'Газовый (+20%)',
+  component: 'Компонентный (+15%)',
 };
 
 function WarehousePanel({ planet }: { planet: Planet }) {
@@ -782,10 +782,18 @@ function WarehousePanel({ planet }: { planet: Planet }) {
             {reserveEntries.map(reserve => {
               const current = planet.resources[reserve.resourceId] ?? 0;
               const isBelowMin = current < reserve.minimum;
+              // Определяем отображаемое имя через BakedGalaxyModel
+              const lookups = getCurrentLookups();
+              const resourceInfo = findResourceDisplay(lookups, reserve.resourceId);
+              const elDef = ELEMENT_MAP.get(reserve.resourceId);
+              const displayName = resourceInfo?.name ?? elDef?.name ?? reserve.resourceId;
+              const resType = getResourceType(reserve.resourceId);
+              const typeBadge = resType === 'ore' ? '⛏' : resType === 'atmospheric' ? '💨' : resType === 'ice' ? '❄' : '';
               return (
                 <div key={reserve.resourceId} className="flex items-center justify-between text-[10px] py-0.5">
-                  <span className={`${isBelowMin ? 'text-red-400' : 'text-slate-400'} font-mono truncate`}>
-                    {reserve.resourceId}
+                  <span className={`${isBelowMin ? 'text-red-400' : 'text-slate-400'} truncate`} title={reserve.resourceId}>
+                    {typeBadge && <span className="mr-0.5">{typeBadge}</span>}
+                    {displayName}
                   </span>
                   <span className="flex items-center gap-1 shrink-0">
                     <span className={`font-mono ${isBelowMin ? 'text-red-400' : 'text-slate-500'}`}>

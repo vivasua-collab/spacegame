@@ -149,7 +149,7 @@ export const BUILDINGS: BuildingDef[] = [
   {
     id: 'warehouse',
     name: 'Склад',
-    description: 'Планетарный виртуальный склад. Добавляет +500 единиц вместимости за уровень.',
+    description: 'Планетарный виртуальный склад. Базовая вместимость: 10 000. Добавляет +2 500 единиц за уровень. Специализация даёт до +25% вместимости.',
     category: 'logistics',
     layer: ['surface'],
     size: ['tiny', 'small', 'medium', 'large', 'huge'],
@@ -163,7 +163,7 @@ export const BUILDINGS: BuildingDef[] = [
   {
     id: 'spaceport',
     name: 'Космопорт',
-    description: 'Орбитальный космопорт. Обеспечивает орбитальный буфер (+200 ед./ур.) и погрузку кораблей.',
+    description: 'Орбитальный космопорт. Обеспечивает орбитальный буфер (+500 ед./ур.) и погрузку кораблей.',
     category: 'logistics',
     layer: ['orbit'],
     size: ['tiny', 'small', 'medium', 'large', 'huge'],

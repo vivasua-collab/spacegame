@@ -355,7 +355,7 @@ export type ColonyRole = 'mining' | 'industrial' | 'research' | 'capital' | 'cus
 
 /** Виртуальный склад планеты */
 export interface PlanetWarehouse {
-  /** Общая вместимость (базовая 1000 + здания склада) */
+  /** Общая вместимость (базовая 10000 + здания склада + бонус специализации до +25%) */
   totalCapacity: number;
   /** Специализация склада */
   specialization: WarehouseSpecialization;
