@@ -1468,3 +1468,50 @@ Stage Summary:
   - ALREADY COVERED: Mine/Quarry/Drilling ores with chemical calculations
   - PARTIALLY USEFUL: Transformation chain diagrams (§6) — good for game design but may duplicate recipes.ts; Element→source mapping (§7) — useful reference; Data structures (§8) — outdated, superseded by modularity.md
   - NOT USEFUL: Outdated yield numbers (doc_temp uses arbitrary values like "4 Ag" vs chemistry-based "8.7 Ag")
+
+---
+Task ID: 10
+Agent: Main Agent
+Task: Аудит кода ресурсов — создание docs/chemistry.md и обновление системы модульности
+
+Work Log:
+- Прочитана вся текущая документация: docs/modularity.md, docs/mendeleev.md, docs/ores.md, doc_temp/ores-and-chains.md
+- Прочитан исходный код: src/data/elements.ts (55 элементов), src/data/processing-chains.ts (1132 строки)
+- Проанализирован разрыв: нет правил химических взаимодействий для автогенерации руд
+- Спроектирована система химических характеров (11 типов): reactive_metal, noble_metal, refractory_metal, platinoid, rare_earth, alkali, alkaline_earth, reactive_nonmetal, halogen, gas, transuranic
+- Создан docs/chemistry.md (13 разделов, ~580 строк):
+  - §2: 11 химических характеров с таблицей и маппингом для всех 55 элементов
+  - §3: Степени окисления по характерам + индивидуальные для нестандартных элементов
+  - §4: Правила образования руд для каждого характера (11 подразделов)
+  - §5: Матрица здание → тип руды с деревом решений
+  - §6: Правила назначения переработки и уровней
+  - §7: Расчёт энергозатрат и времени с поправкой на редкость
+  - §8: Самородные элементы — правила и расчёт шанса
+  - §9: Атмосферные и ледяные соединения
+  - §10: Трансурановые элементы — особые правила
+  - §11: Алгоритм автогенерации руды для нового элемента (8 шагов)
+  - §12: 3 примера автогенерации (Ga, Er, Br)
+- Обновлён docs/modularity.md (v1.0 → v2.0):
+  - Добавлена роль chemistry.md как ядра системы модульности
+  - Переписан §2: теперь 4 шага вместо 3, шаги 2-3 автоматические по chemistry.md
+  - Добавлена таблица «ручной vs авто» для каждого действия
+  - Добавлены планируемые поля ElementDef: chemicalCharacter, oxidationState, rarity
+  - Добавлен тип ChemicalCharacter с 11 значениями
+  - ORE_FOR_ELEMENT_MAP аннотирован химическими характерами
+- Обновлён docs/mendeleev.md (v2.0 → v2.1):
+  - Добавлен столбец «Хим. характер» во все таблицы §2.1–2.10
+  - Добавлены ссылки на chemistry.md в §1.2 и §3
+- Обновлён docs/ores.md (v2.0 → v2.1):
+  - Добавлена зависимость от chemistry.md
+  - Обновлён §1.1 с упоминанием chemistry.md
+- Обновлён doc_temp/ores-and-chains.md:
+  - Добавлена ссылка на chemistry.md в список замещающих документов
+  - Добавлены 2 пункта в отличия новой документации (хим. характеры, автогенерация)
+- Lint: 0 ошибок
+
+Stage Summary:
+- Создан docs/chemistry.md — ключевой недостающий документ с правилами химических взаимодействий
+- Система модульности теперь опирается на chemistry.md: добавление элемента → автоматическая генерация руды
+- 11 химических характеров классифицируют все 55 элементов по рудообразующему поведению
+- Алгоритм автогенерации: хим. характер → формула → молярная масса → выход → здание → энергозатраты
+- Все 4 документа обновлены с перекрёстными ссылками: chemistry.md ↔ modularity.md ↔ mendeleev.md ↔ ores.md
