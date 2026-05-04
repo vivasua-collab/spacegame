@@ -1614,3 +1614,19 @@ Stage Summary:
 - ROADMAP обновлён с подзадачами системы ресурсов и запекания
 - Ключевые невыполненные задачи: интеграция baked model в генератор, исправление PRNG derive(), баги G-01/G-02, Energy из warehouse
 - Система чекпоинтов теперь точно отражает текущее состояние проекта
+---
+Task ID: BAKE-01-fix
+Agent: main
+Task: Исправить Runtime Error — BakedLookups не инициализированы
+
+Work Log:
+- Диагностирована ошибка: `bakeGalaxyModel()` и `setCurrentLookups()` вызывались ПОСЛЕ генерации систем в `generator.ts` (строки 110-112), но `assignResourceDeposits()` внутри `generatePlanet()` уже требовал `getCurrentLookups()`
+- Переместил вызовы `bakeGalaxyModel()` + `setCurrentLookups()` на позицию ДО цикла генерации систем (строка 92-95)
+- Обновил нумерацию шагов в комментариях (1→запекание, 2→позиции, 3→системы, 4→JP, 5→связность, 6→стартовая система)
+- Проверил компиляцию — без ошибок
+- Обновил все 4 чекпоинта: `05_04_baked_integration.md`, `05_04_chemistry_bake.md`, `05_04_resource_system.md`, `05_04_save_ui_economy.md` — все теперь `complete ✅`
+- Обновил `ROADMAP.md` — пункт 2.15 отмечен как ✅
+
+Stage Summary:
+- Критический баг исправлен: BakedLookups инициализируются ДО генерации систем
+- Все чекпоинты Этапа 2 (кроме FINAL-01 GitHub push) закрыты как complete

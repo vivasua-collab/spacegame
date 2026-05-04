@@ -71,7 +71,7 @@
 - [x] 2.12 processing-chains.ts — 33+18+3 руды, 11 газов, 5 льдов
 - [x] 2.13 chemistry-generator.ts — автогенератор BakedGalaxyModel
 - [x] 2.14 docs/galaxy-bake.md — концепция запекания галактики
-- [ ] 2.15 Интеграция baked model в генератор галактики (→ `05_04_baked_integration.md`)
+- [x] 2.15 Интеграция baked model в генератор галактики → `05_04_baked_integration.md` ✅
 - [x] 2.16 ~~Исправление PRNG derive()~~ ✅ (4 хеша, 6/6 PASS)
 - [x] 2.17 ~~Исправление багов G-01 и G-02~~ ✅
 - [x] 2.18 ~~Убрать Energy из warehouse capacity~~ ✅

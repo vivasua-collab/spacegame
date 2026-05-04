@@ -2,7 +2,7 @@
 
 **Дата:** 2026-05-04 17:12 UTC (обновлено 14:40)
 **Фаза:** 2
-**Статус:** complete
+**Статус:** complete ✅ (BAKE-01 фикс порядка: 2026-05-04)
 
 👉 Предыдущие чекпоинты: [05_04_chemistry_bake.md](05_04_chemistry_bake.md), [05_04_resource_system.md](05_04_resource_system.md), [05_04_save_ui_economy.md](05_04_save_ui_economy.md)
 
@@ -13,7 +13,7 @@
 ## Выполненные задачи
 
 ### P0: Интеграция BakedGalaxyModel (критическая) — ВСЕ ВЫПОЛНЕНЫ
-- ✅ **BAKE-01**: Подключить `bakeGalaxyModel(seed, ELEMENTS)` к `GalaxyGenerator.generate()` — вызывается после генерации систем, результат сохраняется как `galaxy.bakedModel`, также вызывается `setCurrentLookups()`
+- ✅ **BAKE-01**: Подключить `bakeGalaxyModel(seed, ELEMENTS)` к `GalaxyGenerator.generate()` — вызывается **ДО** генерации систем (фикс порядка: bakeGalaxyModel+setCurrentLookups перенесены перед циклом generateSystem), результат сохраняется как `galaxy.bakedModel`
 - ✅ **BAKE-02**: Мигрировать `generate-resources.ts` на BakedGalaxyModel — заменены ORE_MAP / ATMOSPHERIC_COMPOUND_MAP на `findContainedElements()` и `getCurrentLookups()`
 - ✅ **BAKE-03**: Сериализация BakedGalaxyModel в game-store + SQLite — bakedModel исключается из JSON (как systemMap), восстанавливается при загрузке. Обратная совместимость: старые сохранения без bakedModel → re-bake из seed
 - ✅ **BAKE-04**: Устранить дублирование — все 4 потребителя processing-chains.ts мигрированы:

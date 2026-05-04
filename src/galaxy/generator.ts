@@ -89,10 +89,15 @@ export function generateGalaxy(config: Partial<GalaxyGenConfig> = {}): Galaxy {
   const systems: StarSystem[] = [];
   const systemMap = new Map<EntityId, StarSystem>();
 
-  // 1. Генерация позиций
+  // 1. Запекание модели химии (BakedGalaxyModel) — ДО генерации систем,
+  //    потому что assignResourceDeposits() использует getCurrentLookups()
+  const bakedModel = bakeGalaxyModel(cfg.seed, ELEMENTS);
+  setCurrentLookups(bakedModel);
+
+  // 2. Генерация позиций
   const positions = generateSpiralPositions(cfg, armRng, bulgeRng, diskRng, haloRng);
 
-  // 2. Генерация систем
+  // 3. Генерация систем
   for (let i = 0; i < positions.length; i++) {
     const pos = positions[i];
     const systemRng = mainRng.derive(`system_${i}`);
@@ -101,15 +106,11 @@ export function generateGalaxy(config: Partial<GalaxyGenConfig> = {}): Galaxy {
     systemMap.set(system.id, system);
   }
 
-  // 3. Jump Points
+  // 4. Jump Points
   generateJumpPoints(systems, jpRng, cfg);
 
-  // 4. Связность
+  // 5. Связность
   ensureConnectivity(systems, jpRng, cfg);
-
-  // 5. Запекание модели химии (BakedGalaxyModel)
-  const bakedModel = bakeGalaxyModel(cfg.seed, ELEMENTS);
-  setCurrentLookups(bakedModel);
 
   // 6. Стартовая система открыта
   if (systems.length > 0) {

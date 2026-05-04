@@ -2,7 +2,7 @@
 
 **Дата:** 2026-05-04 17:12 UTC (обновлено)
 **Фаза:** 2
-**Статус:** in_progress
+**Статус:** complete ✅
 
 ## Выполненные задачи
 
@@ -61,18 +61,18 @@
 
 ## Текущие задачи
 
-### Интеграция baked model в генератор галактики
-- ⏳ Подключить `bakeGalaxyModel(seed, ELEMENTS)` к `GalaxyGenerator.generate()`
-- ⏳ Использовать BakedGalaxyModel вместо хардкода руд в generate-resources.ts
-- ⏳ Сохранять BakedGalaxyModel в game-store и в сериализацию
-- ⏳ Мигрировать processing-chains.ts → chemistry-generator.ts как единый источник данных
+### Интеграция baked model в генератор галактики — ВСЕ ВЫПОЛНЕНЫ
+- ✅ Подключить `bakeGalaxyModel(seed, ELEMENTS)` к `GalaxyGenerator.generate()` — ДО генерации систем
+- ✅ Использовать BakedGalaxyModel вместо хардкода руд в generate-resources.ts
+- ✅ Сохранять BakedGalaxyModel в game-store и в сериализацию
+- ✅ Мигрировать processing-chains.ts → chemistry-generator.ts как единый источник данных
 
 ## Проблемы
-- processing-chains.ts и chemistry-generator.ts дублируют данные о рудах — нужна миграция на единый источник (baked model)
+- ~~processing-chains.ts и chemistry-generator.ts дублируют данные о рудах~~ → РЕШЕНО: все потребители мигрированы на baked-lookups
 
 ## Следующие шаги
-1. Интегрировать bakeGalaxyModel() в генератор галактики → отдельный чекпоинт `05_04_baked_integration.md`
-2. Запушить на GitHub
+1. ✅ Интегрировать bakeGalaxyModel() в генератор галактики → `05_04_baked_integration.md` (complete)
+2. ⏳ Запушить на GitHub
 
 ## Изменённые файлы
 - docs/galaxy-bake.md (новый)
