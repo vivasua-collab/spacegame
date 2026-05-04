@@ -256,7 +256,15 @@ export const useGameStore = create<GameStore>((set, get) => {
         gameState.phase = 'playing';
         gameState.speed = 1;
         set({
-          gameState: { ...gameState },
+          // Создаём новые ссылки для galaxy.systems, чтобы все
+          // consumer-компоненты увидели изменение (planet.owner мутируется напрямую)
+          gameState: {
+            ...gameState,
+            galaxy: {
+              ...gameState.galaxy,
+              systems: [...gameState.galaxy.systems],
+            },
+          },
           selectedSystemId: planet.systemId,
           selectedPlanetId: planetId,
           view: 'planet',

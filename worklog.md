@@ -943,3 +943,29 @@ Stage Summary:
 - Все параметры генератора верны и соответствуют научным данным
 - Исправлен баг с границей обитаемой зоны (внешняя граница была слишком близко)
 - Lint: 0 ошибок
+
+---
+Task ID: colony-bugfix
+Agent: Main Agent
+Task: Исправление бага: колония не появляется в списке после колонизации
+
+Work Log:
+- Получена системная дата/время: 2026-05-04 07:53:28 UTC (10:53:28 МСК)
+- Проведён полный аудит системы колоний:
+  - Prisma: нет отдельной модели Colony — всё в GameSave.state JSON
+  - API: нет colony-specific маршрутов — колонизация полностью клиентская
+  - Типы: колония = Planet с owner !== null
+  - Store: colonizePlanet() → engine.colonizePlanet() → planet.owner = 'player'
+  - UI: ColoniesSection в левом сайдбаре фильтрует planets с owner != null
+- Найдена корневая причина: useMemo в ColoniesSection с зависимостью [gameState.galaxy.systems]
+  - При мутации planet.owner ссылка на systems не меняется → useMemo возвращает кэш
+  - Двойной фикс:
+    1. Убран useMemo из ColoniesSection — прямой расчёт (дешёвая операция)
+    2. В colonizePlanet store action — создаются новые ссылки galaxy.systems
+- Добавлено отображение названия системы в списке колоний: "Система • Тип"
+- Lint: 0 ошибок
+
+Stage Summary:
+- Критический баг исправлен: колонии теперь появляются в списке после колонизации
+- 2 файла изменены: game-layout.tsx, game-store.ts
+- Корень проблемы: mutation + shallow spread не обновляет nested references

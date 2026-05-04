@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback } from 'react';
 import { useGameStore, type GameView } from '@/stores/game-store';
 import { GalaxyMap } from './galaxy-map';
 import { SystemView } from './system-view';
@@ -242,12 +242,11 @@ function ColoniesSection({
   selectSystem: (id: EntityId | null) => void;
   selectPlanet: (id: EntityId | null) => void;
 }) {
-  const colonies = useMemo(
-    () =>
-      gameState.galaxy.systems.flatMap((s) =>
-        s.planets.filter((p) => p.owner != null).map((p) => ({ ...p, systemName: s.name }))
-      ),
-    [gameState.galaxy.systems]
+  // Вычисляем колонии напрямую — useMemo с [gameState.galaxy.systems] ломается,
+  // т.к. при мутации planet.owner ссылка на systems не меняется.
+  // Прямой расчёт достаточно дешёвый (~N систем × M планет).
+  const colonies = gameState.galaxy.systems.flatMap((s) =>
+    s.planets.filter((p) => p.owner != null).map((p) => ({ ...p, systemName: s.name }))
   );
 
   const handleNavigate = useCallback(
@@ -295,7 +294,7 @@ function ColoniesSection({
                 <div className="flex-1 min-w-0 text-left">
                   <div className="truncate">{planet.name}</div>
                   <div className="text-[10px] text-slate-600 truncate">
-                    {TYPE_NAMES[planet.type]}
+                    {planet.systemName} • {TYPE_NAMES[planet.type]}
                   </div>
                 </div>
               </button>
