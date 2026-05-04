@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { useGameStore, type GameView } from '@/stores/game-store';
 import { GalaxyMap } from './galaxy-map';
 import { SystemView } from './system-view';
@@ -8,6 +8,8 @@ import { PlanetView } from './planet-view';
 import { TimeControls } from './time-controls';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
+import { TYPE_NAMES } from '@/data/planet-types';
+import type { GameState, EntityId } from '@/core/types';
 import {
   Map,
   Sun,
@@ -17,6 +19,7 @@ import {
   Save,
   Loader2,
   Flag,
+  Globe,
 } from 'lucide-react';
 
 export function GameLayout() {
@@ -26,6 +29,8 @@ export function GameLayout() {
   const newGame = useGameStore((s) => s.newGame);
   const selectedSystemId = useGameStore((s) => s.selectedSystemId);
   const selectedPlanetId = useGameStore((s) => s.selectedPlanetId);
+  const selectSystem = useGameStore((s) => s.selectSystem);
+  const selectPlanet = useGameStore((s) => s.selectPlanet);
 
   if (!gameState) return null;
 
@@ -133,7 +138,7 @@ export function GameLayout() {
           <Separator className="bg-white/5" />
 
           {/* Quick info */}
-          <div className="p-3 space-y-2 text-xs text-slate-500 flex-1 overflow-hidden">
+          <div className="p-3 space-y-2 text-xs text-slate-500">
             {selectedSystem && (
               <div>
                 <div className="text-[10px] uppercase tracking-wider text-slate-600 mb-1">System</div>
@@ -150,6 +155,16 @@ export function GameLayout() {
               </div>
             )}
           </div>
+
+          <Separator className="bg-white/5" />
+
+          {/* Colonies section */}
+          <ColoniesSection
+            gameState={gameState}
+            selectedPlanetId={selectedPlanetId}
+            selectSystem={selectSystem}
+            selectPlanet={selectPlanet}
+          />
         </aside>
 
         {/* Main view area — keep GalaxyMap always mounted to preserve zoom/pan state */}
@@ -213,6 +228,82 @@ function NavButton({
         )}
       </div>
     </button>
+  );
+}
+
+function ColoniesSection({
+  gameState,
+  selectedPlanetId,
+  selectSystem,
+  selectPlanet,
+}: {
+  gameState: GameState;
+  selectedPlanetId: EntityId | null;
+  selectSystem: (id: EntityId | null) => void;
+  selectPlanet: (id: EntityId | null) => void;
+}) {
+  const colonies = useMemo(
+    () =>
+      gameState.galaxy.systems.flatMap((s) =>
+        s.planets.filter((p) => p.owner != null).map((p) => ({ ...p, systemName: s.name }))
+      ),
+    [gameState.galaxy.systems]
+  );
+
+  const handleNavigate = useCallback(
+    (systemId: EntityId, planetId: EntityId) => {
+      selectSystem(systemId);
+      selectPlanet(planetId);
+    },
+    [selectSystem, selectPlanet]
+  );
+
+  return (
+    <div className="flex flex-col min-h-0 flex-1">
+      {/* Section header */}
+      <div className="px-3 pt-2 pb-1 flex items-center gap-1.5">
+        <Flag className="size-3 text-cyan-400/70" />
+        <span className="text-[10px] uppercase tracking-wider text-slate-500 font-medium">
+          Колонии
+        </span>
+        {colonies.length > 0 && (
+          <span className="ml-auto text-[10px] text-slate-600">{colonies.length}</span>
+        )}
+      </div>
+
+      {colonies.length === 0 ? (
+        <div className="px-3 py-2 text-[10px] text-slate-700 italic">Нет колоний</div>
+      ) : (
+        <div className="max-h-96 overflow-y-auto px-1.5 pb-1 space-y-0.5 scrollbar-thin">
+          {colonies.map((planet) => {
+            const isActive = planet.id === selectedPlanetId;
+            return (
+              <button
+                key={planet.id}
+                onClick={() => handleNavigate(planet.systemId, planet.id)}
+                className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs transition-colors ${
+                  isActive
+                    ? 'bg-cyan-500/15 text-cyan-300'
+                    : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'
+                }`}
+              >
+                <Globe
+                  className={`size-3 shrink-0 ${
+                    isActive ? 'text-cyan-400' : 'text-slate-500'
+                  }`}
+                />
+                <div className="flex-1 min-w-0 text-left">
+                  <div className="truncate">{planet.name}</div>
+                  <div className="text-[10px] text-slate-600 truncate">
+                    {TYPE_NAMES[planet.type]}
+                  </div>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }
 

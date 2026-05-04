@@ -50,11 +50,15 @@ export function toRoman(num: number): string {
  * 2. Все 7 типов планет доступны в КАЖДОЙ зоне (с разными весами)
  * 3. 10% шанс «аномальной» планеты — тип не из основной зоны
  * 4. Линия снега: R_snow = 2.7 × sqrt(L) AU — за ней лед/газовые гиганты вероятнее
+ * 5. Границы ОЗ по Kopparapu et al. 2013: S_eff_inner=1.107, S_eff_outer=0.356
  */
 function selectPlanetType(orbitalRadius: number, star: Star, rng: Xoshiro256): typeof PLANET_TYPES[0] {
   const L = Math.max(0.001, star.luminosity);
-  const hzInner = Math.sqrt(L / 1.1);
-  const hzOuter = Math.sqrt(L / 0.53);
+  // Kopparapu et al. 2013 conservative HZ boundaries (§2.1):
+  //   inner = runaway greenhouse: S_eff = 1.107
+  //   outer = maximum greenhouse:  S_eff = 0.356
+  const hzInner = Math.sqrt(L / 1.107);
+  const hzOuter = Math.sqrt(L / 0.356);
   const snowLine = 2.7 * Math.sqrt(L);
   const r = Math.max(0.05, orbitalRadius);
 

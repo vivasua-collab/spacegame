@@ -764,3 +764,182 @@ Stage Summary:
 - Газовые гиганты: плотность от 0.3 (Saturn-like) до 1.6 (массивные)
 - 11 файлов изменено, 1111 строк добавлено, 113 удалено
 - Lint: 0 ошибок
+
+---
+Task ID: 2
+Agent: UI Agent
+Task: Add Colonized Planets Section to Left Sidebar
+
+Work Log:
+- Read worklog.md, game-layout.tsx, planet-types.ts, game-store.ts, types.ts to understand current structure
+- Added imports: `useMemo` from react, `TYPE_NAMES` from `@/data/planet-types`, `GameState`/`EntityId` from `@/core/types`, `Globe` from lucide-react
+- Added store selectors: `selectSystem`, `selectPlanet` from useGameStore
+- Added `<Separator className="bg-white/5" />` between quick info and colonies section
+- Created `ColoniesSection` component with:
+  - `colonies` computed via `useMemo` — flatMap over `gameState.galaxy.systems` → filter `p.owner != null`
+  - Section header with `Flag` icon (cyan-400/70) + "Колонии" label + colony count badge
+  - Empty state: "Нет колоний" in italic slate-700
+  - Colony list: `max-h-96 overflow-y-auto` scrollable container with `space-y-0.5`
+  - Each colony entry: `Globe` icon + planet name (truncate) + TYPE_NAMES[planet.type] sublabel
+  - Click handler: `selectSystem(planet.systemId)` → `selectPlanet(planet.id)` for navigation
+  - Active colony highlight: `bg-cyan-500/15 text-cyan-300` when `planet.id === selectedPlanetId`
+  - Inactive hover: `hover:bg-white/5 hover:text-slate-200`
+- Removed `flex-1 overflow-hidden` from quick info div (no longer the flex-growing section)
+- Colonies section gets `flex-1 min-h-0` to fill remaining sidebar space
+- Lint: 0 errors
+
+Stage Summary:
+- Added Colonies section to left sidebar below quick info
+- Lists all colonized planets (owner !== null) with name + type display
+- Click-to-navigate: selects system + planet, switches to planet view
+- Active colony highlighted in cyan
+- Scroll overflow for long lists (max-h-96)
+- Empty state message "Нет колоний" when no colonies exist
+- 1 file modified: src/components/game/game-layout.tsx
+
+---
+Task ID: 3
+Agent: General Agent
+Task: Update docs/03-planets.md Based on Scientific Data
+
+Work Log:
+- Read worklog.md, docs/03-planets.md (full file), src/data/planet-types.ts, src/galaxy/generate-planets.ts, docs/planet-generation-science.md
+- **§1.1 Summary table**: Updated all 7 radius ranges to match PLANET_TYPE_RADIUS from planet-types.ts:
+  - Скалистая: 2 000–7 000 → 3 200–10 200 (0.5–1.6 R⊕)
+  - Вулканическая: 2 500–8 000 → 3 200–12 700 (0.5–2.0 R⊕)
+  - Ледяная: 1 500–6 000 → 3 200–12 700 (0.5–2.0 R⊕)
+  - Океаническая: 4 000–8 000 → 6 400–15 900 (1.0–2.5 R⊕)
+  - Пустынная: 2 000–6 500 → 3 200–10 200 (0.5–1.6 R⊕)
+  - Газовый гигант: 25 000–80 000 → 38 000–90 000 (6.0–14.1 R⊕)
+  - Карликовая: 500–2 000 → 640–3 200 (0.1–0.5 R⊕)
+- **§1.2.1–1.2.7**: Updated Радиус row in each detailed subsection to match new values (with R⊕ notation)
+- **§2.1**: Updated overall range from "500 – 80 000" to "640 – 90 000"
+- **§2.2 Density table**: Updated all 7 density values to match PLANET_DENSITY from planet-types.ts:
+  - Скалистая: 5.0 / 3.5–6.5 → 5.5 / 4.0–8.0
+  - Вулканическая: 5.5 / 4.0–7.0 → 5.0 / 3.5–6.0
+  - Ледяная: 3.0 / 2.0–4.5 → 2.2 / 1.5–3.0
+  - Океаническая: 4.5 / 3.5–5.5 → 3.0 / 2.0–4.0
+  - Пустынная: 4.0 / 3.0–5.5 (unchanged)
+  - Газовый гигант: 1.5 / 0.8–2.5 → 1.0 / 0.3–1.6
+  - Карликовая: 3.5 / 2.0–5.0 → 2.5 / 1.5–3.5
+- **§2.3 Temperature formula**: Replaced old simplified formula (T_star × sqrt(R_star × 0.00465 / (2 × D_AU)) − 273.15) with proper physics model:
+  - T_eq = 278.5 × (L/L☉)^(1/4) × (1-A)^(1/4) × (1/r_AU)^(1/2) K
+  - Added Bond albedo table (7 planet types with ranges)
+  - Added greenhouse effect model: ΔT by atmosphere type, scaled by pressure^(1/4)
+  - Added type modifiers: volcanic +30–100K, ice −20 to −50K, etc.
+  - Added Earth verification: L=1, r=1, A=0.30 → T_eq=254.8K → +33K greenhouse = 287.8K (14.6°C) ✓
+  - Cross-reference to docs/planet-generation-science.md §3.1–3.3
+- **Added scientific basis note** at top of document referencing docs/planet-generation-science.md
+- **Updated version** from 1.0 to 1.1, date to 2026-03-05
+- Lint: 0 errors
+
+Stage Summary:
+- 1 file modified: docs/03-planets.md
+- 0 source code files modified (documentation-only changes)
+- All radius ranges now match PLANET_TYPE_RADIUS in planet-types.ts
+- All density values now match PLANET_DENSITY in planet-types.ts
+- Temperature formula now matches calculatePlanetTemperature() in generate-planets.ts
+- Document now references docs/planet-generation-science.md for scientific basis
+- Version updated to 1.1
+
+---
+Task ID: 4
+Agent: Science Verifier Agent
+Task: Verify Planet Generator Uses Scientific Data — Fix Discrepancies
+
+Work Log:
+- Read all three files: src/galaxy/generate-planets.ts, src/data/planet-types.ts, docs/planet-generation-science.md
+- **A. PLANET_DENSITY verification** (§6.3): All 7 types match exactly ✓
+  - rocky: 4.0-8.0, volcanic: 3.5-6.0, ice: 1.5-3.0, oceanic: 2.0-4.0, desert: 3.0-5.5, gas_giant: 0.3-1.6, dwarf: 1.5-3.5
+- **B. PLANET_TYPE_RADIUS verification** (§5.2): All 7 types match (converted R⊕ to km) ✓
+- **C. Temperature calculation verification** (§3.1-3.5):
+  - T_eq formula matches §3.1: 278.5 × L^(1/4) × r^(-1/2) × (1-A)^(1/4) ✓
+  - Albedo values generally match §3.2 with minor simplifications ✓
+  - Greenhouse effect: base values + pressure scaling (P^0.25) match §3.3 ✓
+  - Type modifiers: volcanic +30-100K (tidal), ice -20 to -50K — reasonable per §3.5 ✓
+- **D. HZ boundaries verification** (§2.1) — **DISCREPANCY FOUND AND FIXED:**
+  - Old code: `hzInner = sqrt(L / 1.1)`, `hzOuter = sqrt(L / 0.53)`
+  - Kopparapu et al. 2013 conservative: S_eff_inner = 1.107 (runaway greenhouse), S_eff_outer = 0.356 (maximum greenhouse)
+  - For Sun (L=1): old outer = 1.37 AU, correct = 1.68 AU — HZ was 22% too narrow on outer edge
+  - Fixed to: `hzInner = sqrt(L / 1.107)`, `hzOuter = sqrt(L / 0.356)`
+  - Snow line: `2.7 × sqrt(L)` matches §7.1 (Hayashi 1981) ✓
+- **E. Atmosphere generation**: Conditional probabilities verified as matching §2.4 spec (G-07 fix) ✓
+- Added Kopparapu et al. 2013 reference comments to selectPlanetType function
+- Updated docstring with HZ boundary S_eff values
+- Lint: 0 errors
+
+Stage Summary:
+- 1 file modified: src/galaxy/generate-planets.ts
+- 1 critical fix: HZ outer boundary corrected from 0.53 → 0.356 (Kopparapu conservative outer = maximum greenhouse)
+- 1 minor fix: HZ inner boundary corrected from 1.1 → 1.107 (Kopparapu conservative inner = runaway greenhouse)
+- All PLANET_DENSITY and PLANET_TYPE_RADIUS values verified as matching science doc
+- All temperature calculation components verified as matching science doc
+- Work record written to agent-ctx/4-science-verifier-agent.md
+---
+Task ID: 1
+Agent: main
+Task: Перевести planet-generation-science.md на русский и переместить в docs/
+
+Work Log:
+- Прочитан английский оригинал doc_temp/planet-generation-science.md (919 строк)
+- Выполнен полный перевод на русский язык с сохранением всех формул, таблиц, кодовых блоков
+- Файл записан как docs/planet-generation-science.md
+- Английский оригинал удалён из doc_temp/
+
+Stage Summary:
+- Создан docs/planet-generation-science.md — полный перевод научного справочника на русский
+- Удалён doc_temp/planet-generation-science.md (английский оригинал)
+---
+Task ID: 2
+Agent: subagent (full-stack-developer)
+Task: Добавить секцию колонизированных планет в левое меню
+
+Work Log:
+- Добавлен компонент ColoniesSection в game-layout.tsx
+- Секция отображается ниже разделителя после Quick Info
+- Показывает "Колонии" с иконкой Flag и счётчиком
+- Список с прокруткой (max-h-96), каждая колония кликабельна
+- Активная колония подсвечивается (cyan)
+- При отсутствии колоний — "Нет колоний"
+- Импортированы TYPE_NAMES, useMemo, useCallback, Globe
+
+Stage Summary:
+- game-layout.tsx обновлён — добавлена секция "Колонии" в сайдбар
+- Lint: 0 ошибок
+---
+Task ID: 3
+Agent: subagent (full-stack-developer)
+Task: Скорректировать docs/03-planets.md на основе научных данных
+
+Work Log:
+- Обновлены радиусы в §1.1 и §1.2.x по PLANET_TYPE_RADIUS
+- Обновлены плотности в §2.2 по PLANET_DENSITY
+- Заменена формула температуры на правильную с альбедо и парниковым эффектом
+- Добавлена таблица альбедо по типам планет
+- Добавлена верификация для Земли (14.6°C)
+- Добавлена ссылка на научный документ
+- Версия обновлена до 1.1
+
+Stage Summary:
+- docs/03-planets.md v1.1 — полностью синхронизирован с научными данными и кодом
+- Lint: 0 ошибок
+---
+Task ID: 4
+Agent: subagent (full-stack-developer)
+Task: Проверить что планетарная часть генератора использует научные данные
+
+Work Log:
+- Сверены PLANET_DENSITY — все 7 типов совпадают с научными данными
+- Сверены PLANET_TYPE_RADIUS — все 7 типов совпадают
+- Сверена формула T_eq — совпадает с §3.1
+- Сверены значения альбедо — совпадают с §3.2
+- Сверены парниковые эффекты — совпадают с §3.3
+- НАЙДЕНО И ИСПРАВЛЕНО: hzOuter = sqrt(L/0.53) → sqrt(L/0.356)
+  (Kopparapu conservative outer boundary: S_eff=0.356 вместо 0.53)
+  Это расширяет обитаемую зону на +22% с внешней стороны
+- hzInner незначительно скорректирован: sqrt(L/1.1) → sqrt(L/1.107)
+
+Stage Summary:
+- Все параметры генератора верны и соответствуют научным данным
+- Исправлен баг с границей обитаемой зоны (внешняя граница была слишком близко)
+- Lint: 0 ошибок
