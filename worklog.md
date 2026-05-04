@@ -1515,3 +1515,53 @@ Stage Summary:
 - 11 химических характеров классифицируют все 55 элементов по рудообразующему поведению
 - Алгоритм автогенерации: хим. характер → формула → молярная масса → выход → здание → энергозатраты
 - Все 4 документа обновлены с перекрёстными ссылками: chemistry.md ↔ modularity.md ↔ mendeleev.md ↔ ores.md
+
+---
+Task ID: 2
+Agent: full-stack-developer
+Task: Fix missing elements (Os, Ne, Ar) and deep ore yields
+
+Work Log:
+- Read worklog.md and current state of elements.ts and processing-chains.ts
+- Verified Os (Осмий) was already present in elements.ts (added by previous agent)
+- Added Ne (Неон) element: id='Ne', name='Неон', symbol='Ne', category='noble', baseValue=1, density=0.0009, isAtmospheric=true
+- Added Ar (Аргон) element: id='Ar', name='Аргон', symbol='Ar', category='noble', baseValue=0.8, density=0.0018, isAtmospheric=true
+- Added new section "Инертные газы (атмосферные)" after "Переходные металлы для электроники" in elements.ts
+- Updated header comment: "55 элементов" → "57 элементов"
+- Updated noble category description: "благородные металлы" → "благородные металлы и инертные газы (Au, Pt, Ag, Ru, Rh, Pd, Ir, Os, Ne, Ar)"
+- Fixed Y-ore yields: Y=3.0,O=2.0 (sum=5.0) → Y=4.8,P=1.7,O=3.5 (sum=10.0)
+- Fixed Y-ore prototype: 'Ксенотим (YPO₄), редуцированный выход' → 'Ксенотим (YPO₄)'
+- Fixed Y-ore molarFormula: 'Y₂O₃' → 'YPO₄', molarMass: 225.8 → 183.9
+- Fixed Ba-ore yields: Ba=3.5,S=2.0,O=1.5 (sum=7.0) → Ba=5.9,S=1.4,O=2.7 (sum=10.0)
+- Fixed Zr-ore yields: Zr=4.0,Si=1.5,O=2.0 (sum=7.5) → Zr=5.0,Si=1.5,O=3.5 (sum=10.0)
+- Fixed Be-ore yields: Be=1.0,Al=2.0,Si=3.5,O=3.5 (sum=10.0 but wrong values) → Be=0.5,Al=1.0,Si=3.1,O=5.4 (sum=10.0)
+- All deep ore yields now sum to 10.0 and match docs/ores.md
+- Ran lint check: 0 errors
+
+Stage Summary:
+- elements.ts now has 57 elements (was 55, added Ne and Ar; Os was already present)
+- Deep ore yields now sum to 10.0 and match docs/ores.md
+- Y-ore now correctly references YPO₄ (ксенотим) instead of Y₂O₃
+- 2 files modified: src/data/elements.ts, src/data/processing-chains.ts
+
+---
+Task ID: 3
+Agent: general-purpose
+Task: Fix documentation contradictions
+
+Work Log:
+- Removed duplicate Se/Cd from mendeleev.md §2.10 (title changed from "5" to "3", description updated)
+- Added Ne (Неон, Z=10) and Ar (Аргон, Z=18) to mendeleev.md §2.1 "Повсеместные элементы" (10→12)
+- Added Ne and Ar to mendeleev.md §2.12 "Сводная таблица атомных масс"
+- Added Ne and Ar to mendeleev.md Приложение Б "Список элементов по атомному номеру"
+- Updated mendeleev.md Приложение Б total: 66→68 элементов (56→58 базовых + 10 трансурановых)
+- Added 4 missing ores to ores.md §3.2 "Руды Карьера": P-ore, Mg-ore, O-rock, Ba-ore-quarry (8→12)
+- Updated ores.md version from 2.1 to 2.2 with update note
+- Updated modularity.md element counts from 55 to 58 (2 locations)
+- No source code files modified (documentation-only changes)
+
+Stage Summary:
+- mendeleev.md now has 58 базовых элементов (added Ne, Ar; removed duplicate Se, Cd from §2.10)
+- ores.md now documents all 12 Карьер рудs (was 8), version 2.2
+- Duplicates removed from §2.10 — Se and Cd only appear in §2.4
+- modularity.md element count updated from 55 to 58

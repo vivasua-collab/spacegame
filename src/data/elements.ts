@@ -1,5 +1,5 @@
 /**
- * Определения элементов — 55 элементов для SpaceGame.
+ * Определения элементов — 57 элементов для SpaceGame.
  * Расширенная таблица (версия 4.0) на основе docs/mendeleev.md.
  *
  * Категории:
@@ -7,7 +7,7 @@
  * - fuel: топливные/энергетические (H, He)
  * - metal: промышленные металлы (Ti, Cr, Mn, Ni, Cu, Zn, Sn, Pb, V, Co, W, Mo, Nb, Ta, Re)
  * - chemical: химические/жизнеобеспечение (O, N, S, P)
- * - noble: благородные металлы (Au, Pt, Ag, Ru, Rh, Pd, Ir, Os)
+ * - noble: благородные металлы и инертные газы (Au, Pt, Ag, Ru, Rh, Pd, Ir, Os, Ne, Ar)
  * - rare: редкие/стратегические (U, Zr, Hf)
  * - alkali: щелочные металлы (Li, Na, K)
  * - alkaline_earth: щёлочноземельные (Be, Mg, Ca, Ba)
@@ -98,6 +98,10 @@ export const ELEMENTS: ElementDef[] = [
   // ============ Переходные металлы для электроники ============
   { id: 'Cd', name: 'Кадмий', symbol: 'Cd', category: 'transmetal', baseValue: 5, density: 8.65, isAtmospheric: false },
   { id: 'In', name: 'Индий', symbol: 'In', category: 'transmetal', baseValue: 8, density: 7.31, isAtmospheric: false },
+
+  // ============ Инертные газы (атмосферные) ============
+  { id: 'Ne', name: 'Неон', symbol: 'Ne', category: 'noble', baseValue: 1, density: 0.0009, isAtmospheric: true },
+  { id: 'Ar', name: 'Аргон', symbol: 'Ar', category: 'noble', baseValue: 0.8, density: 0.0018, isAtmospheric: true },
 ];
 
 export const ELEMENT_MAP = new Map(ELEMENTS.map(e => [e.id, e]));
