@@ -8,6 +8,7 @@ import type { Planet, HexCell, ProductionQueue, ProductionItem, EntityId, StarSy
 import { BUILDING_MAP } from '@/data/buildings';
 import { RECIPE_MAP } from '@/data/recipes';
 import { ELEMENT_MAP } from '@/data/elements';
+import { ORE_MAP, ATMOSPHERIC_COMPOUND_MAP, ICE_COMPOUND_MAP } from '@/data/processing-chains';
 import { canStoreResource, calculateWarehouseCapacity, getOrbitBufferCapacity, ensureReservesForResources } from '@/data/warehouse';
 import { gameBus } from '@/core/event-bus';
 
@@ -61,12 +62,10 @@ function processExtraction(planet: Planet): void {
         const amount = baseRate * levelMult * terrainMult;
         const extracted = Math.min(amount, deposit.quantity);
 
-        const key = deposit.elementId;
-        const canStore = canStoreResource(planet, key, extracted);
-        const actualExtracted = Math.min(extracted, canStore);
-        deposit.quantity -= actualExtracted;
-        if (actualExtracted > 0) {
-          planet.resources[key] = (planet.resources[key] ?? 0) + actualExtracted;
+        deposit.quantity -= extracted;
+        if (extracted > 0) {
+          // Конвертируем руду в содержащиеся элементы
+          extractOreToElements(planet, deposit.elementId, extracted);
         }
       }
     }
@@ -81,12 +80,11 @@ function processExtraction(planet: Planet): void {
         const baseRate = 0.5 * deposit.availability;
         const amount = baseRate * levelMult;
         const extracted = Math.min(amount, deposit.quantity);
-        const key = deposit.elementId;
-        const canStore = canStoreResource(planet, key, extracted);
-        const actualExtracted = Math.min(extracted, canStore);
-        deposit.quantity -= actualExtracted;
-        if (actualExtracted > 0) {
-          planet.resources[key] = (planet.resources[key] ?? 0) + actualExtracted;
+
+        deposit.quantity -= extracted;
+        if (extracted > 0) {
+          // Конвертируем руду в содержащиеся элементы
+          extractOreToElements(planet, deposit.elementId, extracted);
         }
       }
     }
@@ -133,6 +131,46 @@ function getAtmosphereEfficiency(type: string): number {
     case 'methane': return 0.7;
     case 'co2': return 0.5;
     default: return 0;
+  }
+}
+
+/**
+ * Конвертировать добытую руду/соединение в чистые элементы и положить на склад.
+ * Использует ORE_MAP / ATMOSPHERIC_COMPOUND_MAP / ICE_COMPOUND_MAP для определения
+ * содержащихся элементов и их пропорций (yield из 10 единиц сырья).
+ * Учитывает вместимость склада для каждого элемента.
+ */
+function extractOreToElements(planet: Planet, oreId: string, oreAmount: number): void {
+  // Ищем определение руды/соединения
+  const oreDef = ORE_MAP.get(oreId);
+  const atmoDef = ATMOSPHERIC_COMPOUND_MAP.get(oreId);
+  const iceDef = ICE_COMPOUND_MAP.get(oreId);
+
+  const contained = oreDef?.containedElements
+    ?? atmoDef?.containedElements
+    ?? iceDef?.containedElements
+    ?? null;
+
+  if (contained && contained.length > 0) {
+    // Распределяем добытое количество пропорционально yield
+    const totalYield = contained.reduce((s, ce) => s + ce.yield, 0);
+    for (const ce of contained) {
+      const elementAmount = oreAmount * (ce.yield / totalYield);
+      if (elementAmount <= 0) continue;
+      const canStore = canStoreResource(planet, ce.elementId, elementAmount);
+      const actual = Math.min(elementAmount, canStore);
+      if (actual > 0) {
+        planet.resources[ce.elementId] = (planet.resources[ce.elementId] ?? 0) + actual;
+      }
+    }
+  } else {
+    // Fallback: не нашли руду — strip -ore suffix и кладём как элемент
+    const pureId = oreId.replace('-ore', '');
+    const canStore = canStoreResource(planet, pureId, oreAmount);
+    const actual = Math.min(oreAmount, canStore);
+    if (actual > 0) {
+      planet.resources[pureId] = (planet.resources[pureId] ?? 0) + actual;
+    }
   }
 }
 

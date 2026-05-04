@@ -6,6 +6,7 @@ import { axialToPixel } from '@/galaxy';
 import { TERRAIN_COLORS, TERRAIN_NAMES, TYPE_NAMES, SIZE_NAMES } from '@/data/planet-types';
 import { BUILDING_MAP } from '@/data/buildings';
 import { ELEMENT_MAP } from '@/data/elements';
+import { ORE_MAP, ATMOSPHERIC_COMPOUND_MAP } from '@/data/processing-chains';
 import { getUsedCapacity, getOrbitBufferUsed } from '@/data/warehouse';
 import { BuildingDialog } from './building-dialog';
 import { ResourcePanel } from './resource-panel';
@@ -589,13 +590,25 @@ function HexInfoCard({ hex }: { hex: HexCell }) {
           <div className="space-y-0.5">
             <div className="text-[10px] text-slate-500 uppercase">Залежи</div>
             {hex.deposits.map((dep, i) => {
-              // M-04 fix: strip '-ore' suffix for ELEMENT_MAP lookup
-              const pureId = dep.elementId.replace('-ore', '');
-              const elDef = ELEMENT_MAP.get(pureId);
+              // Ищем определение руды/соединения для отображения названия
+              const oreDef = ORE_MAP.get(dep.elementId);
+              const atmoDef = ATMOSPHERIC_COMPOUND_MAP.get(dep.elementId);
+              const displayName = oreDef?.name
+                ?? atmoDef?.name
+                ?? (() => {
+                  // Fallback: strip '-ore' suffix, lookup element
+                  const pureId = dep.elementId.replace('-ore', '');
+                  const elDef = ELEMENT_MAP.get(pureId);
+                  return elDef ? `${elDef.name} (руда)` : dep.elementId;
+                })();
+              // Показываем формулу руды если есть
+              const formula = oreDef?.molarFormula ?? atmoDef?.formula ?? '';
               return (
                 <div key={i} className="flex justify-between text-xs text-slate-400">
-                  <span>{elDef?.symbol ?? dep.elementId}</span>
-                  <span className="font-mono">{Math.floor(dep.quantity)}</span>
+                  <span className="truncate" title={formula ? `${displayName} (${formula})` : displayName}>
+                    {displayName}
+                  </span>
+                  <span className="font-mono shrink-0 ml-2">{Math.floor(dep.quantity)}</span>
                 </div>
               );
             })}

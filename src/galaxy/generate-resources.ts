@@ -5,12 +5,18 @@
  * Профильные ресурсы (соответствующие типу планеты) — в ЗНАЧИТЕЛЬНОМ количестве.
  * Редкие — в следовых количествах (но всегда есть).
  * Ультраредкие — 1-2 уникальных для планеты.
+ *
+ * ВАЖНО: в гексах генерируются залежи РУД (не чистых элементов).
+ * ID руды берётся из ORE_FOR_ELEMENT_MAP, который маппит элемент → реальную руду
+ * (Fe→Fe-ore, Ca→CaCO3, H→H2, Na→NaCl и т.д.)
+ * При добыче руда конвертируется в содержащиеся элементы через ORE_MAP.
  */
 
 import type { Xoshiro256 } from '@/core/prng';
 import type { HexCell, PlanetResourceDeposit } from '@/core/types';
 import { PROFILE_ELEMENTS, RARE_ELEMENTS, ULTRA_RARE_ELEMENTS } from '@/data/planet-types';
-import { ELEMENTS } from '@/data/elements';
+import { ELEMENTS, ELEMENT_MAP } from '@/data/elements';
+import { ORE_FOR_ELEMENT_MAP, ORE_MAP, ATMOSPHERIC_COMPOUND_MAP } from '@/data/processing-chains';
 
 // Множители количества по категории для каждого типа планеты
 const CATEGORY_MULTIPLIERS: Record<string, Record<string, number>> = {
@@ -24,9 +30,23 @@ const CATEGORY_MULTIPLIERS: Record<string, Record<string, number>> = {
 };
 
 /**
+ * Получить реальный ID руды для элемента.
+ * Атмосферные элементы (H, He, O, N и др.) на поверхности генерируются
+ * как следовые минеральные залежи, а не как газовые соединения.
+ * Газовые экстракторы добывают их из атмосферы отдельно.
+ */
+function getOreIdForElement(elementId: string): string {
+  const oreId = ORE_FOR_ELEMENT_MAP[elementId];
+  if (oreId) return oreId;
+  // Fallback для элементов без маппинга (трансурановые и т.д.)
+  return `${elementId}-ore`;
+}
+
+/**
  * Назначить ресурсные залежи на гексах.
- * Атмосферные элементы (H, He, O, N, C, S) добываются газовым экстрактором,
- * но их залежи в породе тоже присутствуют в меньших количествах.
+ * Каждый элемент размещается на гексах в виде своей основной руды.
+ * Атмосферные элементы (H, He, O, N, Ne, Ar) добываются газовым экстрактором,
+ * но их следовые залежи в породе тоже присутствуют.
  */
 export function assignResourceDeposits(hexes: HexCell[], rng: Xoshiro256, planetType: string): void {
   if (hexes.length === 0) return;
@@ -38,7 +58,7 @@ export function assignResourceDeposits(hexes: HexCell[], rng: Xoshiro256, planet
   const rareSet = new Set(RARE_ELEMENTS);
   const catMult = CATEGORY_MULTIPLIERS[planetType] ?? CATEGORY_MULTIPLIERS.rocky;
 
-  // Для КАЖДОГО элемента из таблицы — создаём залежи
+  // Для КАЖДОГО элемента из таблицы — создаём залежи его руды
   for (const element of ELEMENTS) {
     const cat = element.category;
     const mult = catMult[cat] ?? 0.3;
@@ -72,11 +92,14 @@ export function assignResourceDeposits(hexes: HexCell[], rng: Xoshiro256, planet
       Math.ceil(hexFraction * nonOceanHexes.length),
     ));
 
+    // Используем реальный ID руды из ORE_FOR_ELEMENT_MAP
+    const oreId = getOreIdForElement(element.id);
+
     const shuffled = [...nonOceanHexes].sort(() => rng.nextFloat() - 0.5);
     for (let h = 0; h < hexCount && h < shuffled.length; h++) {
       const quantityVariance = 0.5 + rng.nextFloat();
       shuffled[h].deposits.push({
-        elementId: `${element.id}-ore`,
+        elementId: oreId,
         availability: Math.min(1, baseAvailability * (0.7 + rng.nextFloat() * 0.6)),
         quantity: Math.max(1, Math.round(baseQuantity * quantityVariance)),
         depth: isRare ? rng.nextInt(3, 5) : rng.nextInt(1, 4),
@@ -93,8 +116,9 @@ export function assignResourceDeposits(hexes: HexCell[], rng: Xoshiro256, planet
         : rng.nextChoice(ELEMENTS.filter(e => !e.isAtmospheric));
       const cat = element.category;
       const mult = catMult[cat] ?? 0.3;
+      const oreId = getOreIdForElement(element.id);
       hex.deposits.push({
-        elementId: `${element.id}-ore`,
+        elementId: oreId,
         availability: 0.5 + rng.nextFloat() * 0.5,
         quantity: Math.round((200 + rng.nextFloat() * 800) * mult * 2),
         depth: rng.nextInt(1, 3),
@@ -105,6 +129,8 @@ export function assignResourceDeposits(hexes: HexCell[], rng: Xoshiro256, planet
 
 /**
  * Агрегация ресурсных залежей из гексов в сводную таблицу планеты.
+ * Конвертирует руды в элементы (по containedElements из ORE_MAP / ATMOSPHERIC_COMPOUND_MAP)
+ * и показывает, какие ЧИСТЫЕ ЭЛЕМЕНТЫ можно получить на планете.
  * Также добавляет ультраредкие ресурсы (1-2 уникальных для планеты).
  */
 export function aggregateResourceDeposits(
@@ -116,24 +142,68 @@ export function aggregateResourceDeposits(
   const rareSet = new Set(RARE_ELEMENTS);
   const deposits = new Map<string, { totalQuantity: number; totalAvailability: number; hexCount: number; maxAvailability: number }>();
 
-  // Агрегируем из гексов
+  // Вспомогательная функция: добавить ресурс элемента
+  function addElement(elementId: string, quantity: number, availability: number): void {
+    const existing = deposits.get(elementId);
+    if (existing) {
+      existing.totalQuantity += quantity;
+      existing.totalAvailability += availability;
+      existing.maxAvailability = Math.max(existing.maxAvailability, availability);
+    } else {
+      deposits.set(elementId, {
+        totalQuantity: quantity,
+        totalAvailability: availability,
+        hexCount: 0,
+        maxAvailability: availability,
+      });
+    }
+  }
+
+  // Агрегируем из гексов, конвертируя руды → элементы
   for (const hex of hexes) {
+    // Собираем элементы, которые уже были добавлены из этого гекса (чтобы hexCount++ только один раз)
+    const elementsInHex = new Set<string>();
+
     for (const dep of hex.deposits) {
-      const elId = dep.elementId.replace('-ore', '');
-      const existing = deposits.get(elId);
-      if (existing) {
-        existing.totalQuantity += dep.quantity;
-        existing.totalAvailability += dep.availability;
-        existing.hexCount++;
-        existing.maxAvailability = Math.max(existing.maxAvailability, dep.availability);
+      // Ищем определение руды/соединения
+      const oreDef = ORE_MAP.get(dep.elementId);
+      const atmoDef = ATMOSPHERIC_COMPOUND_MAP.get(dep.elementId);
+
+      if (oreDef && oreDef.containedElements.length > 0) {
+        // Руда содержит несколько элементов — распределяем пропорционально yield
+        const totalYield = oreDef.containedElements.reduce((s, ce) => s + ce.yield, 0);
+        for (const ce of oreDef.containedElements) {
+          const fraction = ce.yield / totalYield;
+          addElement(ce.elementId, dep.quantity * fraction, dep.availability);
+          elementsInHex.add(ce.elementId);
+        }
+      } else if (atmoDef && atmoDef.containedElements.length > 0) {
+        // Атмосферное соединение
+        const totalYield = atmoDef.containedElements.reduce((s, ce) => s + ce.yield, 0);
+        for (const ce of atmoDef.containedElements) {
+          const fraction = ce.yield / totalYield;
+          addElement(ce.elementId, dep.quantity * fraction, dep.availability);
+          elementsInHex.add(ce.elementId);
+        }
       } else {
-        deposits.set(elId, {
-          totalQuantity: dep.quantity,
-          totalAvailability: dep.availability,
-          hexCount: 1,
-          maxAvailability: dep.availability,
-        });
+        // Fallback: не нашли руду — пробуем strip -ore suffix
+        const pureId = dep.elementId.replace('-ore', '');
+        const elDef = ELEMENT_MAP.get(pureId);
+        if (elDef) {
+          addElement(pureId, dep.quantity, dep.availability);
+          elementsInHex.add(pureId);
+        } else {
+          // Последний fallback — используем ID как есть
+          addElement(dep.elementId, dep.quantity, dep.availability);
+          elementsInHex.add(dep.elementId);
+        }
       }
+    }
+
+    // Увеличиваем hexCount для каждого элемента, найденного на этом гексе
+    for (const elId of elementsInHex) {
+      const entry = deposits.get(elId);
+      if (entry) entry.hexCount++;
     }
   }
 
@@ -189,7 +259,7 @@ export function aggregateResourceDeposits(
 
     result.push({
       elementId,
-      totalQuantity: data.totalQuantity,
+      totalQuantity: Math.round(data.totalQuantity),
       avgAvailability: data.hexCount > 0 ? Math.round((data.totalAvailability / data.hexCount) * 1000) / 1000 : Math.round(data.totalAvailability * 1000) / 1000,
       tier,
       hexCount: data.hexCount,

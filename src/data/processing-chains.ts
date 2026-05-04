@@ -1051,8 +1051,8 @@ export const ATMOSPHERIC_COMPOUND_MAP = new Map(ATMOSPHERIC_COMPOUNDS.map(c => [
 /** Маппинг: ID ледяного соединения → IceCompound */
 export const ICE_COMPOUND_MAP = new Map(ICE_COMPOUNDS.map(c => [c.id, c]));
 
-/** Маппинг: элемент → ID руды (§8.3) */
-const ORE_FOR_ELEMENT_MAP: Record<string, string> = {
+/** Маппинг: элемент → ID основной руды (§8.3) */
+export const ORE_FOR_ELEMENT_MAP: Record<string, string> = {
   // Шахта
   Fe: 'Fe-ore', Si: 'Si-ore', Ti: 'Ti-ore', Al: 'Al-ore',
   Cu: 'Cu-ore', Ni: 'Ni-ore', Cr: 'Cr-ore', W: 'W-ore',
