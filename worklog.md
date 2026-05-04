@@ -1301,3 +1301,40 @@ Stage Summary:
 - Recipe buildingId corrections: Level 2+ recipes properly assigned to synthesizer
 - Total buildings: 9 (was 8), Total recipes: 30 (was 26)
 - Processing conveyor now has 4 levels: Processor (L1) → Synthesizer (L2-L3) → Shipyard (L4), with Refinery (L1alt) for high-purity rare metals
+
+---
+Task ID: 8
+Agent: Main Agent
+Task: Переработка системы ресурсов — категории, правая панель, конвейер переработки
+
+Work Log:
+- Получена системная дата/время: 2026-05-04 13:13 MSK
+- Создан чекпоинт: checkpoints/05_04_resource_system.md
+- Переработаны категории элементов (types.ts, elements.ts):
+  - 'alloy' → 'metal' (Титан — металл, не сплав!)
+  - 'electronics' → 'metal' (Cu) + 'noble' (Au)
+  - 'light' → 'metal' (Li)
+  - 'rare' перераспределены: Co, W → 'metal', Pt → 'noble', U, Y, Ba остались 'rare'
+  - Новые категории: structural, fuel, metal, chemical, noble, rare (6 вместо 7)
+- Переведены ярлыки категорий на русский (resource-panel.tsx):
+  - Structural → Строительные, Fuel → Топливные, Metal → Металлы
+  - Chemical → Химические, Noble → Благородные, Rare → Редкие
+- Переработана правая панель planet-view.tsx:
+  - Убрано дублирование «Хранимые ресурсы» из вкладки Ресурсы
+  - Добавлена подсказка «Содержимое склада → кнопка Склад сверху»
+  - Убран неиспользуемый импорт Package
+  - CATEGORY_NAMES обновлены на русский
+- Исправлены комментарии в giveStarterResources (engine.ts):
+  - «Сплавы» → «Металлы», «Химия» → «Химические», «Редкие» → разделены на «Благородные» и «Редкие»
+- Обновлены приоритеты склада (warehouse.ts) для новых категорий
+- Создан файл конвейера переработки (processing-chains.ts, 1132 строки):
+  - 33 руды (21 шахта + 12 карьер), 11 атмосферных газов, 5 ледяных, 18 глубинных
+  - Функции: getProcessingChain, getOreForElement, getElementSource и др.
+- Lint: 0 ошибок
+- Dev server: компиляция без ошибок
+
+Stage Summary:
+- Категории элементов приведены в соответствие с физикой (металлы ≠ сплавы)
+- Правая панель упрощена: нет дублирования, склад на кнопке
+- Создан полный конвейер переработки: 67 видов сырья → 56 элементов
+- Все ярлыки переведены на русский

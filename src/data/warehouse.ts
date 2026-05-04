@@ -10,10 +10,9 @@ import { ELEMENT_MAP } from '@/data/elements';
 const CATEGORY_PRIORITY: Record<string, number> = {
   structural: 8,
   fuel: 7,
-  light: 7,
-  chemical: 6,
-  alloy: 5,
-  electronics: 4,
+  metal: 6,
+  chemical: 5,
+  noble: 4,
   rare: 3,
 };
 

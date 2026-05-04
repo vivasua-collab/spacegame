@@ -30,7 +30,6 @@ import {
   Gem,
   Map,
   Warehouse,
-  Package,
 } from 'lucide-react';
 import type { Planet, HexCell, AtmosphereType, LifeLevel, AtmosphericSlot, OrbitalSlot, PlanetResourceDeposit, ColonyRole, WarehouseSpecialization } from '@/core/types';
 
@@ -52,12 +51,10 @@ const TIER_DISPLAY: Record<PlanetResourceDeposit['tier'], { label: string; color
 const CATEGORY_NAMES: Record<string, string> = {
   structural: 'Строительные',
   fuel: 'Топливные',
-  alloy: 'Сплавы',
-  electronics: 'Электроника',
-  chemical: 'Химия',
-  energy: 'Энергия',
+  metal: 'Металлы',
+  chemical: 'Химические',
+  noble: 'Благородные',
   rare: 'Редкие',
-  light: 'Лёгкие',
 };
 
 /** Форматирование количества ресурса */
@@ -278,31 +275,13 @@ function ResourcesTabContent({ planet }: { planet: Planet }) {
   const rareDeposits = deposits.filter(d => d.tier === 'rare');
   const ultraRareDeposits = deposits.filter(d => d.tier === 'ultra_rare');
 
-  // Check if there are any stored resources
-  const storedResources = Object.entries(planet.resources).filter(([, amount]) => amount > 0);
-  const hasStoredResources = storedResources.length > 0;
-
   return (
     <ScrollArea className="h-full max-h-[calc(100vh-160px)]">
       <div className="p-2 space-y-4">
-        {/* Stored warehouse contents */}
-        {hasStoredResources && (
-          <div>
-            <div className="flex items-center gap-2 mb-1">
-              <Package className="size-4 text-cyan-400" />
-              <span className="text-sm font-semibold text-white">Хранимые ресурсы</span>
-              <Badge className="text-[9px] h-4 px-1 bg-cyan-900/30 text-cyan-400 border-0">
-                {storedResources.length}
-              </Badge>
-            </div>
-            <div className="text-[10px] text-slate-500 mb-2">Содержимое склада планеты</div>
-            <Card className="bg-[#0d0d24] border-white/10 text-white py-3 gap-3">
-              <CardContent className="px-4 py-0">
-                <ResourcePanel resources={planet.resources} className="h-64" />
-              </CardContent>
-            </Card>
-          </div>
-        )}
+        {/* Hint about warehouse */}
+        <div className="text-[10px] text-slate-600 italic px-1">
+          Содержимое склада → кнопка «Склад» сверху
+        </div>
 
         {/* Profile resources */}
         <ResourceSection
