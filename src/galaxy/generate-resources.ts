@@ -9,14 +9,14 @@
  * ВАЖНО: в гексах генерируются залежи РУД (не чистых элементов).
  * ID руды берётся из ORE_FOR_ELEMENT_MAP, который маппит элемент → реальную руду
  * (Fe→Fe-ore, Ca→CaCO3, H→H2, Na→NaCl и т.д.)
- * При добыче руда конвертируется в содержащиеся элементы через ORE_MAP.
+ * При добыче руда конвертируется в содержащиеся элементы через BakedGalaxyModel.
  */
 
 import type { Xoshiro256 } from '@/core/prng';
 import type { HexCell, PlanetResourceDeposit } from '@/core/types';
 import { PROFILE_ELEMENTS, RARE_ELEMENTS, ULTRA_RARE_ELEMENTS } from '@/data/planet-types';
 import { ELEMENTS, ELEMENT_MAP } from '@/data/elements';
-import { ORE_FOR_ELEMENT_MAP, ORE_MAP, ATMOSPHERIC_COMPOUND_MAP } from '@/data/processing-chains';
+import { getCurrentLookups, findContainedElements } from '@/data/baked-lookups';
 
 // Множители количества по категории для каждого типа планеты
 const CATEGORY_MULTIPLIERS: Record<string, Record<string, number>> = {
@@ -36,7 +36,8 @@ const CATEGORY_MULTIPLIERS: Record<string, Record<string, number>> = {
  * Газовые экстракторы добывают их из атмосферы отдельно.
  */
 function getOreIdForElement(elementId: string): string {
-  const oreId = ORE_FOR_ELEMENT_MAP[elementId];
+  const lookups = getCurrentLookups();
+  const oreId = lookups.elementToOre[elementId];
   if (oreId) return oreId;
   // Fallback для элементов без маппинга (трансурановые и т.д.)
   return `${elementId}-ore`;
@@ -159,28 +160,19 @@ export function aggregateResourceDeposits(
     }
   }
 
-  // Агрегируем из гексов, конвертируя руды → элементы
+  // Агрегируем из гексов, конвертируя руды → элементы через BakedGalaxyModel
   for (const hex of hexes) {
     // Собираем элементы, которые уже были добавлены из этого гекса (чтобы hexCount++ только один раз)
     const elementsInHex = new Set<string>();
 
     for (const dep of hex.deposits) {
-      // Ищем определение руды/соединения
-      const oreDef = ORE_MAP.get(dep.elementId);
-      const atmoDef = ATMOSPHERIC_COMPOUND_MAP.get(dep.elementId);
+      // Ищем содержащиеся элементы через BakedGalaxyModel
+      const contained = findContainedElements(getCurrentLookups(), dep.elementId);
 
-      if (oreDef && oreDef.containedElements.length > 0) {
+      if (contained && contained.length > 0) {
         // Руда содержит несколько элементов — распределяем пропорционально yield
-        const totalYield = oreDef.containedElements.reduce((s, ce) => s + ce.yield, 0);
-        for (const ce of oreDef.containedElements) {
-          const fraction = ce.yield / totalYield;
-          addElement(ce.elementId, dep.quantity * fraction, dep.availability);
-          elementsInHex.add(ce.elementId);
-        }
-      } else if (atmoDef && atmoDef.containedElements.length > 0) {
-        // Атмосферное соединение
-        const totalYield = atmoDef.containedElements.reduce((s, ce) => s + ce.yield, 0);
-        for (const ce of atmoDef.containedElements) {
+        const totalYield = contained.reduce((s, ce) => s + ce.yield, 0);
+        for (const ce of contained) {
           const fraction = ce.yield / totalYield;
           addElement(ce.elementId, dep.quantity * fraction, dep.availability);
           elementsInHex.add(ce.elementId);

@@ -409,6 +409,8 @@ export interface Galaxy {
   seed: number;
   systems: StarSystem[];
   systemMap: Map<EntityId, StarSystem>;
+  /** Запечённая модель химии — immutable после генерации */
+  bakedModel: import('@/data/chemistry-generator').BakedGalaxyModel;
 }
 
 export interface Ship {

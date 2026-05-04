@@ -6,7 +6,8 @@ import { axialToPixel } from '@/galaxy';
 import { TERRAIN_COLORS, TERRAIN_NAMES, TYPE_NAMES, SIZE_NAMES } from '@/data/planet-types';
 import { BUILDING_MAP } from '@/data/buildings';
 import { ELEMENT_MAP } from '@/data/elements';
-import { ORE_MAP, ATMOSPHERIC_COMPOUND_MAP } from '@/data/processing-chains';
+import { getCurrentLookups, findResourceDisplay } from '@/data/baked-lookups';
+import { CATEGORY_LABELS } from '@/data/element-helpers';
 import { getUsedCapacity, getOrbitBufferUsed } from '@/data/warehouse';
 import { BuildingDialog } from './building-dialog';
 import { ResourcePanel } from './resource-panel';
@@ -49,20 +50,7 @@ const TIER_DISPLAY: Record<PlanetResourceDeposit['tier'], { label: string; color
   ultra_rare: { label: 'Ультраредкий', color: 'text-purple-400', bgColor: 'bg-purple-900/30' },
 };
 
-const CATEGORY_NAMES: Record<string, string> = {
-  structural: 'Строительные',
-  fuel: 'Топливные',
-  chemical: 'Химические',
-  alkali: 'Щелочные',
-  alkaline_earth: 'Щёлочноземельные',
-  halogen: 'Галогены',
-  nonmetal: 'Неметаллы',
-  metal: 'Металлы',
-  transmetal: 'Переходные металлы',
-  noble: 'Благородные',
-  lanthanide: 'Лантаноиды',
-  rare: 'Редкие',
-};
+const CATEGORY_NAMES = CATEGORY_LABELS;
 
 /** Форматирование количества ресурса */
 function formatQuantity(q: number): string {
@@ -587,14 +575,13 @@ function HexInfoCard({ hex }: { hex: HexCell }) {
         )}
 
         {hex.deposits.length > 0 && (
-          <div className="space-y-0.5">
+          <div className="space-y-1">
             <div className="text-[10px] text-slate-500 uppercase">Залежи</div>
             {hex.deposits.map((dep, i) => {
-              // Ищем определение руды/соединения для отображения названия
-              const oreDef = ORE_MAP.get(dep.elementId);
-              const atmoDef = ATMOSPHERIC_COMPOUND_MAP.get(dep.elementId);
-              const displayName = oreDef?.name
-                ?? atmoDef?.name
+              // Ищем отображаемое название руды/соединения через BakedGalaxyModel
+              const lookups = getCurrentLookups();
+              const resourceInfo = findResourceDisplay(lookups, dep.elementId);
+              const displayName = resourceInfo?.name
                 ?? (() => {
                   // Fallback: strip '-ore' suffix, lookup element
                   const pureId = dep.elementId.replace('-ore', '');
@@ -602,13 +589,51 @@ function HexInfoCard({ hex }: { hex: HexCell }) {
                   return elDef ? `${elDef.name} (руда)` : dep.elementId;
                 })();
               // Показываем формулу руды если есть
-              const formula = oreDef?.molarFormula ?? atmoDef?.formula ?? '';
+              const formula = resourceInfo?.formula ?? '';
+
+              // Ищем данные о цепочке переработки
+              const oreDef = lookups.oreMap.get(dep.elementId);
+              const atmoDef = lookups.atmosphericMap.get(dep.elementId);
+              const iceDef = lookups.iceMap.get(dep.elementId);
+              const contained = oreDef?.containedElements
+                ?? atmoDef?.containedElements
+                ?? iceDef?.containedElements
+                ?? null;
+              const processingBuilding = oreDef?.processingBuildingId
+                ?? atmoDef?.processingBuildingId
+                ?? iceDef?.processingBuildingId
+                ?? null;
+              const buildingNames: Record<string, string> = {
+                processor: 'Переработчик',
+                refinery: 'Очистительный комплекс',
+              };
+
               return (
-                <div key={i} className="flex justify-between text-xs text-slate-400">
-                  <span className="truncate" title={formula ? `${displayName} (${formula})` : displayName}>
-                    {displayName}
-                  </span>
-                  <span className="font-mono shrink-0 ml-2">{Math.floor(dep.quantity)}</span>
+                <div key={i} className="space-y-0.5">
+                  <div className="flex justify-between text-xs text-slate-400">
+                    <span className="truncate" title={formula ? `${displayName} (${formula})` : displayName}>
+                      {displayName}
+                    </span>
+                    <span className="font-mono shrink-0 ml-2">{Math.floor(dep.quantity)}</span>
+                  </div>
+                  {/* Цепочка переработки */}
+                  {contained && contained.length > 0 && (
+                    <div className="text-[10px] text-slate-500 pl-2">
+                      {processingBuilding && (
+                        <span className="text-slate-600">→ {buildingNames[processingBuilding] ?? processingBuilding} → </span>
+                      )}
+                      {contained.map((ce, j) => {
+                        const elName = ELEMENT_MAP.get(ce.elementId)?.name ?? ce.elementId;
+                        return (
+                          <span key={j}>
+                            {j > 0 && <span className="text-slate-700"> + </span>}
+                            <span className="text-emerald-600">{elName}</span>
+                            <span className="text-slate-700">×{ce.yield}</span>
+                          </span>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               );
             })}

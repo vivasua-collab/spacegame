@@ -3,6 +3,7 @@
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { ELEMENT_MAP } from '@/data/elements';
+import { CATEGORY_LABELS, CATEGORY_COLORS } from '@/data/element-helpers';
 import type { ElementCategory } from '@/core/types';
 
 const CATEGORY_ORDER: ElementCategory[] = [
@@ -10,36 +11,6 @@ const CATEGORY_ORDER: ElementCategory[] = [
   'halogen', 'nonmetal', 'metal', 'transmetal', 'noble',
   'lanthanide', 'rare',
 ];
-
-const CATEGORY_LABELS: Record<ElementCategory, string> = {
-  structural: 'Строительные',
-  fuel: 'Топливные',
-  chemical: 'Химические',
-  alkali: 'Щелочные',
-  alkaline_earth: 'Щёлочноземельные',
-  halogen: 'Галогены',
-  nonmetal: 'Неметаллы',
-  metal: 'Металлы',
-  transmetal: 'Переходные металлы',
-  noble: 'Благородные',
-  lanthanide: 'Лантаноиды',
-  rare: 'Редкие',
-};
-
-const CATEGORY_COLORS: Record<ElementCategory, string> = {
-  structural: 'text-amber-400',
-  fuel: 'text-cyan-400',
-  chemical: 'text-green-400',
-  alkali: 'text-red-400',
-  alkaline_earth: 'text-lime-400',
-  halogen: 'text-teal-400',
-  nonmetal: 'text-violet-400',
-  metal: 'text-orange-400',
-  transmetal: 'text-sky-400',
-  noble: 'text-yellow-400',
-  lanthanide: 'text-fuchsia-400',
-  rare: 'text-pink-400',
-};
 
 interface ResourcePanelProps {
   resources: Record<string, number>;

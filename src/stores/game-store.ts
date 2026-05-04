@@ -10,6 +10,9 @@ import { processEconomyTick, buildOnHex, upgradeBuilding, enqueueProduction, giv
 import { createDefaultWarehouse, applyColonyRole, calculateWarehouseCapacity, canStoreResource, getOrbitBufferUsed, getOrbitBufferCapacity } from '@/data/warehouse';
 import { gameBus } from '@/core/event-bus';
 import { BUILDING_MAP } from '@/data/buildings';
+import { bakeGalaxyModel } from '@/data/chemistry-generator';
+import { ELEMENTS } from '@/data/elements';
+import { setCurrentLookups } from '@/data/baked-lookups';
 
 // ============ Типы стора ============
 
@@ -83,7 +86,7 @@ export interface GameStore {
  * productionQueues конвертируется Map → массив пар [key, value].
  */
 function serializeGameState(state: GameState): string {
-  const { systemMap: _systemMap, ...galaxyWithoutMap } = state.galaxy;
+  const { systemMap: _systemMap, bakedModel: _bakedModel, ...galaxyWithoutMap } = state.galaxy;
   const serializable = {
     ...state,
     galaxy: galaxyWithoutMap,
@@ -122,12 +125,23 @@ function deserializeGameState(json: string): GameState {
   const queueEntries: [string, ProductionQueue][] = raw.productionQueues || [];
   const productionQueues = new Map(queueEntries);
 
+  // Восстановить BakedGalaxyModel: из сохранения или re-bake из seed
+  let bakedModel = raw.galaxy.bakedModel;
+  if (!bakedModel) {
+    // Старое сохранение без baked model — запекаем заново
+    bakedModel = bakeGalaxyModel(raw.galaxy.seed ?? 42, ELEMENTS);
+  }
+
+  // Установить lookup-структуры для работы движка
+  setCurrentLookups(bakedModel);
+
   return {
     ...raw,
     galaxy: {
       ...raw.galaxy,
       systemMap,
       systems: systems.length > 0 ? systems : Array.from(systemMap.values()),
+      bakedModel,
     },
     productionQueues,
     fleets: raw.fleets || [],

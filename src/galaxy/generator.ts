@@ -22,6 +22,9 @@ import { resetGenContext, genId } from './gen-context';
 import { generateSpiralPositions, type PositionsConfig } from './generate-positions';
 import { generateSystem } from './generate-systems';
 import { generateJumpPoints, ensureConnectivity, type JumpPointsConfig } from './generate-jump-points';
+import { bakeGalaxyModel } from '@/data/chemistry-generator';
+import { ELEMENTS } from '@/data/elements';
+import { setCurrentLookups } from '@/data/baked-lookups';
 
 // ============ Конфигурация ============
 
@@ -104,7 +107,11 @@ export function generateGalaxy(config: Partial<GalaxyGenConfig> = {}): Galaxy {
   // 4. Связность
   ensureConnectivity(systems, jpRng, cfg);
 
-  // 5. Стартовая система открыта
+  // 5. Запекание модели химии (BakedGalaxyModel)
+  const bakedModel = bakeGalaxyModel(cfg.seed, ELEMENTS);
+  setCurrentLookups(bakedModel);
+
+  // 6. Стартовая система открыта
   if (systems.length > 0) {
     systems[0].discovered = true;
   }
@@ -114,5 +121,6 @@ export function generateGalaxy(config: Partial<GalaxyGenConfig> = {}): Galaxy {
     seed: cfg.seed,
     systems,
     systemMap,
+    bakedModel,
   };
 }
