@@ -136,16 +136,47 @@ export interface PlanetDef {
 
 // ============ Ресурсы ============
 
-export type ElementCategory = 'structural' | 'fuel' | 'metal' | 'chemical' | 'noble' | 'rare' | 'alkali' | 'alkaline_earth' | 'halogen' | 'nonmetal' | 'lanthanide' | 'transmetal';
+/** Химический характер элемента — определяет тип руды, здание добычи и переработку.
+ * Из документации docs/chemistry.md §2.1.
+ */
+export type ChemicalCharacter =
+  | 'reactive_metal'     // Fe, Ti, Cu, Ni, Cr, Mn, Zn, Sn, Pb, Co, V, Al, W, Mo, Cd, In
+  | 'noble_metal'        // Au, Pt, Ag
+  | 'refractory_metal'   // Ta, Nb, Zr, Hf, Re
+  | 'platinoid'          // Ru, Rh, Pd, Ir, Os
+  | 'rare_earth'         // Y, La, Ce, Nd, Dy
+  | 'alkali'             // Li, Na, K
+  | 'alkaline_earth'     // Be, Mg, Ca, Ba
+  | 'reactive_nonmetal'  // C, S, P, B, Se, Te
+  | 'halogen'            // F, Cl
+  | 'gas'                // H, He, N, O, Ne, Ar
+  | 'transuranic';       // Np, Pu, Am, Cm, Cf, Fl, Og, Xn, Qn, Vd
+
+/** Редкость элемента — поправочный коэффициент для энергозатрат.
+ * Из документации docs/chemistry.md §7.3.
+ */
+export type ElementRarity = 'abundant' | 'common' | 'rare' | 'ultra_rare';
+
+export type ElementCategory = 'structural' | 'fuel' | 'metal' | 'chemical' | 'noble' | 'rare' | 'alkali' | 'alkaline_earth' | 'halogen' | 'nonmetal' | 'lanthanide' | 'transmetal' | 'transuranic';
 
 export interface ElementDef {
   id: string;
   name: string;
   symbol: string;
   category: ElementCategory;
-  baseValue: number;     // базовая ценность единицы
-  density: number;       // кг/л
-  isAtmospheric: boolean; // можно ли добыть из атмосферы
+  baseValue: number;            // базовая ценность единицы
+  density: number;              // кг/л
+  isAtmospheric: boolean;       // можно ли добыть из атмосферы
+  /** Атомный номер (Z) */
+  atomicNumber: number;
+  /** Атомная масса (г/моль) — для расчёта молярной массы руд */
+  atomicMass: number;
+  /** Химический характер — определяет тип руды и здание добычи (docs/chemistry.md §2) */
+  chemicalCharacter: ChemicalCharacter;
+  /** Типичная степень окисления в руде — определяет формулу минерала (docs/chemistry.md §3) */
+  oxidationState: number;
+  /** Редкость — поправочный коэффициент энергозатрат (docs/chemistry.md §7.3) */
+  rarity: ElementRarity;
 }
 
 // ============ Здания ============

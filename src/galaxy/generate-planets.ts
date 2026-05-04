@@ -133,8 +133,8 @@ function selectPlanetType(orbitalRadius: number, star: Star, rng: Xoshiro256): t
  * v2.0: добавлен Bond albedo по типу планеты (Kopparapu et al. 2013)
  *       парниковый эффект привязан к давлению атмосферы
  *
- * Физика:
- * T_eq = 278.5 × (L/L☉)^(1/4) × ((1-A)/r²)^(1/2) K
+ * Физика (из 03-planets.md §2.3):
+ * T_eq = 278.5 × (L/L☉)^(1/4) × (1-A)^(1/4) × (1/r_AU)^(1/2) K
  * T_surface = T_eq + ΔT_greenhouse + ΔT_type
  *
  * Парниковый эффект масштабируется с давлением:
@@ -319,12 +319,18 @@ function getAtmospherePressure(type: AtmosphereType, rng: Xoshiro256): number {
 
 /**
  * G-09/G-01/G-10/G-11 fix: Генерация жизни.
- * 1. Per-type LIFE_LEVEL_WEIGHTS из спецификации §1.2
- * 2. Температурные ограничения: < -20°C или > +80°C → только microbes или none
- * 3. complex/simple → нужна standard или dense атмосфера
- * 4. Токсичная → экстремофилы (микробы), НЕ блокирует полностью
+ *
+ * 1. Использует planetDef.lifeChance как базовую вероятность жизни (§1.2)
+ * 2. lifeChance модифицируется условиями:
+ *    - Без атмосферы → нет жизни
+ *    - Температура вне −20…+80°C → lifeChance × 0.1 (только экстремофилы)
+ *    - Токсичная атмосфера → lifeChance × 0.2
+ * 3. Если жизнь есть — уровень из LIFE_LEVEL_WEIGHTS (без «none»)
+ * 4. Ограничения уровня по условиям:
+ *    - complex/simple → нужна standard или dense атмосфера
+ *    - Токсичная атмосфера → только microbes (экстремофилы)
+ *    - Температура вне диапазона → только microbes
  * 5. Газовые гиганты — без жизни
- * 6. Без атмосферы — без жизни
  */
 function generateLife(
   planetDef: typeof PLANET_TYPES[0],
@@ -332,49 +338,72 @@ function generateLife(
   temperature: number,
   rng: Xoshiro256,
 ): PlanetLife {
+  const noLife: PlanetLife = { level: 'none', biodiversity: 0, compatibleWithColonists: false, hazardLevel: 0 };
+
+  // Hard blocks
   if (planetDef.type === 'gas_giant') {
-    return { level: 'none', biodiversity: 0, compatibleWithColonists: false, hazardLevel: 0 };
+    return noLife;
   }
   if (atmosphere.type === 'none') {
-    return { level: 'none', biodiversity: 0, compatibleWithColonists: false, hazardLevel: 0 };
+    return noLife;
   }
 
+  // G-01 fix: Use lifeChance as the primary probability gate, modified by conditions
+  let effectiveChance = planetDef.lifeChance;
+
+  // Temperature outside habitable range → drastically reduce chance (extremophiles only)
+  if (temperature < -20 || temperature > 80) {
+    effectiveChance *= 0.1;
+  }
+  // Toxic atmosphere → reduce chance significantly
+  if (atmosphere.type === 'toxic') {
+    effectiveChance *= 0.2;
+  }
+
+  // Roll for life existence using the (condition-modified) lifeChance
+  if (!rng.nextBool(effectiveChance)) {
+    return noLife;
+  }
+
+  // Life exists — determine level from LIFE_LEVEL_WEIGHTS (excluding "none" weight)
   const weights = LIFE_LEVEL_WEIGHTS[planetDef.type as keyof typeof LIFE_LEVEL_WEIGHTS];
   if (!weights) {
-    return { level: 'none', biodiversity: 0, compatibleWithColonists: false, hazardLevel: 0 };
+    // Fallback: microbes if life was determined to exist
+    return { level: 'microbes', biodiversity: rng.nextFloat() * 0.3, compatibleWithColonists: false, hazardLevel: 0 };
   }
 
-  const levels: LifeLevel[] = ['none', 'microbes', 'plants', 'simple', 'complex'];
-  const totalWeight = weights.reduce((a, b) => a + b, 0);
-  if (totalWeight === 0) {
-    return { level: 'none', biodiversity: 0, compatibleWithColonists: false, hazardLevel: 0 };
-  }
+  const lifeWeights = weights.slice(1); // [microbes, plants, simple, complex]
+  const lifeLevels: LifeLevel[] = ['microbes', 'plants', 'simple', 'complex'];
+  const totalLifeWeight = lifeWeights.reduce((a, b) => a + b, 0);
 
-  let roll = rng.nextFloat() * totalWeight;
-  let level: LifeLevel = 'none';
-  for (let i = 0; i < weights.length; i++) {
-    roll -= weights[i];
-    if (roll <= 0) {
-      level = levels[i];
-      break;
+  let level: LifeLevel;
+  if (totalLifeWeight === 0) {
+    level = 'microbes';
+  } else {
+    let roll = rng.nextFloat() * totalLifeWeight;
+    level = 'microbes'; // default fallback
+    for (let i = 0; i < lifeWeights.length; i++) {
+      roll -= lifeWeights[i];
+      if (roll <= 0) {
+        level = lifeLevels[i];
+        break;
+      }
     }
   }
 
-  // G-10: Температурные ограничения
+  // G-10: Temperature restrictions — only extremophiles outside habitable range
   if (temperature < -20 || temperature > 80) {
-    if (level !== 'none' && level !== 'microbes') {
-      level = 'microbes';
-    }
+    level = 'microbes';
   }
 
-  // G-11: complex/simple → нужна standard или dense атмосфера
+  // G-11: complex/simple → needs standard or dense atmosphere
   if ((level === 'complex' || level === 'simple') &&
       atmosphere.type !== 'standard' && atmosphere.type !== 'dense') {
     level = 'plants';
   }
 
-  // Токсичная атмосфера → только microbes (экстремофилы)
-  if (atmosphere.type === 'toxic' && level !== 'none' && level !== 'microbes') {
+  // Toxic atmosphere → only microbes (extremophiles)
+  if (atmosphere.type === 'toxic' && level !== 'microbes') {
     level = 'microbes';
   }
 
@@ -408,7 +437,10 @@ export function generatePlanet(
 
   // G-13 + G-27: Орбитальный радиус с учётом светимости звезды
   const hzCenter = Math.sqrt(Math.max(0.001, primaryStar.luminosity) / 0.8);
-  const orbitalScale = Math.min(hzCenter, 5.0);
+  // G-02 fix:Removed Math.min(hzCenter, 5.0) cap — for hot stars (O/B/A class)
+  // the cap forced planets to be unrealistically close, producing extreme temperatures.
+  // The habitable zone center is the physically correct scale for orbital distances.
+  const orbitalScale = hzCenter;
   let orbitalRadius = orbitalScale * (0.3 + orbit * (0.5 + rng.nextFloat() * 0.3));
 
   if (binaryType === 'BINARY_CLOSE') {

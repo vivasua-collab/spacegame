@@ -637,8 +637,8 @@ export const ATMOSPHERIC_COMPOUNDS: AtmosphericCompound[] = [
   {
     id: 'CO2', name: 'Углекислый газ', formula: 'CO₂',
     containedElements: [
-      { elementId: 'C', yield: 5 },
-      { elementId: 'O', yield: 9 },
+      { elementId: 'C', yield: 2.7 },
+      { elementId: 'O', yield: 7.3 },
     ],
     atmosphereTypes: ['thin', 'dense', 'toxic', 'co2'],
     processingBuildingId: 'processor', minProcessingLevel: 1,
@@ -647,8 +647,8 @@ export const ATMOSPHERIC_COMPOUNDS: AtmosphericCompound[] = [
   {
     id: 'CH4', name: 'Метан', formula: 'CH₄',
     containedElements: [
-      { elementId: 'C', yield: 2 },
-      { elementId: 'H', yield: 6 },
+      { elementId: 'C', yield: 7.5 },
+      { elementId: 'H', yield: 2.5 },
     ],
     atmosphereTypes: ['methane'],
     processingBuildingId: 'processor', minProcessingLevel: 1,
@@ -657,8 +657,8 @@ export const ATMOSPHERIC_COMPOUNDS: AtmosphericCompound[] = [
   {
     id: 'NH3', name: 'Аммиак', formula: 'NH₃',
     containedElements: [
-      { elementId: 'N', yield: 8 },
-      { elementId: 'H', yield: 12 },
+      { elementId: 'N', yield: 8.2 },
+      { elementId: 'H', yield: 1.8 },
     ],
     atmosphereTypes: ['toxic', 'methane'],
     processingBuildingId: 'processor', minProcessingLevel: 2,
@@ -667,8 +667,8 @@ export const ATMOSPHERIC_COMPOUNDS: AtmosphericCompound[] = [
   {
     id: 'H2S', name: 'Сероводород', formula: 'H₂S',
     containedElements: [
-      { elementId: 'H', yield: 6 },
-      { elementId: 'S', yield: 8 },
+      { elementId: 'H', yield: 0.6 },
+      { elementId: 'S', yield: 9.4 },
     ],
     atmosphereTypes: ['toxic'],
     processingBuildingId: 'processor', minProcessingLevel: 1,
@@ -677,8 +677,8 @@ export const ATMOSPHERIC_COMPOUNDS: AtmosphericCompound[] = [
   {
     id: 'SO2', name: 'Диоксид серы', formula: 'SO₂',
     containedElements: [
-      { elementId: 'S', yield: 6 },
-      { elementId: 'O', yield: 8 },
+      { elementId: 'S', yield: 5.0 },
+      { elementId: 'O', yield: 5.0 },
     ],
     atmosphereTypes: ['toxic'],
     processingBuildingId: 'processor', minProcessingLevel: 2,
@@ -711,8 +711,8 @@ export const ICE_COMPOUNDS: IceCompound[] = [
   {
     id: 'H2O-ice', name: 'Водяной лёд', formula: 'H₂O',
     containedElements: [
-      { elementId: 'H', yield: 8 },
-      { elementId: 'O', yield: 8 },
+      { elementId: 'H', yield: 1.1 },
+      { elementId: 'O', yield: 8.9 },
     ],
     tempCondition: 'T < +50°C', maxTemp: 50,
     processingBuildingId: 'processor', minProcessingLevel: 1,
@@ -721,8 +721,8 @@ export const ICE_COMPOUNDS: IceCompound[] = [
   {
     id: 'CO2-ice', name: 'Сухой лёд', formula: 'CO₂',
     containedElements: [
-      { elementId: 'C', yield: 5 },
-      { elementId: 'O', yield: 9 },
+      { elementId: 'C', yield: 2.7 },
+      { elementId: 'O', yield: 7.3 },
     ],
     tempCondition: 'T < −50°C', maxTemp: -50,
     processingBuildingId: 'processor', minProcessingLevel: 1,
@@ -738,8 +738,8 @@ export const ICE_COMPOUNDS: IceCompound[] = [
   {
     id: 'CH4-ice', name: 'Метановый лёд', formula: 'CH₄',
     containedElements: [
-      { elementId: 'C', yield: 2 },
-      { elementId: 'H', yield: 6 },
+      { elementId: 'C', yield: 7.5 },
+      { elementId: 'H', yield: 2.5 },
     ],
     tempCondition: 'T < −150°C', maxTemp: -150,
     processingBuildingId: 'processor', minProcessingLevel: 1,
@@ -748,8 +748,8 @@ export const ICE_COMPOUNDS: IceCompound[] = [
   {
     id: 'NH3-ice', name: 'Аммиачный лёд', formula: 'NH₃',
     containedElements: [
-      { elementId: 'N', yield: 8 },
-      { elementId: 'H', yield: 12 },
+      { elementId: 'N', yield: 8.2 },
+      { elementId: 'H', yield: 1.8 },
     ],
     tempCondition: 'T < −100°C', maxTemp: -100,
     processingBuildingId: 'processor', minProcessingLevel: 2,
