@@ -1565,3 +1565,32 @@ Stage Summary:
 - ores.md now documents all 12 Карьер рудs (was 8), version 2.2
 - Duplicates removed from §2.10 — Se and Cd only appear in §2.4
 - modularity.md element count updated from 55 to 58
+
+---
+Task ID: 13-session
+Agent: Main Agent
+Task: Диагностика бага «элементы вместо руд в гексах» + анализ взаимодействия с baked galaxy
+
+Work Log:
+- Прочитан worklog.md (1567 строк) — полная история проекта
+- Изучены ключевые файлы: generate-resources.ts, chemistry-generator.ts, processing-chains.ts, elements.ts, planet-view.tsx, engine.ts
+- Прочитан docs/galaxy-bake.md — концепция запечённой галактики
+- Прослежена полная цепочка: генерация → хранение → отображение → добыча
+
+Диагноз бага «элементы вместо руд»:
+- Баг ИСПРАВЛЕН в Task ID 2 (сессия ранее): assignResourceDeposits теперь использует getOreIdForElement()
+- deposit.elementId содержит ID руды (Fe-ore, CaCO3, NaCl), не чистого элемента
+- Отображение в planet-view.tsx корректно: ищет ORE_MAP → ATMOSPHERIC_COMPOUND_MAP → fallback
+- Добыча в engine.ts корректна: extractOreToElements() конвертирует руду в элементы по yield
+
+Анализ взаимодействия с baked galaxy:
+- chemistry-generator.ts содержит полный bake(), но НИГДЕ НЕ ВЫЗЫВАЕТСЯ
+- Текущий код использует статические ORE_MAP/ATMOSPHERIC_COMPOUND_MAP/ORE_FOR_ELEMENT_MAP из processing-chains.ts
+- BakedGalaxyModel уже определена как тип, но не интегрирована в поток данных
+- Исправления (руды вместо элементов) совместимы с baked galaxy — меняют что хранится, а baked galaxy меняет откуда берётся определение
+
+Stage Summary:
+- Баг «элементы вместо руд» уже исправлен в предыдущей сессии
+- chemistry-generator.ts создан, но не интегрирован — требует подключения
+- Для интеграции нужно: заменить ORE_MAP на bakedModel.ores, сохранить BakedGalaxyModel в GameState, обновить все потребители
+- Дублирование данных: руды определены и в processing-chains.ts, и в chemistry-generator.ts ORE_SPECS
