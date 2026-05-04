@@ -52,7 +52,8 @@ function processExtraction(planet: Planet): void {
       for (const deposit of hex.deposits) {
         if (deposit.quantity <= 0) continue;
 
-        const baseRate = 0.01 * deposit.availability;
+        // 1 тик = 1 день. Базовая скорость: ~1 единица/день при availability=0.5
+        const baseRate = 1.0 * deposit.availability;
         const amount = baseRate * levelMult * terrainMult;
         const extracted = Math.min(amount, deposit.quantity);
 
@@ -68,7 +69,8 @@ function processExtraction(planet: Planet): void {
       for (const deposit of hex.deposits) {
         if (deposit.quantity <= 0) continue;
 
-        const baseRate = 0.005 * deposit.availability; // 50% от скорости шахты
+        // 50% от скорости шахты (1 тик = 1 день)
+        const baseRate = 0.5 * deposit.availability;
         const amount = baseRate * levelMult;
         const extracted = Math.min(amount, deposit.quantity);
 
@@ -95,10 +97,11 @@ function processExtraction(planet: Planet): void {
       // Газовые гиганты имеют бонус к добыче из атмосферы
       const atmosphereMult = planet.type === 'gas_giant' ? 1.0 : getAtmosphereEfficiency(planet.atmosphere.type);
 
-      // C-02 fix: добавлен O — добывается из плотных/стандартных атмосфер по 04-buildings.md §2.3
+      // Газовый экстрактор: ~2 единицы/день на элемент при standard атмосфере
+      // C-02 fix: добавлен O — добывается из плотных/стандартных атмосфер
       const atmosphericElements = ['H', 'He', 'C', 'N', 'O'];
       for (const elementId of atmosphericElements) {
-        const baseRate = 0.02 * levelMult * atmosphereMult;
+        const baseRate = 2.0 * levelMult * atmosphereMult;
         planet.resources[elementId] = (planet.resources[elementId] ?? 0) + baseRate;
       }
     }

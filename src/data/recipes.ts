@@ -1,6 +1,12 @@
 /**
  * Определения рецептов крафта.
- * Все рецепты соответствуют документации ARCHITECTURE.md §3.2.2.
+ * Версия 2.0: время в игровых днях (1 тик = 1 день).
+ *
+ * Баланс реального времени при x1 (5 дней/сек):
+ * - Базовая плавка: 5 дней ≈ 1 сек
+ * - Средняя переработка: 8-12 дней ≈ 1.5-2.4 сек
+ * - Продвинутый синтез: 15-25 дней ≈ 3-5 сек
+ * - Корабельные модули: 20-40 дней ≈ 4-8 сек
  */
 
 import type { RecipeDef } from '@/core/types';
@@ -14,7 +20,7 @@ export const RECIPES: RecipeDef[] = [
     inputs: { 'Fe-ore': 10 },
     outputs: { Fe: 8 },
     energyCost: 2,
-    time: 150,
+    time: 5,
     buildingId: 'smelter',
   },
   {
@@ -24,7 +30,7 @@ export const RECIPES: RecipeDef[] = [
     inputs: { 'Si-ore': 10 },
     outputs: { Si: 7 },
     energyCost: 2,
-    time: 150,
+    time: 5,
     buildingId: 'smelter',
   },
   {
@@ -34,7 +40,7 @@ export const RECIPES: RecipeDef[] = [
     inputs: { 'Ti-ore': 10 },
     outputs: { Ti: 7 },
     energyCost: 3,
-    time: 200,
+    time: 8,
     buildingId: 'smelter',
   },
   {
@@ -44,7 +50,7 @@ export const RECIPES: RecipeDef[] = [
     inputs: { 'Cu-ore': 10 },
     outputs: { Cu: 8 },
     energyCost: 2,
-    time: 150,
+    time: 5,
     buildingId: 'smelter',
   },
   // Р2-03: Missing smelting recipes for all remaining ores
@@ -55,7 +61,7 @@ export const RECIPES: RecipeDef[] = [
     inputs: { 'Al-ore': 10 },
     outputs: { Al: 8 },
     energyCost: 2,
-    time: 150,
+    time: 5,
     buildingId: 'smelter',
   },
   {
@@ -65,7 +71,7 @@ export const RECIPES: RecipeDef[] = [
     inputs: { 'C-ore': 10 },
     outputs: { C: 7 },
     energyCost: 2,
-    time: 150,
+    time: 5,
     buildingId: 'smelter',
   },
   {
@@ -75,7 +81,7 @@ export const RECIPES: RecipeDef[] = [
     inputs: { 'Ni-ore': 10 },
     outputs: { Ni: 7 },
     energyCost: 3,
-    time: 180,
+    time: 8,
     buildingId: 'smelter',
   },
   {
@@ -85,7 +91,7 @@ export const RECIPES: RecipeDef[] = [
     inputs: { 'W-ore': 10 },
     outputs: { W: 6 },
     energyCost: 4,
-    time: 200,
+    time: 10,
     buildingId: 'smelter',
   },
   {
@@ -95,7 +101,7 @@ export const RECIPES: RecipeDef[] = [
     inputs: { 'U-ore': 10 },
     outputs: { U: 5 },
     energyCost: 5,
-    time: 250,
+    time: 12,
     buildingId: 'smelter',
   },
   {
@@ -105,7 +111,7 @@ export const RECIPES: RecipeDef[] = [
     inputs: { 'Co-ore': 10 },
     outputs: { Co: 7 },
     energyCost: 3,
-    time: 180,
+    time: 8,
     buildingId: 'smelter',
   },
   {
@@ -115,7 +121,7 @@ export const RECIPES: RecipeDef[] = [
     inputs: { 'Au-ore': 10 },
     outputs: { Au: 6 },
     energyCost: 4,
-    time: 200,
+    time: 10,
     buildingId: 'smelter',
   },
   {
@@ -125,7 +131,7 @@ export const RECIPES: RecipeDef[] = [
     inputs: { 'Pt-ore': 10 },
     outputs: { Pt: 5 },
     energyCost: 5,
-    time: 250,
+    time: 12,
     buildingId: 'smelter',
   },
   {
@@ -135,7 +141,7 @@ export const RECIPES: RecipeDef[] = [
     inputs: { 'Cr-ore': 10 },
     outputs: { Cr: 7 },
     energyCost: 3,
-    time: 180,
+    time: 8,
     buildingId: 'smelter',
   },
   {
@@ -145,7 +151,7 @@ export const RECIPES: RecipeDef[] = [
     inputs: { 'Li-ore': 10 },
     outputs: { Li: 6 },
     energyCost: 3,
-    time: 180,
+    time: 8,
     buildingId: 'smelter',
   },
   {
@@ -155,7 +161,7 @@ export const RECIPES: RecipeDef[] = [
     inputs: { 'S-ore': 10 },
     outputs: { S: 8 },
     energyCost: 2,
-    time: 150,
+    time: 5,
     buildingId: 'smelter',
   },
   {
@@ -165,7 +171,7 @@ export const RECIPES: RecipeDef[] = [
     inputs: { 'V-ore': 10 },
     outputs: { V: 6 },
     energyCost: 4,
-    time: 200,
+    time: 10,
     buildingId: 'smelter',
   },
   {
@@ -175,7 +181,7 @@ export const RECIPES: RecipeDef[] = [
     inputs: { 'Y-ore': 10 },
     outputs: { Y: 4 },
     energyCost: 5,
-    time: 250,
+    time: 12,
     buildingId: 'smelter',
   },
   {
@@ -185,7 +191,7 @@ export const RECIPES: RecipeDef[] = [
     inputs: { 'Ba-ore': 10 },
     outputs: { Ba: 6 },
     energyCost: 3,
-    time: 200,
+    time: 10,
     buildingId: 'smelter',
   },
   {
@@ -195,17 +201,17 @@ export const RECIPES: RecipeDef[] = [
     inputs: { Fe: 10, C: 3 },
     outputs: { steel: 5 },
     energyCost: 5,
-    time: 200,
+    time: 8,
     buildingId: 'smelter',
   },
   {
     id: 'make_titanium_alloy',
     name: 'Титановый сплав',
     category: 'raw_to_material',
-    inputs: { Ti: 8, Al: 4, V: 1 }, // P1-14: добавлен V (Ванадий) по документации
+    inputs: { Ti: 8, Al: 4, V: 1 },
     outputs: { titanium_alloy: 4 },
     energyCost: 8,
-    time: 250,
+    time: 15,
     buildingId: 'smelter',
   },
   {
@@ -215,7 +221,7 @@ export const RECIPES: RecipeDef[] = [
     inputs: { C: 5, H: 8 },
     outputs: { plastic: 6 },
     energyCost: 2,
-    time: 120,
+    time: 5,
     buildingId: 'chemical_plant',
   },
   {
@@ -225,17 +231,17 @@ export const RECIPES: RecipeDef[] = [
     inputs: { Si: 6 },
     outputs: { silicon_crystal: 2 },
     energyCost: 10,
-    time: 300,
+    time: 15,
     buildingId: 'chemical_plant',
   },
   {
     id: 'make_superconductor',
     name: 'Сверхпроводник',
     category: 'raw_to_material',
-    inputs: { Y: 1, Ba: 2, Cu: 3, O: 4 }, // P1-13: рецепт из документации ARCHITECTURE.md
+    inputs: { Y: 1, Ba: 2, Cu: 3, O: 4 },
     outputs: { superconductor: 1 },
     energyCost: 15,
-    time: 400,
+    time: 25,
     buildingId: 'chemical_plant',
   },
 
@@ -244,10 +250,10 @@ export const RECIPES: RecipeDef[] = [
     id: 'make_microchip',
     name: 'Микрочип',
     category: 'material_to_component',
-    inputs: { silicon_crystal: 1, Au: 0.1 }, // P1-15: Au=0.1 по документации (было 1)
+    inputs: { silicon_crystal: 1, Au: 0.1 },
     outputs: { microchip: 1 },
     energyCost: 5,
-    time: 250,
+    time: 15,
     buildingId: 'chemical_plant',
   },
   {
@@ -257,7 +263,7 @@ export const RECIPES: RecipeDef[] = [
     inputs: { steel: 5 },
     outputs: { hull_element: 1 },
     energyCost: 3,
-    time: 180,
+    time: 10,
     buildingId: 'smelter',
   },
   {
@@ -267,7 +273,7 @@ export const RECIPES: RecipeDef[] = [
     inputs: { titanium_alloy: 3, W: 1 },
     outputs: { armor_plate: 1 },
     energyCost: 5,
-    time: 220,
+    time: 12,
     buildingId: 'smelter',
   },
   {
@@ -277,17 +283,17 @@ export const RECIPES: RecipeDef[] = [
     inputs: { steel: 3, superconductor: 1 },
     outputs: { engine_section: 1 },
     energyCost: 10,
-    time: 300,
+    time: 20,
     buildingId: 'chemical_plant',
   },
   {
     id: 'make_shield_generator',
     name: 'Генератор щита',
     category: 'material_to_component',
-    inputs: { superconductor: 3, microchip: 1 }, // Из ARCHITECTURE.md §3.2.2 уровень 3
+    inputs: { superconductor: 3, microchip: 1 },
     outputs: { shield_generator: 1 },
     energyCost: 15,
-    time: 350,
+    time: 25,
     buildingId: 'chemical_plant',
   },
 
@@ -299,7 +305,7 @@ export const RECIPES: RecipeDef[] = [
     inputs: { engine_section: 2, superconductor: 1 },
     outputs: { ion_engine: 1 },
     energyCost: 12,
-    time: 400,
+    time: 30,
     buildingId: 'shipyard',
   },
   {
@@ -309,7 +315,7 @@ export const RECIPES: RecipeDef[] = [
     inputs: { microchip: 2, hull_element: 1 },
     outputs: { laser: 1 },
     energyCost: 8,
-    time: 350,
+    time: 25,
     buildingId: 'shipyard',
   },
   {
@@ -319,7 +325,7 @@ export const RECIPES: RecipeDef[] = [
     inputs: { hull_element: 3 },
     outputs: { cargo_bay: 1 },
     energyCost: 2,
-    time: 200,
+    time: 15,
     buildingId: 'shipyard',
   },
   {
@@ -329,7 +335,7 @@ export const RECIPES: RecipeDef[] = [
     inputs: { microchip: 1 },
     outputs: { scanner: 1 },
     energyCost: 3,
-    time: 150,
+    time: 10,
     buildingId: 'shipyard',
   },
 ];

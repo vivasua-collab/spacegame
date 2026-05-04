@@ -126,10 +126,15 @@ function selectPlanetType(orbitalRadius: number, star: Star, rng: Xoshiro256): t
  * G-03: принимает реальный Star
  * G-18: 278.5 вместо 278
  * G-30: парниковый эффект = ПРОЦЕНТ от T_eq (масштабируется с расстоянием)
+ * v2.0: добавлен Bond albedo по типу планеты (Kopparapu et al. 2013)
+ *       парниковый эффект привязан к давлению атмосферы
  *
- * Физика: парниковый эффект захватывает ДОЛЮ исходящего излучения.
- * Исходящее излучение ≈ входящее (равновесие) → парник пропорционален T_eq.
- * Это гарантирует монотонное убывание температуры с расстоянием.
+ * Физика:
+ * T_eq = 278.5 × (L/L☉)^(1/4) × ((1-A)/r²)^(1/2) K
+ * T_surface = T_eq + ΔT_greenhouse + ΔT_type
+ *
+ * Парниковый эффект масштабируется с давлением:
+ *   ΔT = base_ΔT × (pressure / 1 atm)^0.25
  */
 function calculatePlanetTemperature(
   star: Star,
@@ -141,35 +146,71 @@ function calculatePlanetTemperature(
   const r = Math.max(0.05, orbitalRadiusAU);
   const L = Math.max(0.001, star.luminosity);
 
-  // G-18: T_eq = 278.5 * L^(1/4) * r^(-1/2) K
-  const T_eq = 278.5 * Math.pow(L, 0.25) * Math.pow(r, -0.5);
+  // Bond albedo по типу планеты (из научных данных)
+  const albedo = getAlbedo(planetDef.type, atmosphere.type, rng);
 
-  // G-30: Парниковый эффект = ПРОЦЕНТ от T_eq
-  let greenhousePercent = 0;
+  // G-18: T_eq = 278.5 * L^(1/4) * r^(-1/2) * (1-A)^(1/4) K
+  const T_eq = 278.5 * Math.pow(L, 0.25) * Math.pow(r, -0.5) * Math.pow(1 - albedo, 0.25);
+
+  // Парниковый эффект: базовое ΔT × масштаб по давлению
+  let baseGreenhouseK = 0;
   switch (atmosphere.type) {
-    case 'none': greenhousePercent = 0; break;
-    case 'thin': greenhousePercent = 3 + rng.nextFloat() * 7; break;           // 3-10%
-    case 'standard': greenhousePercent = 10 + rng.nextFloat() * 10; break;      // 10-20%
-    case 'dense': greenhousePercent = 20 + rng.nextFloat() * 25; break;         // 20-45%
-    case 'co2': greenhousePercent = 30 + rng.nextFloat() * 30; break;           // 30-60%
-    case 'methane': greenhousePercent = 20 + rng.nextFloat() * 30; break;       // 20-50%
-    case 'toxic': greenhousePercent = 5 + rng.nextFloat() * 15; break;          // 5-20%
-    case 'inert': greenhousePercent = 2 + rng.nextFloat() * 5; break;           // 2-7%
+    case 'none': baseGreenhouseK = 0; break;
+    case 'thin': baseGreenhouseK = 8 + rng.nextFloat() * 12; break;           // Mars-like: 5-20K
+    case 'standard': baseGreenhouseK = 25 + rng.nextFloat() * 15; break;      // Earth-like: 25-40K
+    case 'dense': baseGreenhouseK = 50 + rng.nextFloat() * 80; break;         // Archean Earth: 50-130K
+    case 'co2': baseGreenhouseK = 80 + rng.nextFloat() * 200; break;          // Venus-like: 80-280K
+    case 'methane': baseGreenhouseK = 30 + rng.nextFloat() * 60; break;       // Titan-like: 30-90K
+    case 'toxic': baseGreenhouseK = 10 + rng.nextFloat() * 25; break;         // SO2/industrial: 10-35K
+    case 'inert': baseGreenhouseK = 5 + rng.nextFloat() * 10; break;          // N2/Ar: 5-15K
   }
-  const greenhouseK = T_eq * (greenhousePercent / 100);
+  // Масштабирование по давлению: ΔT × (P/1atm)^0.25
+  const pressureScale = atmosphere.pressure > 0
+    ? Math.pow(Math.max(0.001, atmosphere.pressure), 0.25)
+    : 0;
+  const greenhouseK = baseGreenhouseK * pressureScale;
 
-  // Модификатор типа планеты (плоские K — внутренние источники/альбедо)
+  // Модификатор типа планеты (внутренние источники тепла/альбедо)
   let typeModifierK = 0;
   switch (planetDef.type) {
-    case 'volcanic': typeModifierK = 30 + rng.nextFloat() * 70; break;      // +30-100K
-    case 'ice': typeModifierK = -20 - rng.nextFloat() * 30; break;           // -20 to -50K
-    case 'gas_giant': typeModifierK = 10 + rng.nextFloat() * 20; break;     // +10-30K
+    case 'volcanic': typeModifierK = 30 + rng.nextFloat() * 70; break;      // +30-100K (приливной нагрев)
+    case 'ice': typeModifierK = -20 - rng.nextFloat() * 30; break;           // -20 to -50K (высокое альбедо льда)
+    case 'gas_giant': typeModifierK = 10 + rng.nextFloat() * 20; break;     // +10-30K (внутреннее тепло)
     case 'desert': typeModifierK = -5 + rng.nextFloat() * 15; break;        // -5 to +10K
     default: break;
   }
 
   const T_final = T_eq + greenhouseK + typeModifierK;
   return T_final - 273.15; // K → °C
+}
+
+/**
+ * Bond albedo по типу планеты и атмосферы.
+ * Данные: Kopparapu et al. 2013, Solar System observations.
+ */
+function getAlbedo(planetType: string, atmosphereType: string, rng: Xoshiro256): number {
+  // Базовое альбедо по типу планеты
+  let baseAlbedo: number;
+  switch (planetType) {
+    case 'rocky': baseAlbedo = 0.15 + rng.nextFloat() * 0.15; break;     // 0.15-0.30 (Mercury=0.07, Earth=0.30)
+    case 'volcanic': baseAlbedo = 0.05 + rng.nextFloat() * 0.10; break;  // 0.05-0.15 (dark surface)
+    case 'ice': baseAlbedo = 0.40 + rng.nextFloat() * 0.30; break;      // 0.40-0.70 (ice/snow reflection)
+    case 'oceanic': baseAlbedo = 0.06 + rng.nextFloat() * 0.09; break;  // 0.06-0.15 (water absorbs)
+    case 'desert': baseAlbedo = 0.15 + rng.nextFloat() * 0.15; break;   // 0.15-0.30 (sand/rock)
+    case 'gas_giant': baseAlbedo = 0.30 + rng.nextFloat() * 0.20; break; // 0.30-0.50 (Jupiter=0.50, Saturn=0.34)
+    case 'dwarf': baseAlbedo = 0.10 + rng.nextFloat() * 0.20; break;    // 0.10-0.30
+    default: baseAlbedo = 0.20; break;
+  }
+
+  // Толстая CO2/метановая атмосфера → высокое альбедо (облака)
+  if (atmosphereType === 'co2' || atmosphereType === 'dense') {
+    baseAlbedo = Math.min(0.80, baseAlbedo + 0.20 + rng.nextFloat() * 0.20);
+  }
+  if (atmosphereType === 'methane') {
+    baseAlbedo = Math.min(0.60, baseAlbedo + 0.10 + rng.nextFloat() * 0.15);
+  }
+
+  return Math.min(0.85, baseAlbedo);
 }
 
 // ============ Атмосфера ============

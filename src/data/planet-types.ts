@@ -10,30 +10,45 @@
 
 import type { PlanetDef, PlanetType, PlanetSize, HexTerrain } from '@/core/types';
 
-/** Диапазоны плотности по типу планеты (г/см³). Из 03-planets.md §2.2 */
+/** Диапазоны плотности по типу планеты (г/см³).
+ * Из научных данных: Seager et al. 2007, Zeng et al. 2016, Fulton et al. 2017.
+ * Rocky: 4-8 (Fe-rich до Earth-like)
+ * Volcanic: 3.5-6 (Earth-like interior)
+ * Ice: 1.5-3 (значительная примесь льда)
+ * Oceanic: 2-4 (вода снижает bulk density)
+ * Desert: 3-5.5 (меньше железа, тонкая атмосфера)
+ * Gas giant: 0.3-1.6 (Jupiter=1.33, Saturn=0.69, inflated hot Jupiters ~0.1)
+ * Dwarf: 1.5-3.5 (Ceres=2.16, Vesta=3.46)
+ */
 export const PLANET_DENSITY: Record<PlanetType, { min: number; max: number; avg: number }> = {
-  rocky:    { min: 3.5, max: 6.5, avg: 5.0 },
-  volcanic: { min: 4.0, max: 7.0, avg: 5.5 },
-  ice:      { min: 2.0, max: 4.5, avg: 3.0 },
-  oceanic:  { min: 3.5, max: 5.5, avg: 4.5 },
+  rocky:    { min: 4.0, max: 8.0, avg: 5.5 },
+  volcanic: { min: 3.5, max: 6.0, avg: 5.0 },
+  ice:      { min: 1.5, max: 3.0, avg: 2.2 },
+  oceanic:  { min: 2.0, max: 4.0, avg: 3.0 },
   desert:   { min: 3.0, max: 5.5, avg: 4.0 },
-  gas_giant:{ min: 1.2, max: 2.5, avg: 1.5 },  // G-29 fix: min 0.8→1.2 (min gravity ~0.9g)
-  dwarf:    { min: 2.0, max: 5.0, avg: 3.5 },
+  gas_giant:{ min: 0.3, max: 1.6, avg: 1.0 },  // Jupiter=1.33, Saturn=0.69, inflated hot Jupiters < 0.5
+  dwarf:    { min: 1.5, max: 3.5, avg: 2.5 },
 };
 
 /**
  * G-04/G-06 fix: Диапазоны радиуса по типу планеты (км).
- * Из 03-planets.md §1.1 — единый диапазон на тип, НЕ на размер.
- * Размер сетки ВЫВОДИТСЯ из радиуса через getSizeFromRadius().
+ * Из научных данных по экзопланетам (Kepler, TESS):
+ * - Rocky: 0.5-1.6 R_Earth (Fulton gap при ~1.8 R_Earth)
+ * - Volcanic: 0.5-2.0 R_Earth (rocky с приливным нагревом)
+ * - Ice: 0.5-2.0 R_Earth (за линией снега)
+ * - Oceanic: 1.0-2.5 R_Earth (water world, низкая плотность)
+ * - Desert: 0.5-1.6 R_Earth (rocky, тонкая атмосфера)
+ * - Gas giant: 6.0+ R_Earth (Jupiter ~11 R_Earth = 69911 km)
+ * - Dwarf: 0.1-0.5 R_Earth (Ceres ~0.08, Moon ~0.27)
  */
 export const PLANET_TYPE_RADIUS: Record<PlanetType, { min: number; max: number }> = {
-  rocky:    { min: 2000, max: 10000 },  // G-25 fix: max 7000→10000 (allows R=1.57 = "large")
-  volcanic: { min: 2500, max: 8000 },
-  ice:      { min: 1500, max: 6000 },
-  oceanic:  { min: 4000, max: 11000 },  // G-25 fix: max 8000→11000 (allows R=1.73 = "large")
-  desert:   { min: 2000, max: 6500 },
-  gas_giant:{ min: 25000, max: 80000 },
-  dwarf:    { min: 500, max: 2000 },
+  rocky:    { min: 3200, max: 10200 },   // 0.5-1.6 R_Earth
+  volcanic: { min: 3200, max: 12700 },   // 0.5-2.0 R_Earth
+  ice:      { min: 3200, max: 12700 },   // 0.5-2.0 R_Earth
+  oceanic:  { min: 6400, max: 15900 },   // 1.0-2.5 R_Earth
+  desert:   { min: 3200, max: 10200 },   // 0.5-1.6 R_Earth
+  gas_giant:{ min: 38000, max: 90000 },  // 6.0-14 R_Earth (Jupiter=69911 km)
+  dwarf:    { min: 640, max: 3200 },     // 0.1-0.5 R_Earth
 };
 
 /**

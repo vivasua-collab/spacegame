@@ -108,6 +108,10 @@ function deserializeGameState(json: string): GameState {
     },
     productionQueues,
     fleets: raw.fleets || [],
+    // Миграция: старые сохранения могут иметь time.day вместо time.dayInYear
+    time: raw.time?.dayInYear !== undefined
+      ? raw.time
+      : { tick: raw.time?.tick ?? 0, dayInYear: (raw.time?.day ?? 0) % 365, year: raw.time?.year ?? 1 },
   };
 }
 
@@ -119,7 +123,7 @@ export const useGameStore = create<GameStore>((set, get) => {
     const galaxy = generateGalaxy(config);
 
     return {
-      time: { tick: 0, day: 0, year: 0 },
+      time: { tick: 0, dayInYear: 0, year: 1 },
       speed: 0,
       phase: 'colonization',
       galaxy,
@@ -178,15 +182,18 @@ export const useGameStore = create<GameStore>((set, get) => {
       const { gameState } = get();
       if (!gameState || gameState.phase !== 'playing') return;
 
-      const TICKS_PER_DAY = 86400;
+      // 1 тик = 1 игровой день. Speed = количество дней за интервал.
       gameState.time.tick += gameState.speed;
-      gameState.time.day = Math.floor(gameState.time.tick / TICKS_PER_DAY);
-      gameState.time.year = Math.floor(gameState.time.day / 365);
+      gameState.time.dayInYear = gameState.time.tick % 365;
+      gameState.time.year = Math.floor(gameState.time.tick / 365) + 1;
 
-      const allPlanets = gameState.galaxy.systems.flatMap(s => s.planets);
-      const economyTicks = Math.min(gameState.speed, 50);
-      for (let i = 0; i < economyTicks; i++) {
-        processEconomyTick(allPlanets, gameState.productionQueues, gameState.galaxy.systemMap);
+      // Экономика: обрабатываем только колонизированные планеты
+      const colonizedPlanets = gameState.galaxy.systems
+        .flatMap(s => s.planets)
+        .filter(p => p.owner != null);
+
+      for (let i = 0; i < gameState.speed; i++) {
+        processEconomyTick(colonizedPlanets, gameState.productionQueues, gameState.galaxy.systemMap);
       }
 
       set({ gameState: { ...gameState } });

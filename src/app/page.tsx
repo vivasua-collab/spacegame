@@ -79,11 +79,11 @@ export default function Home() {
     setSaves(list);
   }, [deleteSave, loadSaveList]);
 
-  // Format tick to year/day
+  // Format tick to year/day (1 tick = 1 day)
   const formatTick = (tick: number) => {
-    const day = Math.floor(tick / 86400);
-    const year = Math.floor(day / 365);
-    return `Y${year} D${day % 365}`;
+    const year = Math.floor(tick / 365) + 1;
+    const dayInYear = tick % 365 + 1;
+    return `Y${year} D${dayInYear}`;
   };
 
   // Format date

@@ -1,5 +1,13 @@
 /**
  * Игровой цикл с управлением временем.
+ *
+ * Версия 2.0: 1 тик = 1 игровой день.
+ * Скорость x1 = 5 дней/сек (200мс интервал),
+ * x50 = 250 дней/сек.
+ *
+ * Note: этот класс НЕ подключён к Zustand-стору напрямую.
+ * Основной цикл работает через useEffect в page.tsx → store.tick().
+ * GameLoop оставлен для возможного будущего использования (headless-сервер, тесты).
  */
 
 import { gameBus } from './event-bus';
@@ -10,10 +18,9 @@ export class GameLoop {
   private speed: GameSpeed = 1;
   private phase: GamePhase = 'paused';
   private intervalId: ReturnType<typeof setInterval> | null = null;
-  private readonly TICKS_PER_DAY = 86400;
 
   constructor() {
-    this.time = { tick: 0, day: 0, year: 0 };
+    this.time = { tick: 0, dayInYear: 0, year: 1 };
   }
 
   getTime(): GameTime {
@@ -72,8 +79,12 @@ export class GameLoop {
 
   private startInterval(): void {
     this.stopInterval();
-    const ms = 1000 / this.speed;
-    this.intervalId = setInterval(() => this.processTick(), ms);
+    const ms = 200; // 200мс интервал при любой скорости
+    this.intervalId = setInterval(() => {
+      for (let i = 0; i < this.speed; i++) {
+        this.processTick();
+      }
+    }, ms);
   }
 
   private stopInterval(): void {
@@ -83,19 +94,16 @@ export class GameLoop {
     }
   }
 
+  /** Обработать один игровой день */
   private processTick(): void {
     this.time.tick++;
+    this.time.dayInYear = this.time.tick % 365;
+    this.time.year = Math.floor(this.time.tick / 365) + 1;
 
-    // Обновляем день/год
-    this.time.day = Math.floor(this.time.tick / this.TICKS_PER_DAY);
-    this.time.year = Math.floor(this.time.day / 365);
-
-    // События
     gameBus.emit('tick', this.time);
-    if (this.time.tick % this.TICKS_PER_DAY === 0) {
-      gameBus.emit('day', this.time);
-    }
-    if (this.time.day % 365 === 0 && this.time.tick % this.TICKS_PER_DAY === 0 && this.time.day > 0) {
+
+    // Ежегодное событие
+    if (this.time.dayInYear === 0 && this.time.tick > 0) {
       gameBus.emit('year', this.time);
     }
   }

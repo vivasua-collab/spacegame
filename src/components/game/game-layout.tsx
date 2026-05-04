@@ -58,7 +58,7 @@ export function GameLayout() {
         <div className="font-mono text-xs text-slate-400">
           Year <span className="text-white">{time.year}</span>
           <span className="mx-1 text-slate-600">|</span>
-          Day <span className="text-white">{time.day}</span>
+          Day <span className="text-white">{time.dayInYear + 1}</span>
         </div>
 
         <Separator orientation="vertical" className="h-5 bg-white/10" />
