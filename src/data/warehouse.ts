@@ -12,8 +12,14 @@ const CATEGORY_PRIORITY: Record<string, number> = {
   fuel: 7,
   metal: 6,
   chemical: 5,
-  noble: 4,
-  rare: 3,
+  alkali: 5,
+  alkaline_earth: 5,
+  halogen: 4,
+  nonmetal: 4,
+  transmetal: 4,
+  noble: 3,
+  lanthanide: 3,
+  rare: 2,
 };
 
 const DEFAULT_MINIMUM = 20;

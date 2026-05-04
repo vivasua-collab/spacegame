@@ -51,9 +51,15 @@ const TIER_DISPLAY: Record<PlanetResourceDeposit['tier'], { label: string; color
 const CATEGORY_NAMES: Record<string, string> = {
   structural: 'Строительные',
   fuel: 'Топливные',
-  metal: 'Металлы',
   chemical: 'Химические',
+  alkali: 'Щелочные',
+  alkaline_earth: 'Щёлочноземельные',
+  halogen: 'Галогены',
+  nonmetal: 'Неметаллы',
+  metal: 'Металлы',
+  transmetal: 'Переходные металлы',
   noble: 'Благородные',
+  lanthanide: 'Лантаноиды',
   rare: 'Редкие',
 };
 
