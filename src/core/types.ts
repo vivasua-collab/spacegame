@@ -280,6 +280,8 @@ export interface Planet {
   /** Сводная таблица ресурсных залежей планеты (агрегация из гексов + атмосферных) */
   resourceDeposits: PlanetResourceDeposit[];
   resources: Record<string, number>; // elementId → количество на складе
+  /** Виртуальный склад планеты (ограничивает вместимость ресурсов) */
+  warehouse?: PlanetWarehouse;
   energyBalance: number;
   owner: EntityId | null; // factionId или playerId
 }
@@ -301,6 +303,40 @@ export interface PlanetResourceDeposit {
   hexCount: number;
   /** Максимальная доступность среди всех залежей этого элемента */
   maxAvailability: number;
+}
+
+// ============ Склад планеты ============
+
+/** Конфигурация резерва для одного типа ресурса */
+export interface WarehouseReserve {
+  resourceId: string;
+  /** Минимальный зарезервированный объём (0 = нет гарантии) */
+  minimum: number;
+  /** Приоритет при конкуренции за пул переполнения (1-10, 10=высший) */
+  priority: number;
+}
+
+/** Тип специализации склада (влияет на бонусы) */
+export type WarehouseSpecialization = 'universal' | 'ore' | 'metal' | 'gas' | 'component';
+
+/** Роль колонии (определяет пресет резервов) */
+export type ColonyRole = 'mining' | 'industrial' | 'research' | 'capital' | 'custom';
+
+/** Виртуальный склад планеты */
+export interface PlanetWarehouse {
+  /** Общая вместимость (базовая 1000 + здания склада) */
+  totalCapacity: number;
+  /** Специализация склада */
+  specialization: WarehouseSpecialization;
+  /** Конфигурация резервов по типам ресурсов */
+  reserves: Record<string, WarehouseReserve>;
+  /** Роль колонии */
+  colonyRole: ColonyRole;
+  /** Орбитальный буфер */
+  orbitBuffer: {
+    capacity: number;
+    resources: Record<string, number>;
+  };
 }
 
 export interface Star {

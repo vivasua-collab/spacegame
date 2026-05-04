@@ -4,9 +4,10 @@
  */
 
 import { create } from 'zustand';
-import type { GameState, GameTime, GameSpeed, GamePhase, Galaxy, StarSystem, Planet, EntityId, ProductionQueue } from '@/core/types';
+import type { GameState, GameTime, GameSpeed, GamePhase, Galaxy, StarSystem, Planet, EntityId, ProductionQueue, ColonyRole, WarehouseSpecialization } from '@/core/types';
 import { generateGalaxy, type GalaxyGenConfig } from '@/galaxy';
 import { processEconomyTick, buildOnHex, upgradeBuilding, enqueueProduction, giveStarterResources, recalcEnergyBalance, colonizePlanet } from '@/economy';
+import { createDefaultWarehouse, applyColonyRole, calculateWarehouseCapacity, canStoreResource, getOrbitBufferUsed, getOrbitBufferCapacity } from '@/data/warehouse';
 import { gameBus } from '@/core/event-bus';
 import { BUILDING_MAP } from '@/data/buildings';
 
@@ -52,6 +53,13 @@ export interface GameStore {
 
   // Колонизация
   colonizePlanet: (planetId: EntityId) => boolean;
+
+  // Склад
+  setColonyRole: (planetId: EntityId, role: ColonyRole) => void;
+  setReserveMinimum: (planetId: EntityId, resourceId: string, minimum: number) => void;
+  setWarehouseSpecialization: (planetId: EntityId, spec: WarehouseSpecialization) => void;
+  moveToOrbit: (planetId: EntityId, resourceId: string, amount: number) => boolean;
+  moveFromOrbit: (planetId: EntityId, resourceId: string, amount: number) => boolean;
 
   // Сохранение/загрузка
   saveGame: (name?: string) => Promise<boolean>;
@@ -252,6 +260,14 @@ export const useGameStore = create<GameStore>((set, get) => {
 
       const result = colonizePlanet(planet, system);
       if (result) {
+        // Инициализация склада при колонизации
+        if (!planet.warehouse) {
+          planet.warehouse = createDefaultWarehouse();
+          planet.warehouse = applyColonyRole(planet.warehouse, 'industrial');
+          planet.warehouse.totalCapacity = calculateWarehouseCapacity(planet);
+          planet.warehouse.orbitBuffer.capacity = getOrbitBufferCapacity(planet);
+        }
+
         // После колонизации — начать игру
         gameState.phase = 'playing';
         gameState.speed = 1;
@@ -271,6 +287,80 @@ export const useGameStore = create<GameStore>((set, get) => {
         });
       }
       return result;
+    },
+
+    // ─── Склад ────────────────────────────────────────────
+
+    setColonyRole: (planetId, role) => {
+      const { gameState } = get();
+      if (!gameState) return;
+      const planet = findPlanet(gameState, planetId);
+      if (!planet || !planet.warehouse) return;
+      planet.warehouse = applyColonyRole(planet.warehouse, role);
+      set({ gameState: { ...gameState, galaxy: { ...gameState.galaxy, systems: [...gameState.galaxy.systems] } } });
+    },
+
+    setReserveMinimum: (planetId, resourceId, minimum) => {
+      const { gameState } = get();
+      if (!gameState) return;
+      const planet = findPlanet(gameState, planetId);
+      if (!planet || !planet.warehouse) return;
+      if (planet.warehouse.reserves[resourceId]) {
+        planet.warehouse.reserves[resourceId].minimum = minimum;
+      } else {
+        planet.warehouse.reserves[resourceId] = { resourceId, minimum, priority: 5 };
+      }
+      set({ gameState: { ...gameState, galaxy: { ...gameState.galaxy, systems: [...gameState.galaxy.systems] } } });
+    },
+
+    setWarehouseSpecialization: (planetId, spec) => {
+      const { gameState } = get();
+      if (!gameState) return;
+      const planet = findPlanet(gameState, planetId);
+      if (!planet || !planet.warehouse) return;
+      planet.warehouse.specialization = spec;
+      planet.warehouse.totalCapacity = calculateWarehouseCapacity(planet);
+      set({ gameState: { ...gameState, galaxy: { ...gameState.galaxy, systems: [...gameState.galaxy.systems] } } });
+    },
+
+    moveToOrbit: (planetId, resourceId, amount) => {
+      const { gameState } = get();
+      if (!gameState) return false;
+      const planet = findPlanet(gameState, planetId);
+      if (!planet || !planet.warehouse) return false;
+
+      const available = planet.resources[resourceId] ?? 0;
+      const moveAmount = Math.min(amount, available);
+      if (moveAmount <= 0) return false;
+
+      const orbitUsed = getOrbitBufferUsed(planet);
+      const orbitCapacity = planet.warehouse.orbitBuffer.capacity;
+      if (orbitUsed + moveAmount > orbitCapacity) return false;
+
+      planet.resources[resourceId] -= moveAmount;
+      planet.warehouse.orbitBuffer.resources[resourceId] = (planet.warehouse.orbitBuffer.resources[resourceId] ?? 0) + moveAmount;
+      set({ gameState: { ...gameState, galaxy: { ...gameState.galaxy, systems: [...gameState.galaxy.systems] } } });
+      return true;
+    },
+
+    moveFromOrbit: (planetId, resourceId, amount) => {
+      const { gameState } = get();
+      if (!gameState) return false;
+      const planet = findPlanet(gameState, planetId);
+      if (!planet || !planet.warehouse) return false;
+
+      const orbitAmount = planet.warehouse.orbitBuffer.resources[resourceId] ?? 0;
+      const moveAmount = Math.min(amount, orbitAmount);
+      if (moveAmount <= 0) return false;
+
+      const canStore = canStoreResource(planet, resourceId, moveAmount);
+      if (canStore <= 0) return false;
+
+      const actualMove = Math.min(moveAmount, canStore);
+      planet.warehouse.orbitBuffer.resources[resourceId] -= actualMove;
+      planet.resources[resourceId] = (planet.resources[resourceId] ?? 0) + actualMove;
+      set({ gameState: { ...gameState, galaxy: { ...gameState.galaxy, systems: [...gameState.galaxy.systems] } } });
+      return true;
     },
 
     // ─── Сохранение / Загрузка ─────────────────────────────

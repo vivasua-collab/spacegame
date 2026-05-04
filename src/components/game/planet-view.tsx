@@ -6,6 +6,7 @@ import { axialToPixel } from '@/galaxy';
 import { TERRAIN_COLORS, TERRAIN_NAMES, TYPE_NAMES, SIZE_NAMES } from '@/data/planet-types';
 import { BUILDING_MAP } from '@/data/buildings';
 import { ELEMENT_MAP, ELEMENTS } from '@/data/elements';
+import { getUsedCapacity, getOrbitBufferUsed } from '@/data/warehouse';
 import { BuildingDialog } from './building-dialog';
 import { ResourcePanel } from './resource-panel';
 import { Card, CardContent } from '@/components/ui/card';
@@ -25,8 +26,9 @@ import {
   Gem,
   Info,
   Weight,
+  Warehouse,
 } from 'lucide-react';
-import type { Planet, HexCell, HexTerrain, AtmosphereType, LifeLevel, AtmosphericSlot, OrbitalSlot, PlanetResourceDeposit } from '@/core/types';
+import type { Planet, HexCell, HexTerrain, AtmosphereType, LifeLevel, AtmosphericSlot, OrbitalSlot, PlanetResourceDeposit, ColonyRole, WarehouseSpecialization } from '@/core/types';
 
 const ATMO_DISPLAY: Record<AtmosphereType, string> = {
   none: 'Нет', thin: 'Тонкая', standard: 'Стандартная', dense: 'Плотная',
@@ -278,6 +280,9 @@ export function PlanetView() {
             <ResourcePanel resources={planet.resources} className="h-48" />
           </CardContent>
         </Card>
+
+        {/* Warehouse panel */}
+        <WarehousePanel planet={planet} />
       </div>
 
       {/* Building dialog */}
@@ -650,6 +655,151 @@ function SlotCard({ title, slots }: { title: string; slots: (AtmosphericSlot | O
             );
           })}
         </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ============ Warehouse Panel ============
+
+const ROLE_NAMES: Record<ColonyRole, string> = {
+  mining: 'Рудная',
+  industrial: 'Промышленная',
+  research: 'Научная',
+  capital: 'Столица',
+  custom: 'Своя',
+};
+
+const SPEC_NAMES: Record<WarehouseSpecialization, string> = {
+  universal: 'Универсальный',
+  ore: 'Рудный (+10%)',
+  metal: 'Металлургический (+10%)',
+  gas: 'Газовый (+10%)',
+  component: 'Компонентный (+10%)',
+};
+
+function WarehousePanel({ planet }: { planet: Planet }) {
+  const setColonyRole = useGameStore((s) => s.setColonyRole);
+  const setWarehouseSpecialization = useGameStore((s) => s.setWarehouseSpecialization);
+
+  if (!planet.warehouse) return null;
+
+  const wh = planet.warehouse;
+  const used = getUsedCapacity(planet);
+  const pct = wh.totalCapacity > 0 ? (used / wh.totalCapacity) * 100 : 0;
+  const orbitUsed = getOrbitBufferUsed(planet);
+  const orbitPct = wh.orbitBuffer.capacity > 0 ? (orbitUsed / wh.orbitBuffer.capacity) * 100 : 0;
+
+  // Reserve entries sorted by priority (highest first)
+  const reserveEntries = Object.values(wh.reserves).sort((a, b) => b.priority - a.priority);
+
+  return (
+    <Card className="bg-[#0d0d24] border-white/10 text-white py-3 gap-3">
+      <CardContent className="px-4 py-0 space-y-2">
+        <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+          <Warehouse className="size-3.5" />
+          Склад планеты
+        </div>
+
+        {/* Capacity bar */}
+        <div className="space-y-1">
+          <div className="flex justify-between text-xs">
+            <span className="text-slate-400">Вместимость</span>
+            <span className="font-mono">{Math.floor(used)} / {wh.totalCapacity}</span>
+          </div>
+          <div className="h-2 bg-white/5 rounded-full overflow-hidden">
+            <div
+              className={`h-full rounded-full transition-all ${
+                pct > 90 ? 'bg-red-500' : pct > 70 ? 'bg-amber-500' : 'bg-emerald-500'
+              }`}
+              style={{ width: `${Math.min(100, pct)}%` }}
+            />
+          </div>
+        </div>
+
+        {/* Colony role selector */}
+        <div className="space-y-1">
+          <span className="text-[10px] text-slate-500 uppercase">Роль колонии</span>
+          <div className="flex gap-1 flex-wrap">
+            {(['mining', 'industrial', 'research', 'capital', 'custom'] as ColonyRole[]).map(role => (
+              <button
+                key={role}
+                onClick={() => setColonyRole(planet.id, role)}
+                className={`text-[9px] px-1.5 py-0.5 rounded transition-colors ${
+                  wh.colonyRole === role
+                    ? 'bg-cyan-600/30 text-cyan-300'
+                    : 'bg-white/5 text-slate-500 hover:text-slate-300'
+                }`}
+              >
+                {ROLE_NAMES[role]}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Specialization selector */}
+        <div className="space-y-1">
+          <span className="text-[10px] text-slate-500 uppercase">Специализация</span>
+          <div className="flex gap-1 flex-wrap">
+            {(['universal', 'ore', 'metal', 'gas', 'component'] as WarehouseSpecialization[]).map(spec => (
+              <button
+                key={spec}
+                onClick={() => setWarehouseSpecialization(planet.id, spec)}
+                className={`text-[9px] px-1.5 py-0.5 rounded transition-colors ${
+                  wh.specialization === spec
+                    ? 'bg-purple-600/30 text-purple-300'
+                    : 'bg-white/5 text-slate-500 hover:text-slate-300'
+                }`}
+              >
+                {SPEC_NAMES[spec]}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Reserves list */}
+        {reserveEntries.length > 0 && (
+          <div className="space-y-1">
+            <span className="text-[10px] text-slate-500 uppercase">Резервы</span>
+            <div className="max-h-32 overflow-y-auto space-y-0.5 pr-1 custom-scrollbar">
+              {reserveEntries.map(reserve => {
+                const current = planet.resources[reserve.resourceId] ?? 0;
+                const isBelowMin = current < reserve.minimum;
+                return (
+                  <div key={reserve.resourceId} className="flex items-center justify-between text-[10px]">
+                    <span className={`${isBelowMin ? 'text-red-400' : 'text-slate-400'} font-mono truncate`}>
+                      {reserve.resourceId}
+                    </span>
+                    <span className="flex items-center gap-1 shrink-0">
+                      <span className={`font-mono ${isBelowMin ? 'text-red-400' : 'text-slate-500'}`}>
+                        {Math.floor(current)}
+                      </span>
+                      <span className="text-slate-600">/</span>
+                      <span className="text-slate-600 font-mono">{reserve.minimum}</span>
+                      <span className="text-slate-700 ml-0.5">P{reserve.priority}</span>
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Orbit buffer */}
+        {wh.orbitBuffer.capacity > 0 && (
+          <div className="space-y-1">
+            <div className="flex justify-between text-xs">
+              <span className="text-slate-400">Орбитальный буфер</span>
+              <span className="font-mono">{Math.floor(orbitUsed)} / {wh.orbitBuffer.capacity}</span>
+            </div>
+            <div className="h-1.5 bg-white/5 rounded-full overflow-hidden">
+              <div
+                className="h-full rounded-full bg-cyan-500"
+                style={{ width: `${Math.min(100, orbitPct)}%` }}
+              />
+            </div>
+          </div>
+        )}
       </CardContent>
     </Card>
   );

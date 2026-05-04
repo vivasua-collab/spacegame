@@ -969,3 +969,164 @@ Stage Summary:
 - Критический баг исправлен: колонии теперь появляются в списке после колонизации
 - 2 файла изменены: game-layout.tsx, game-store.ts
 - Корень проблемы: mutation + shallow spread не обновляет nested references
+
+---
+Task ID: 2-b
+Agent: Docs Agent
+Task: Update 04-buildings.md warehouse section to new virtual warehouse system
+
+Work Log:
+- Прочитаны worklog.md и docs/04-buildings.md (полный документ, ~1270 строк)
+- **§4.3 Склад (Warehouse)** — полностью заменён:
+  - Старая модель: простое per-building хранилище (500×level вместимость)
+  - Новая модель: планетарный виртуальный склад (1000 базовая + 500×warehouse_level за каждое здание)
+  - Добавлена механика минимальных резервов (reservedCapacity / overflowPool)
+  - Добавлены пресеты по роли колонии (Рудная, Промышленная, Научная, Столица, Своя)
+  - Обновлена таблица специализации: бонус «вместимость» → «мин. резерв»
+- **§4.4 Орбитальный буфер и космопорт** — новый раздел:
+  - Космопорт (ID: spaceport, слой: orbit, макс. уровень 5)
+  - Орбитальный буфер: 200×spaceport_level ед. вместимости
+  - Механика работы: 5 шагов (планетарный склад → орбитальный буфер → торговый маршрут)
+  - Энергопотребление: 3 ед./тик за уровень (было 5)
+- **Переименование секций**: §4.4 Очередь приоритетов → §4.5, §4.5 Межпланетная логистика → §4.6
+- **§10.1 Полная таблица зданий** — обновлены строки:
+  - warehouse: «Склад» → «Склад (виртуальный)», выход «— (буфер)» → «— (+500 вместимости/ур.)»
+  - spaceport: выход «— (орбит. связь)» → «— (орбит. буфер 200×ур.)», энергопотребление 5→3
+- **§12.5 Виртуальный склад планеты** — новый раздел TypeScript интерфейсов:
+  - WarehouseReserve (resourceId, minimum, priority)
+  - WarehouseSpecialization (5 типов)
+  - PlanetWarehouse (totalCapacity, specialization, reserves, colonyRole, orbitBuffer)
+  - ColonyRole (5 ролей)
+  - Старый §12.5 → §12.6
+- **Обновлены перекрёстные ссылки**:
+  - §3.5 таблица цепочек: «Склад (спец.)» → «Планетарный виртуальный склад»
+  - §4.6 Межпланетная логистика: «Орбитальный склад или космопорт» → «Орбитальный буфер космопорта (см. §4.4)»
+  - Космопорт в §4.6: обновлена ссылка на §4.4
+- Версия документа обновлена: 2.0 → 2.1
+
+Stage Summary:
+- 1 файл модифицирован: docs/04-buildings.md
+- Виртуальный планетарный склад: новая модель с минимальными резервами и ролями колонии
+- Орбитальный буфер: новый раздел с космопортом на орбитальном слоте
+- §10.1, §12: обновлены данные и TypeScript интерфейсы
+- Все перекрёстные ссылки обновлены
+
+---
+Task ID: 2-a
+Agent: Docs Agent
+Task: Add §6 «Система склада планеты» to docs/03-planets.md
+
+Work Log:
+- Read worklog.md and full docs/03-planets.md (1665 lines)
+- Identified current structure: §5 (Ресурсный потенциал) → §6 (Орбитальные станции) → §7 (Формулы и расчёты)
+- Updated TOC: added §6 Система склада планеты, renumbered §6→§7, §7→§8
+- Inserted new §6 «Система склада планеты» with 8 subsections:
+  - §6.1 Концепция виртуального склада — planet-level storage, current MVP state, future physical warehouses
+  - §6.2 Вместимость и структура — base 1000, warehouse building +500/level, totalCapacity formula
+  - §6.3 Минимальные резервы — configurable minimum reserve (default 20), reservedCapacity, overflowPool
+  - §6.4 Приоритет переполнения — priority 1-10, default priorities by resource category (Energy:10, Ores:8, Elements:7, Alloys:5, Components:3, Ship parts:1)
+  - §6.5 Механика заполнения — step-by-step per-tick algorithm with detailed example
+  - §6.6 Настройка резервов по роли колонии — 5 presets (mining, industrial, research, capital, custom)
+  - §6.7 Орбитальный буфер — spaceport-based orbital staging for inter-planet transfer, capacity formula
+  - §6.8 Структуры данных для программиста — WarehouseReserve, PlanetWarehouse, ColonyRole, COLONY_ROLE_PRESETS
+- Renumbered all subsections of former §6 → §7 (7.1–7.3, 7.2.1–7.2.5)
+- Renumbered all subsections of former §7 → §8 (8.1–8.4)
+- Added `warehouse: PlanetWarehouse;` field to Planet interface in §8.1
+- Updated cross-reference in §3.2.3: "раздел 6" → "раздел 7" (orbital stations)
+- All content in Russian as required
+
+Stage Summary:
+- 1 file modified: docs/03-planets.md
+- New section §6 «Система склада планеты» added (~190 lines) with 8 subsections
+- All section numbers updated: old §6→§7, old §7→§8
+- Planet interface updated with warehouse field
+- Cross-references updated throughout
+
+---
+Task ID: 4
+Agent: Code Implementation Agent
+Task: Implement virtual warehouse system for SpaceGame 4X strategy
+
+Work Log:
+- Read worklog.md and all relevant source files (types.ts, buildings.ts, engine.ts, game-store.ts, planet-view.tsx, elements.ts)
+- **Step 1**: Added warehouse types to `src/core/types.ts`:
+  - `WarehouseReserve` interface (resourceId, minimum, priority)
+  - `WarehouseSpecialization` type ('universal' | 'ore' | 'metal' | 'gas' | 'component')
+  - `ColonyRole` type ('mining' | 'industrial' | 'research' | 'capital' | 'custom')
+  - `PlanetWarehouse` interface (totalCapacity, specialization, reserves, colonyRole, orbitBuffer)
+  - Added `warehouse?: PlanetWarehouse` field to `Planet` interface
+- **Step 2**: Created `src/data/warehouse.ts`:
+  - `createDefaultWarehouse()` — creates initial warehouse with 1000 capacity
+  - `calculateWarehouseCapacity(planet)` — calculates from Colony Hub (1000 base) + warehouse buildings (500/level) + specialization bonus (+10%)
+  - `getUsedCapacity(planet)` — sums all resource values
+  - `getOrbitBufferCapacity(planet)` — 200/level from spaceport buildings
+  - `getOrbitBufferUsed(planet)` — sums orbit buffer resources
+  - `canStoreResource(planet, resourceId, amount)` — checks capacity, returns actual storable amount
+  - `COLONY_ROLE_PRESETS` — default reserve configs for mining/industrial/research/capital/custom
+  - `applyColonyRole(warehouse, role)` — applies preset reserves
+  - `ensureReservesForResources(planet)` — auto-creates reserves for new resources
+- **Step 3**: Updated `src/data/buildings.ts`:
+  - Added `warehouse` building (logistics, surface, +500 capacity/level, 10 levels)
+  - Added `spaceport` building (logistics, orbit, +200 orbit buffer/level, 5 levels)
+- **Step 4**: Updated `src/economy/engine.ts`:
+  - Added import of warehouse helpers
+  - Mine extraction: wrapped with `canStoreResource()` check, excess is lost
+  - Colony hub extraction: same warehouse capacity check
+  - Atmospheric extraction: same warehouse capacity check
+  - Added `ensureReservesForResources(planet)` at end of `processEconomyTick`
+  - Added warehouse capacity recalculation at end of `recalcEnergyBalance`
+- **Step 5**: Updated `src/stores/game-store.ts`:
+  - Added imports for warehouse types and helpers
+  - Added 5 new store actions: `setColonyRole`, `setReserveMinimum`, `setWarehouseSpecialization`, `moveToOrbit`, `moveFromOrbit`
+  - Added warehouse initialization in `colonizePlanet` action (createDefaultWarehouse + applyColonyRole 'industrial')
+  - All new actions trigger Zustand re-render via galaxy.systems array reference change
+- **Step 6**: Added `WarehousePanel` component to `src/components/game/planet-view.tsx`:
+  - Capacity bar (green/amber/red based on fill %)
+  - Colony role selector (5 buttons: Рудная/Промышленная/Научная/Столица/Своя)
+  - Specialization selector (5 buttons: Универсальный/Рудный/Металлургический/Газовый/Компонентный)
+  - Scrollable reserves list with current vs minimum + priority display
+  - Orbit buffer status (capacity bar, shown only if capacity > 0)
+  - Uses Warehouse icon from lucide-react
+  - All text in Russian
+- **Step 7**: Lint: 0 errors
+- **Step 8**: Dev server: compiles without errors, 200 OK
+
+Stage Summary:
+- 6 files modified/created: types.ts, warehouse.ts (new), buildings.ts, engine.ts, game-store.ts, planet-view.tsx
+- Virtual warehouse system fully functional: capacity limits, role presets, specialization bonuses, orbit buffer
+- Extraction now respects warehouse capacity — excess resources are lost when warehouse is full
+- Warehouse panel visible in planet view sidebar for colonized planets
+- Backwards compatible: `warehouse` field is optional, no warehouse = unlimited storage
+
+
+---
+Task ID: 4
+Agent: Main Agent
+Task: Реализация виртуального склада планеты (документация + код)
+
+Work Log:
+- Спроектирована система виртуального склада на основе требований пользователя
+- Обновлён docs/03-planets.md — новый §6 «Система склада планеты» (8 подразделов, ~190 строк)
+  - Концепция, вместимость, минимальные резервы, приоритет переполнения
+  - Механика заполнения, пресеты по ролям, орбитальный буфер, TypeScript-интерфейсы
+  - Старые §6→§7, §7→§8 перенумерованы
+- Обновлён docs/04-buildings.md — версия 2.1
+  - §4.3 Склад: заменён на планетарный виртуальный склад (1000 + 500×ур.)
+  - §4.4 Орбитальный буфер и космопорт — новый раздел
+  - §10.1 таблица зданий обновлена
+  - §12 TypeScript-интерфейсы расширены
+- Реализация в коде:
+  - src/core/types.ts: +4 типа (WarehouseReserve, WarehouseSpecialization, ColonyRole, PlanetWarehouse), warehouse? в Planet
+  - src/data/warehouse.ts: новый файл — createDefaultWarehouse, calculateWarehouseCapacity, canStoreResource, COLONY_ROLE_PRESETS, applyColonyRole, ensureReservesForResources
+  - src/data/buildings.ts: +2 здания (warehouse, spaceport)
+  - src/economy/engine.ts: проверка canStoreResource при добыче, ensureReservesForResources при тике, пересчёт capacity в recalcEnergyBalance
+  - src/stores/game-store.ts: +5 действий (setColonyRole, setReserveMinimum, setWarehouseSpecialization, moveToOrbit, moveFromOrbit), инициализация склада при колонизации
+  - src/components/game/planet-view.tsx: WarehousePanel — панель склада с прогресс-баром, ролями, специализацией, резервами, орбитальным буфером
+- Lint: 0 ошибок
+- Dev server: компиляция без ошибок
+
+Stage Summary:
+- Полная система виртуального склада реализована: документация + код + UI
+- 6 файлов изменено, 1 новый файл создан
+- Ключевая механика: ограниченная вместимость (1000 + 500×ур. склада), минимальные резервы, приоритеты, пресеты ролей
+- Орбитальный буфер для межпланетных перевозок (требует космопорт)

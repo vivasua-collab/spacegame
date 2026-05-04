@@ -8,6 +8,7 @@ import type { Planet, HexCell, ProductionQueue, ProductionItem, EntityId, StarSy
 import { BUILDING_MAP } from '@/data/buildings';
 import { RECIPE_MAP } from '@/data/recipes';
 import { ELEMENT_MAP } from '@/data/elements';
+import { canStoreResource, calculateWarehouseCapacity, getOrbitBufferCapacity, ensureReservesForResources } from '@/data/warehouse';
 import { gameBus } from '@/core/event-bus';
 
 /**
@@ -24,6 +25,9 @@ export function processEconomyTick(planets: Planet[], queues: Map<EntityId, Prod
     // 3. Расчёт энергетического баланса
     const system = systemMap?.get(planet.systemId);
     recalcEnergyBalance(planet, system);
+
+    // 4. Автоматическое создание резервов для новых ресурсов
+    ensureReservesForResources(planet);
   }
 }
 
@@ -57,9 +61,13 @@ function processExtraction(planet: Planet): void {
         const amount = baseRate * levelMult * terrainMult;
         const extracted = Math.min(amount, deposit.quantity);
 
-        deposit.quantity -= extracted;
         const key = deposit.elementId;
-        planet.resources[key] = (planet.resources[key] ?? 0) + extracted;
+        const canStore = canStoreResource(planet, key, extracted);
+        const actualExtracted = Math.min(extracted, canStore);
+        deposit.quantity -= actualExtracted;
+        if (actualExtracted > 0) {
+          planet.resources[key] = (planet.resources[key] ?? 0) + actualExtracted;
+        }
       }
     }
 
@@ -73,10 +81,13 @@ function processExtraction(planet: Planet): void {
         const baseRate = 0.5 * deposit.availability;
         const amount = baseRate * levelMult;
         const extracted = Math.min(amount, deposit.quantity);
-
-        deposit.quantity -= extracted;
         const key = deposit.elementId;
-        planet.resources[key] = (planet.resources[key] ?? 0) + extracted;
+        const canStore = canStoreResource(planet, key, extracted);
+        const actualExtracted = Math.min(extracted, canStore);
+        deposit.quantity -= actualExtracted;
+        if (actualExtracted > 0) {
+          planet.resources[key] = (planet.resources[key] ?? 0) + actualExtracted;
+        }
       }
     }
   }
@@ -102,7 +113,10 @@ function processExtraction(planet: Planet): void {
       const atmosphericElements = ['H', 'He', 'C', 'N', 'O'];
       for (const elementId of atmosphericElements) {
         const baseRate = 2.0 * levelMult * atmosphereMult;
-        planet.resources[elementId] = (planet.resources[elementId] ?? 0) + baseRate;
+        const canStore = canStoreResource(planet, elementId, baseRate);
+        if (canStore > 0) {
+          planet.resources[elementId] = (planet.resources[elementId] ?? 0) + canStore;
+        }
       }
     }
   }
@@ -261,6 +275,12 @@ export function recalcEnergyBalance(planet: Planet, system?: StarSystem): void {
   }
 
   planet.energyBalance = production - consumption;
+
+  // Пересчёт вместимости склада и орбитального буфера
+  if (planet.warehouse) {
+    planet.warehouse.totalCapacity = calculateWarehouseCapacity(planet);
+    planet.warehouse.orbitBuffer.capacity = getOrbitBufferCapacity(planet);
+  }
 }
 
 /**
