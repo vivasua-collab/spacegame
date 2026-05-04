@@ -1,6 +1,6 @@
 # Чекпоинт: Система запекания химии и генератор рабочей модели
 
-**Дата:** 2026-05-04 17:05 MSK (обновлено)
+**Дата:** 2026-05-04 17:12 UTC (обновлено)
 **Фаза:** 2
 **Статус:** in_progress
 
@@ -51,33 +51,28 @@
   - Рефакторные альтернативы (Au, Pt, U через refinery)
   - ATMOSPHERE_TYPE_MAP — матрица доступности газов
 
+### Исправленные баги (подтверждено аудитом 2026-05-04)
+- ✅ PRNG derive() — переписан на 4 независимых хеша (FNV-1a + Murmur2/3), без SplitMix64 коллапса, 6/6 тестов PASS
+- ✅ Баг G-02 (температура горячих звёзд) — атмосфера генерируется ДО температуры, убран Math.min(hzCenter, 5.0)
+- ✅ Баг G-01 (lifeChance) — gate по planetDef.lifeChance + модификаторы температуры/атмосферы
+- ✅ Баланс атмосферных/ледяных руд — все суммы yield = 10 (химически корректные)
+- ✅ Баг гексов — deposit.elementId теперь содержит ID руды (Fe-ore, NaCl, H2O-ice), а не чистого элемента
+- ✅ Депрекация `doc_temp/ores-and-chains.md` — помечен устаревшим 2026-05-04
+
 ## Текущие задачи
 
 ### Интеграция baked model в генератор галактики
-- ⏳ Подключить `bake(seed, ELEMENTS)` к `GalaxyGenerator.generate()`
+- ⏳ Подключить `bakeGalaxyModel(seed, ELEMENTS)` к `GalaxyGenerator.generate()`
 - ⏳ Использовать BakedGalaxyModel вместо хардкода руд в generate-resources.ts
 - ⏳ Сохранять BakedGalaxyModel в game-store и в сериализацию
-
-### Исправление багов
-- ❌ Балансные значения в атмосферных/ледяных соединениях (сумма > 10) — в chemistry-generator.ts используются формулы (химически корректные), но в processing-chains.ts ещё балансные
-- ❌ Температурный баг G-02 (горячие звёзды) — НЕ ИСПРАВЛЕН
-- ❌ Баг G-01 lifeChance — НЕ ИСПРАВЛЕН
-
-### Депрекация временных документов
-- ⏳ `doc_temp/ores-and-chains.md` — пометить как устаревший (заменён ores.md + chemistry.md)
+- ⏳ Мигрировать processing-chains.ts → chemistry-generator.ts как единый источник данных
 
 ## Проблемы
 - processing-chains.ts и chemistry-generator.ts дублируют данные о рудах — нужна миграция на единый источник (baked model)
-- Атмосферные/ледяные соединения в processing-chains.ts используют «балансные» значения (сумма > 10), в chemistry-generator.ts — химически корректные
-- PRNG derive() даёт коррелированные seed'ы — только 2 из 12 типов звёзд генерируются (см. аудит)
 
 ## Следующие шаги
-1. Интегрировать bake() в генератор галактики
-2. Мигрировать generate-resources.ts на BakedGalaxyModel
-3. Исправить баги G-01, G-02
-4. Заменить балансные значения атмосферных/ледяных руд
-5. Депрекейтнуть doc_temp/ores-and-chains.md
-6. Запушить на GitHub
+1. Интегрировать bakeGalaxyModel() в генератор галактики → отдельный чекпоинт `05_04_baked_integration.md`
+2. Запушить на GitHub
 
 ## Изменённые файлы
 - docs/galaxy-bake.md (новый)
@@ -87,3 +82,8 @@
 - docs/modularity.md (обновлён)
 - src/data/elements.ts (добавлены поля chemicalCharacter, oxidationState, rarity, atomicNumber, atomicMass)
 - src/data/chemistry-generator.ts (новый — 940+ строк)
+- src/core/prng.ts (переписан derive() — 4 хеша)
+- src/galaxy/generate-planets.ts (G-01, G-02 исправлены)
+- src/galaxy/generate-resources.ts (руды вместо элементов в deposits)
+- src/data/warehouse.ts (Energy исключён из capacity)
+- doc_temp/ores-and-chains.md (депрекация)
