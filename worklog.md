@@ -1594,3 +1594,23 @@ Stage Summary:
 - chemistry-generator.ts создан, но не интегрирован — требует подключения
 - Для интеграции нужно: заменить ORE_MAP на bakedModel.ores, сохранить BakedGalaxyModel в GameState, обновить все потребители
 - Дублирование данных: руды определены и в processing-chains.ts, и в chemistry-generator.ts ORE_SPECS
+
+---
+Task ID: checkpoint-update-13
+Agent: Main Agent
+Task: Обновить чекпоинты и ROADMAP — отметить выполненные задачи, создать план интеграции с baked galaxy
+
+Work Log:
+- Получена системная дата/время: 2026-05-04 14:05:37 UTC = 17:05 MSK
+- Прочитаны RULES.md, все 3 чекпоинта, ROADMAP.md, worklog.md
+- Проанализировано текущее состояние файлов: elements.ts (57 элементов с chemicalCharacter), chemistry-generator.ts (940+ строк), processing-chains.ts, docs/chemistry.md, docs/ores.md, docs/galaxy-bake.md, docs/modularity.md, docs/mendeleev.md
+- Обновлён checkpoints/05_04_chemistry_bake.md — отмечено 20+ выполненных задач (документация, поля ElementDef, chemistry-generator.ts)
+- Обновлён checkpoints/05_04_resource_system.md — отмечено 15+ выполненных задач (категории, processing-chains, документация)
+- Обновлён checkpoints/05_04_save_ui_economy.md — отмечено 18+ выполненных задач (сохранение, UI, багфиксы)
+- Обновлён checkpoints/ROADMAP.md — этап 2 расширен: добавлены подзадачи 2.8–2.19 (сохранение, химия, baked model, PRNG, баги)
+
+Stage Summary:
+- Все 3 чекпоинта обновлены с актуальными статусами задач
+- ROADMAP обновлён с подзадачами системы ресурсов и запекания
+- Ключевые невыполненные задачи: интеграция baked model в генератор, исправление PRNG derive(), баги G-01/G-02, Energy из warehouse
+- Система чекпоинтов теперь точно отражает текущее состояние проекта
