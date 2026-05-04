@@ -136,7 +136,7 @@ export interface PlanetDef {
 
 // ============ Ресурсы ============
 
-export type ElementCategory = 'structural' | 'fuel' | 'alloy' | 'electronics' | 'chemical' | 'energy' | 'rare' | 'light';
+export type ElementCategory = 'structural' | 'fuel' | 'alloy' | 'electronics' | 'chemical' | 'rare' | 'light';
 
 export interface ElementDef {
   id: string;

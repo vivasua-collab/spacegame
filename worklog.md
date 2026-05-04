@@ -1168,3 +1168,136 @@ Stage Summary:
 - Toast-уведомления для пользователя при успешном/неуспешном сохранении
 - Таймаут 30с предотвращает бесконечное ожидание
 - Код запушен в GitHub (commit d0c8933)
+
+---
+Task ID: 2+3
+Agent: General Agent
+Task: Fix Energy as non-storable + Fix starter resources
+
+Work Log:
+- Read all 5 target files before editing: types.ts, elements.ts, warehouse.ts, engine.ts, resource-panel.tsx
+- Searched for all 'energy' and 'Energy' references across src/ to understand impact
+- Verified BuildingCategory 'energy' (for energy-producing buildings) is SEPARATE from ElementCategory 'energy' — should NOT be touched
+
+- **Fix 1: src/core/types.ts** — Removed 'energy' from ElementCategory type
+  - Changed: `'structural' | 'fuel' | 'alloy' | 'electronics' | 'chemical' | 'energy' | 'rare' | 'light'`
+  - To: `'structural' | 'fuel' | 'alloy' | 'electronics' | 'chemical' | 'rare' | 'light'`
+
+- **Fix 2: src/data/elements.ts** — Removed 'energy' category, reclassified U (Uranium) to 'rare'
+  - Deleted the "// Энергия" section with U element (category: 'energy')
+  - Added U element under "// Редкие" section with category: 'rare' (Uranium is nuclear fuel material, not "energy" itself)
+
+- **Fix 3: src/data/warehouse.ts** — Excluded Energy from capacity and reserves
+  - Removed 'energy' from CATEGORY_PRIORITY map (was priority 10)
+  - Updated getUsedCapacity() to skip 'Energy' key when summing resource amounts (Energy is a flow resource, doesn't occupy warehouse)
+  - Updated ensureReservesForResources() to skip 'Energy' when creating reserves (no point reserving a flow resource)
+  - Removed Energy reserves from ALL COLONY_ROLE_PRESETS:
+    - mining: removed `...['Energy'].map(id => ({ resourceId: id, minimum: 30, priority: 10 }))`
+    - industrial: removed `...['Energy'].map(id => ({ resourceId: id, minimum: 30, priority: 10 }))`
+    - research: removed `...['Energy'].map(id => ({ resourceId: id, minimum: 40, priority: 10 }))`
+    - capital: removed `...['Energy'].map(id => ({ resourceId: id, minimum: 50, priority: 10 }))`
+
+- **Fix 4: src/economy/engine.ts** — Fixed giveStarterResources()
+  - Replaced old starters (ores + Energy + mixed) with pure materials only:
+    - Fe: 150, Si: 100, C: 60, Al: 80 (structural — basis for building)
+    - H: 300 (fuel — for energy production)
+    - Ti: 30, Cu: 40 (alloys — advanced construction)
+    - O: 200, N: 100 (chemical — life support)
+    - Au: 2, U: 5 (rare — small reserves)
+  - Removed ALL ores (Fe-ore, Si-ore, etc.) — ores come from mining buildings on hexes
+  - Removed Energy: 500 — energy is a flow resource, not a material colonists bring
+  - Updated JSDoc to reflect new philosophy
+
+- **Fix 5: src/components/game/resource-panel.tsx** — Removed energy category from UI
+  - Removed 'energy' from CATEGORY_ORDER array
+  - Removed `energy: 'Energy'` from CATEGORY_LABELS
+  - Removed `energy: 'text-purple-400'` from CATEGORY_COLORS
+
+- Lint: 0 errors
+- Dev server: compiles successfully (200 OK)
+
+Stage Summary:
+- Energy is now properly a flow resource: excluded from warehouse capacity, no reserves, not in starters
+- ElementCategory 'energy' removed from type system; U (Uranium) reclassified to 'rare'
+- Starter resources now give only pure materials colonists brought (no ores, no Energy)
+- 5 files modified: types.ts, elements.ts, warehouse.ts, engine.ts, resource-panel.tsx
+- canStoreResource signature unchanged (just skips Energy via getUsedCapacity)
+
+## Task 4: Redesign planet view right sidebar
+
+**Date**: 2024-01-01
+**File modified**: `src/components/game/planet-view.tsx`
+
+### Changes made:
+
+1. **Tab redesign**: Replaced "Обзор" tab with "Карта" (Map icon) and kept "Ресурсы" tab. Added a separator and "Склад" button (Warehouse icon) that opens a Sheet dialog.
+
+2. **Warehouse moved to Sheet**: The WarehousePanel is no longer in the sidebar. It now opens via a shadcn/ui Sheet component (side="right") triggered by the "Склад" button in the top bar. The Sheet has proper dark theme styling (`bg-[#0d0d24]`), includes a header with Warehouse icon and title, and scrollable content area.
+
+3. **Removed Resources card from sidebar**: The "Ресурсы" card that used ResourcePanel in the sidebar has been removed.
+
+4. **Enhanced Resources tab**: Added a "Хранимые ресурсы" section at the top of the Resources tab showing current warehouse contents (using ResourcePanel with Package icon and badge), followed by the existing deposits-by-tier sections.
+
+5. **Simplified right sidebar**: Now only contains:
+   - Compact planet info card (gravity, temperature, atmosphere, life, energy balance — removed density, radius, distance, orbit number, orbital period)
+   - Hex info card (shown when hovering on map tab)
+   - Atmospheric slots (if any)
+   - Orbital slots (if any)
+   - Wrapped in ScrollArea for better scrolling
+
+6. **WarehousePanel redesigned for Sheet**: Changed from Card-based layout to a plain div layout with more breathing room (larger capacity bar, bigger buttons with ring styling for selected state, expanded reserves list). Added "Хранимые ресурсы" section at the bottom of the warehouse panel as well.
+
+7. **Cleanup**: Removed unused imports (`Info`, `Ruler`, `Clock`, `Orbit`, `Weight`, `ELEMENTS`, `HexTerrain`) and the unused `formatOrbitalPeriod` function.
+
+### Lint: Passed with no errors.
+
+---
+Task ID: 5
+Agent: General Agent
+Task: Implement the resource processing conveyor (конвейер переработки)
+
+Work Log:
+- Read all target files: src/data/buildings.ts, src/data/recipes.ts, src/economy/engine.ts, src/components/game/building-dialog.tsx, src/components/game/planet-view.tsx
+- Searched entire codebase for 'smelter' and 'chemical_plant' references — found in buildings.ts, recipes.ts, and documentation files only
+- **Updated buildings.ts**:
+  - Renamed `smelter` → `processor` (id, name: "Переработчик", description: "Универсальная переработка руды в чистые элементы. Выход: 70–85% чистоты.")
+  - Renamed `chemical_plant` → `synthesizer` (id, name: "Синтезатор", description: "Синтез сплавов, материалов и химических соединений из чистых элементов.")
+  - Added new building `refinery` (id: "refinery", name: "Очистительный комплекс", description: "Глубокая очистка элементов. Выход: 95–99% чистоты, но 2× энергозатраты.", category: 'processing', layer: ['surface'], size: ['medium', 'large'], energyConsumption: 8, baseProductionTime: 15, levels: 10, costPerLevel: { Fe: 12, Si: 8, Cu: 4 })
+  - Updated building count comment from 8 to 9
+- **Updated recipes.ts**:
+  - Level 1 (Ore → Pure Element): All 18 `smelt_*` recipes changed `buildingId: 'smelter'` → `buildingId: 'processor'`
+  - Level 1alt (Ore → Pure Element, Refinery): Added 3 new refinery recipes:
+    - `refine_au`: Au-ore(10) → Au(9), energyCost=8, time=15
+    - `refine_pt`: Pt-ore(10) → Pt(9), energyCost=10, time=18
+    - `refine_u`: U-ore(10) → U(9), energyCost=10, time=18
+  - Level 2 (Pure Elements → Materials): Moved from old buildings to synthesizer:
+    - `make_steel`: buildingId 'smelter' → 'synthesizer'
+    - `make_titanium_alloy`: buildingId 'smelter' → 'synthesizer'
+    - `make_plastic`: buildingId 'chemical_plant' → 'synthesizer'
+    - `make_silicon_crystal`: buildingId 'chemical_plant' → 'synthesizer'
+    - `make_superconductor`: buildingId 'chemical_plant' → 'synthesizer'
+    - Added `make_synfuel`: C(8)+H(12)+S(1) → synfuel(6), energyCost=3, time=8, buildingId='synthesizer'
+  - Level 3 (Materials → Components): All moved to synthesizer:
+    - `make_microchip`: buildingId 'chemical_plant' → 'synthesizer'
+    - `make_hull_element`: buildingId 'smelter' → 'synthesizer'
+    - `make_armor_plate`: buildingId 'smelter' → 'synthesizer'
+    - `make_engine_section`: buildingId 'chemical_plant' → 'synthesizer'
+    - `make_shield_generator`: buildingId 'chemical_plant' → 'synthesizer'
+  - Level 4 (Components → Modules): Shipyard recipes unchanged (already correct)
+  - Updated section headers: "Уровень 2: Чистые элементы → Материалы (Синтезатор)", "Уровень 3: Материалы → Компоненты", "Уровень 4: Компоненты → Модули (Верфь)"
+- **Verified engine.ts**: No hardcoded 'smelter' or 'chemical_plant' references — all uses BUILDING_MAP.get() and recipe.buildingId dynamically
+- **Verified building-dialog.tsx**: No hardcoded building name references — uses BUILDING_MAP dynamically
+- **Verified planet-view.tsx**: No hardcoded building name references — uses BUILDING_MAP dynamically
+- **Final search**: Confirmed zero remaining 'smelter' or 'chemical_plant' references in src/
+- Lint: 0 errors
+- Dev server: compiling successfully
+
+Stage Summary:
+- 2 source files modified: buildings.ts, recipes.ts
+- 3 other files verified clean: engine.ts, building-dialog.tsx, planet-view.tsx
+- Building renames: smelter→processor, chemical_plant→synthesizer
+- New building added: refinery (Очистительный комплекс)
+- 4 new recipes added: refine_au, refine_pt, refine_u, make_synfuel
+- Recipe buildingId corrections: Level 2+ recipes properly assigned to synthesizer
+- Total buildings: 9 (was 8), Total recipes: 30 (was 26)
+- Processing conveyor now has 4 levels: Processor (L1) → Synthesizer (L2-L3) → Shipyard (L4), with Refinery (L1alt) for high-purity rare metals

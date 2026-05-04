@@ -8,7 +8,6 @@ import { ELEMENT_MAP } from '@/data/elements';
 
 // Приоритеты по умолчанию для категорий элементов
 const CATEGORY_PRIORITY: Record<string, number> = {
-  energy: 10,
   structural: 8,
   fuel: 7,
   light: 7,
@@ -61,10 +60,11 @@ export function calculateWarehouseCapacity(planet: Planet): number {
   return capacity;
 }
 
-/** Получить суммарный объём всех ресурсов на планете */
+/** Получить суммарный объём всех ресурсов на планете (Energy НЕ считается — это потоковый ресурс) */
 export function getUsedCapacity(planet: Planet): number {
   let total = 0;
-  for (const amount of Object.values(planet.resources)) {
+  for (const [id, amount] of Object.entries(planet.resources)) {
+    if (id === 'Energy') continue; // Energy — потоковый ресурс, не занимает склад
     total += amount;
   }
   return total;
@@ -114,25 +114,20 @@ export const COLONY_ROLE_PRESETS: Record<ColonyRole, { resourceId: string; minim
     ...['Fe-ore', 'Si-ore', 'C-ore', 'Al-ore', 'Ti-ore', 'Cu-ore'].map(id => ({ resourceId: id, minimum: 50, priority: 8 })),
     // Чистые элементы: средние
     ...['Fe', 'Si', 'C', 'Al'].map(id => ({ resourceId: id, minimum: 20, priority: 7 })),
-    // Энергия: критично
-    ...['Energy'].map(id => ({ resourceId: id, minimum: 30, priority: 10 })),
   ],
   industrial: [
     // Сбалансированные резервы
     ...['Fe-ore', 'Si-ore', 'C-ore', 'Al-ore'].map(id => ({ resourceId: id, minimum: 30, priority: 8 })),
     ...['Fe', 'Si', 'C', 'Al', 'Ti', 'Cu'].map(id => ({ resourceId: id, minimum: 25, priority: 7 })),
-    ...['Energy'].map(id => ({ resourceId: id, minimum: 30, priority: 10 })),
   ],
   research: [
     // Высокие резервы электроники и редких материалов
     ...['Si', 'Au', 'Cu'].map(id => ({ resourceId: id, minimum: 50, priority: 9 })),
-    ...['Energy'].map(id => ({ resourceId: id, minimum: 40, priority: 10 })),
     // Низкие резервы руд
     ...['Fe-ore', 'Si-ore'].map(id => ({ resourceId: id, minimum: 5, priority: 3 })),
   ],
   capital: [
     // Сбалансированные + жизнеобеспечение
-    ...['Energy'].map(id => ({ resourceId: id, minimum: 50, priority: 10 })),
     ...['Fe', 'Si', 'C', 'Al'].map(id => ({ resourceId: id, minimum: 30, priority: 7 })),
     ...['Fe-ore', 'Si-ore'].map(id => ({ resourceId: id, minimum: 15, priority: 5 })),
   ],
@@ -159,11 +154,12 @@ export function applyColonyRole(warehouse: PlanetWarehouse, role: ColonyRole): P
   };
 }
 
-/** Убедиться, что резервы существуют для всех ресурсов на планете */
+/** Убедиться, что резервы существуют для всех ресурсов на планете (Energy пропускается — потоковый ресурс) */
 export function ensureReservesForResources(planet: Planet): void {
   if (!planet.warehouse) return;
 
   for (const resourceId of Object.keys(planet.resources)) {
+    if (resourceId === 'Energy') continue; // Energy — потоковый ресурс, нет смысла резервировать
     if (!planet.warehouse.reserves[resourceId]) {
       const pureId = resourceId.replace('-ore', '');
       const elDef = ELEMENT_MAP.get(pureId);

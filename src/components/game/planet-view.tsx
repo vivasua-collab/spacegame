@@ -5,7 +5,7 @@ import { useGameStore } from '@/stores/game-store';
 import { axialToPixel } from '@/galaxy';
 import { TERRAIN_COLORS, TERRAIN_NAMES, TYPE_NAMES, SIZE_NAMES } from '@/data/planet-types';
 import { BUILDING_MAP } from '@/data/buildings';
-import { ELEMENT_MAP, ELEMENTS } from '@/data/elements';
+import { ELEMENT_MAP } from '@/data/elements';
 import { getUsedCapacity, getOrbitBufferUsed } from '@/data/warehouse';
 import { BuildingDialog } from './building-dialog';
 import { ResourcePanel } from './resource-panel';
@@ -14,21 +14,25 @@ import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from '@/components/ui/sheet';
+import {
   Globe2,
   Thermometer,
   Wind,
   Zap,
   ChevronLeft,
   Layers,
-  Ruler,
-  Clock,
-  Orbit,
   Gem,
-  Info,
-  Weight,
+  Map,
   Warehouse,
+  Package,
 } from 'lucide-react';
-import type { Planet, HexCell, HexTerrain, AtmosphereType, LifeLevel, AtmosphericSlot, OrbitalSlot, PlanetResourceDeposit, ColonyRole, WarehouseSpecialization } from '@/core/types';
+import type { Planet, HexCell, AtmosphereType, LifeLevel, AtmosphericSlot, OrbitalSlot, PlanetResourceDeposit, ColonyRole, WarehouseSpecialization } from '@/core/types';
 
 const ATMO_DISPLAY: Record<AtmosphereType, string> = {
   none: 'Нет', thin: 'Тонкая', standard: 'Стандартная', dense: 'Плотная',
@@ -56,15 +60,6 @@ const CATEGORY_NAMES: Record<string, string> = {
   light: 'Лёгкие',
 };
 
-/** Форматирование орбитального периода */
-function formatOrbitalPeriod(days: number): string {
-  if (days < 1) return '<1 дня';
-  if (days < 365) return `${days} дн.`;
-  const years = days / 365.25;
-  if (years < 10) return `${years.toFixed(1)} лет`;
-  return `${Math.round(years)} лет`;
-}
-
 /** Форматирование количества ресурса */
 function formatQuantity(q: number): string {
   if (q >= 1000000) return `${(q / 1000000).toFixed(1)}M`;
@@ -74,7 +69,7 @@ function formatQuantity(q: number): string {
 
 const HEX_SIZE = 24; // pixel size for hex rendering
 
-type PlanetTab = 'overview' | 'resources';
+type PlanetTab = 'map' | 'resources';
 
 export function PlanetView() {
   const gameState = useGameStore((s) => s.gameState);
@@ -85,7 +80,8 @@ export function PlanetView() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [selectedHexIndex, setSelectedHexIndex] = useState<number | null>(null);
   const [hoveredHexIndex, setHoveredHexIndex] = useState<number | null>(null);
-  const [activeTab, setActiveTab] = useState<PlanetTab>('overview');
+  const [activeTab, setActiveTab] = useState<PlanetTab>('map');
+  const [warehouseOpen, setWarehouseOpen] = useState(false);
 
   if (!gameState || !selectedPlanetId) {
     return (
@@ -139,16 +135,16 @@ export function PlanetView() {
             {SIZE_NAMES[planet.size] ?? planet.size}
           </Badge>
           <div className="flex-1" />
-          {/* Tab buttons */}
-          <div className="flex gap-1">
+          {/* Tab buttons + Warehouse button */}
+          <div className="flex gap-1 items-center">
             <button
               className={`text-[10px] px-2 py-0.5 rounded transition-colors ${
-                activeTab === 'overview' ? 'bg-white/15 text-white' : 'text-slate-500 hover:text-slate-300'
+                activeTab === 'map' ? 'bg-white/15 text-white' : 'text-slate-500 hover:text-slate-300'
               }`}
-              onClick={() => setActiveTab('overview')}
+              onClick={() => setActiveTab('map')}
             >
-              <Info className="size-3 inline mr-0.5" />
-              Обзор
+              <Map className="size-3 inline mr-0.5" />
+              Карта
             </button>
             <button
               className={`text-[10px] px-2 py-0.5 rounded transition-colors ${
@@ -159,11 +155,34 @@ export function PlanetView() {
               <Gem className="size-3 inline mr-0.5" />
               Ресурсы ({planet.resourceDeposits.length})
             </button>
+            <Separator orientation="vertical" className="h-3 bg-white/10 mx-0.5" />
+            {/* Warehouse button → opens Sheet */}
+            <Sheet open={warehouseOpen} onOpenChange={setWarehouseOpen}>
+              <SheetTrigger asChild>
+                <button
+                  className="text-[10px] px-2 py-0.5 rounded transition-colors text-slate-500 hover:text-slate-300 hover:bg-white/10 flex items-center gap-0.5"
+                >
+                  <Warehouse className="size-3" />
+                  Склад
+                </button>
+              </SheetTrigger>
+              <SheetContent side="right" className="bg-[#0d0d24] border-white/10 text-white w-80 sm:max-w-md">
+                <SheetHeader>
+                  <SheetTitle className="flex items-center gap-2 text-white">
+                    <Warehouse className="size-4" />
+                    Склад планеты
+                  </SheetTitle>
+                </SheetHeader>
+                <div className="px-4 pb-4 overflow-y-auto max-h-[calc(100vh-80px)]">
+                  <WarehousePanel planet={planet} />
+                </div>
+              </SheetContent>
+            </Sheet>
           </div>
         </div>
 
         {/* Content area */}
-        {activeTab === 'overview' ? (
+        {activeTab === 'map' ? (
           <div className="flex-1 min-h-0">
             <HexGrid
               hexes={planet.hexes}
@@ -180,109 +199,61 @@ export function PlanetView() {
       </div>
 
       {/* Right sidebar */}
-      <div className="lg:w-72 shrink-0 space-y-3 overflow-hidden">
-        {/* Planet info */}
-        <Card className="bg-[#0d0d24] border-white/10 text-white py-3 gap-3">
-          <CardContent className="px-4 py-0 space-y-2">
-            <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
-              Планета
-            </div>
-            <div className="space-y-1.5 text-xs">
-              <div className="flex justify-between text-slate-300">
-                <span className="flex items-center gap-1 text-slate-500"><Globe2 className="size-3" /> Гравитация</span>
-                <span className="font-mono">{planet.gravity.toFixed(2)}g</span>
-              </div>
-              <div className="flex justify-between text-slate-300">
-                <span className="flex items-center gap-1 text-slate-500"><Weight className="size-3" /> Плотность</span>
-                <span className="font-mono">{planet.density.toFixed(1)} г/см³</span>
-              </div>
-              <div className="flex justify-between text-slate-300">
-                <span className="flex items-center gap-1 text-slate-500"><Ruler className="size-3" /> Радиус</span>
-                <span className="font-mono">{planet.radiusKm.toLocaleString()} км</span>
-              </div>
-              <div className="flex justify-between text-slate-300">
-                <span className="flex items-center gap-1 text-slate-500"><Thermometer className="size-3" /> Температура</span>
-                <span className="font-mono">{planet.temperature > 0 ? '+' : ''}{planet.temperature}&deg;C</span>
-              </div>
-              <div className="flex justify-between text-slate-300">
-                <span className="flex items-center gap-1 text-slate-500"><Ruler className="size-3" /> Расстояние</span>
-                <span className="font-mono">{planet.orbitalRadius.toFixed(2)} AU</span>
-              </div>
-              <div className="flex justify-between text-slate-300">
-                <span className="flex items-center gap-1 text-slate-500"><Orbit className="size-3" /> Орбита</span>
-                <span className="font-mono">#{planet.orbitNumber}</span>
-              </div>
-              <div className="flex justify-between text-slate-300">
-                <span className="flex items-center gap-1 text-slate-500"><Clock className="size-3" /> Период</span>
-                <span className="font-mono">{formatOrbitalPeriod(planet.orbitalPeriod)}</span>
-              </div>
-              <div className="flex justify-between text-slate-300">
-                <span className="flex items-center gap-1 text-slate-500"><Wind className="size-3" /> Атмосфера</span>
-                <span>{ATMO_DISPLAY[planet.atmosphere.type] ?? planet.atmosphere.type}{planet.atmosphere.type !== 'none' ? ` (${planet.atmosphere.pressure.toFixed(1)} атм)` : ''}</span>
-              </div>
-              <div className="flex justify-between text-slate-300">
-                <span className="flex items-center gap-1 text-slate-500"><Layers className="size-3" /> Жизнь</span>
-                <span>
-                  {LIFE_DISPLAY[planet.life.level] ?? planet.life.level}
-                  {planet.life.level !== 'none' ? ` (БИО ${planet.life.biodiversity.toFixed(2)})` : ''}
-                </span>
-              </div>
-              <div className="flex justify-between text-slate-300">
-                <span className="flex items-center gap-1 text-slate-500"><Zap className="size-3" /> Энергия</span>
-                <span className={`font-mono ${planet.energyBalance >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                  {planet.energyBalance >= 0 ? '+' : ''}{planet.energyBalance.toFixed(1)}
-                </span>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Hovered hex info */}
-        {activeTab === 'overview' && hoveredHexIndex !== null && planet.hexes[hoveredHexIndex] && (
-          <HexInfoCard hex={planet.hexes[hoveredHexIndex]} />
-        )}
-
-        {/* Atmosphere Composition */}
-        {planet.atmosphere.type !== 'none' && planet.atmosphere.composition.length > 0 && (
-          <Card className="bg-[#0d0d24] border-white/10 text-white py-3 gap-3">
-            <CardContent className="px-4 py-0 space-y-2">
-              <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
-                Состав атмосферы
-              </div>
-              <div className="space-y-0.5">
-                {planet.atmosphere.composition.map((comp, i) => (
-                  <div key={i} className="flex justify-between text-xs text-slate-300">
-                    <span>{comp.element}</span>
-                    <span className="font-mono">{comp.percentage.toFixed(1)}%</span>
+      <div className="lg:w-72 shrink-0">
+        <ScrollArea className="h-full max-h-[calc(100vh-100px)]">
+          <div className="space-y-3 pr-1">
+            {/* Compact planet info */}
+            <Card className="bg-[#0d0d24] border-white/10 text-white py-3 gap-3">
+              <CardContent className="px-4 py-0 space-y-2">
+                <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+                  Планета
+                </div>
+                <div className="space-y-1.5 text-xs">
+                  <div className="flex justify-between text-slate-300">
+                    <span className="flex items-center gap-1 text-slate-500"><Globe2 className="size-3" /> Гравитация</span>
+                    <span className="font-mono">{planet.gravity.toFixed(2)}g</span>
                   </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-        )}
+                  <div className="flex justify-between text-slate-300">
+                    <span className="flex items-center gap-1 text-slate-500"><Thermometer className="size-3" /> Температура</span>
+                    <span className="font-mono">{planet.temperature > 0 ? '+' : ''}{planet.temperature}&deg;C</span>
+                  </div>
+                  <div className="flex justify-between text-slate-300">
+                    <span className="flex items-center gap-1 text-slate-500"><Wind className="size-3" /> Атмосфера</span>
+                    <span>{ATMO_DISPLAY[planet.atmosphere.type] ?? planet.atmosphere.type}{planet.atmosphere.type !== 'none' ? ` (${planet.atmosphere.pressure.toFixed(1)} атм)` : ''}</span>
+                  </div>
+                  <div className="flex justify-between text-slate-300">
+                    <span className="flex items-center gap-1 text-slate-500"><Layers className="size-3" /> Жизнь</span>
+                    <span>
+                      {LIFE_DISPLAY[planet.life.level] ?? planet.life.level}
+                      {planet.life.level !== 'none' ? ` (БИО ${planet.life.biodiversity.toFixed(2)})` : ''}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-slate-300">
+                    <span className="flex items-center gap-1 text-slate-500"><Zap className="size-3" /> Энергия</span>
+                    <span className={`font-mono ${planet.energyBalance >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                      {planet.energyBalance >= 0 ? '+' : ''}{planet.energyBalance.toFixed(1)}
+                    </span>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
 
-        {/* Atmospheric Slots (gas giants) */}
-        {planet.atmosphericSlots.length > 0 && (
-          <SlotCard title="Атмосферные слоты" slots={planet.atmosphericSlots} />
-        )}
+            {/* Hovered hex info */}
+            {activeTab === 'map' && hoveredHexIndex !== null && planet.hexes[hoveredHexIndex] && (
+              <HexInfoCard hex={planet.hexes[hoveredHexIndex]} />
+            )}
 
-        {/* Orbital Slots */}
-        {planet.orbitSlots.length > 0 && (
-          <SlotCard title="Орбитальные слоты" slots={planet.orbitSlots} />
-        )}
+            {/* Atmospheric Slots (gas giants) */}
+            {planet.atmosphericSlots.length > 0 && (
+              <SlotCard title="Атмосферные слоты" slots={planet.atmosphericSlots} />
+            )}
 
-        {/* Resources summary (in sidebar) */}
-        <Card className="bg-[#0d0d24] border-white/10 text-white py-3 gap-3">
-          <CardContent className="px-4 py-0">
-            <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
-              Ресурсы
-            </div>
-            <ResourcePanel resources={planet.resources} className="h-48" />
-          </CardContent>
-        </Card>
-
-        {/* Warehouse panel */}
-        <WarehousePanel planet={planet} />
+            {/* Orbital Slots */}
+            {planet.orbitSlots.length > 0 && (
+              <SlotCard title="Орбитальные слоты" slots={planet.orbitSlots} />
+            )}
+          </div>
+        </ScrollArea>
       </div>
 
       {/* Building dialog */}
@@ -307,9 +278,32 @@ function ResourcesTabContent({ planet }: { planet: Planet }) {
   const rareDeposits = deposits.filter(d => d.tier === 'rare');
   const ultraRareDeposits = deposits.filter(d => d.tier === 'ultra_rare');
 
+  // Check if there are any stored resources
+  const storedResources = Object.entries(planet.resources).filter(([, amount]) => amount > 0);
+  const hasStoredResources = storedResources.length > 0;
+
   return (
     <ScrollArea className="h-full max-h-[calc(100vh-160px)]">
       <div className="p-2 space-y-4">
+        {/* Stored warehouse contents */}
+        {hasStoredResources && (
+          <div>
+            <div className="flex items-center gap-2 mb-1">
+              <Package className="size-4 text-cyan-400" />
+              <span className="text-sm font-semibold text-white">Хранимые ресурсы</span>
+              <Badge className="text-[9px] h-4 px-1 bg-cyan-900/30 text-cyan-400 border-0">
+                {storedResources.length}
+              </Badge>
+            </div>
+            <div className="text-[10px] text-slate-500 mb-2">Содержимое склада планеты</div>
+            <Card className="bg-[#0d0d24] border-white/10 text-white py-3 gap-3">
+              <CardContent className="px-4 py-0">
+                <ResourcePanel resources={planet.resources} className="h-64" />
+              </CardContent>
+            </Card>
+          </div>
+        )}
+
         {/* Profile resources */}
         <ResourceSection
           title="Профильные ресурсы"
@@ -682,7 +676,13 @@ function WarehousePanel({ planet }: { planet: Planet }) {
   const setColonyRole = useGameStore((s) => s.setColonyRole);
   const setWarehouseSpecialization = useGameStore((s) => s.setWarehouseSpecialization);
 
-  if (!planet.warehouse) return null;
+  if (!planet.warehouse) {
+    return (
+      <div className="text-sm text-slate-500 text-center py-8">
+        Склад ещё не построен
+      </div>
+    );
+  }
 
   const wh = planet.warehouse;
   const used = getUsedCapacity(planet);
@@ -694,113 +694,122 @@ function WarehousePanel({ planet }: { planet: Planet }) {
   const reserveEntries = Object.values(wh.reserves).sort((a, b) => b.priority - a.priority);
 
   return (
-    <Card className="bg-[#0d0d24] border-white/10 text-white py-3 gap-3">
-      <CardContent className="px-4 py-0 space-y-2">
-        <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-2">
-          <Warehouse className="size-3.5" />
-          Склад планеты
+    <div className="space-y-4">
+      {/* Capacity bar */}
+      <div className="space-y-1">
+        <div className="flex justify-between text-xs">
+          <span className="text-slate-400">Вместимость</span>
+          <span className="font-mono text-slate-300">{Math.floor(used)} / {wh.totalCapacity}</span>
         </div>
+        <div className="h-2.5 bg-white/5 rounded-full overflow-hidden">
+          <div
+            className={`h-full rounded-full transition-all ${
+              pct > 90 ? 'bg-red-500' : pct > 70 ? 'bg-amber-500' : 'bg-emerald-500'
+            }`}
+            style={{ width: `${Math.min(100, pct)}%` }}
+          />
+        </div>
+      </div>
 
-        {/* Capacity bar */}
+      {/* Colony role selector */}
+      <div className="space-y-1.5">
+        <span className="text-[10px] text-slate-500 uppercase tracking-wider">Роль колонии</span>
+        <div className="flex gap-1 flex-wrap">
+          {(['mining', 'industrial', 'research', 'capital', 'custom'] as ColonyRole[]).map(role => (
+            <button
+              key={role}
+              onClick={() => setColonyRole(planet.id, role)}
+              className={`text-[9px] px-2 py-1 rounded transition-colors ${
+                wh.colonyRole === role
+                  ? 'bg-cyan-600/30 text-cyan-300 ring-1 ring-cyan-500/30'
+                  : 'bg-white/5 text-slate-500 hover:text-slate-300 hover:bg-white/10'
+              }`}
+            >
+              {ROLE_NAMES[role]}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Specialization selector */}
+      <div className="space-y-1.5">
+        <span className="text-[10px] text-slate-500 uppercase tracking-wider">Специализация</span>
+        <div className="flex gap-1 flex-wrap">
+          {(['universal', 'ore', 'metal', 'gas', 'component'] as WarehouseSpecialization[]).map(spec => (
+            <button
+              key={spec}
+              onClick={() => setWarehouseSpecialization(planet.id, spec)}
+              className={`text-[9px] px-2 py-1 rounded transition-colors ${
+                wh.specialization === spec
+                  ? 'bg-purple-600/30 text-purple-300 ring-1 ring-purple-500/30'
+                  : 'bg-white/5 text-slate-500 hover:text-slate-300 hover:bg-white/10'
+              }`}
+            >
+              {SPEC_NAMES[spec]}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Reserves list */}
+      {reserveEntries.length > 0 && (
+        <div className="space-y-1.5">
+          <span className="text-[10px] text-slate-500 uppercase tracking-wider">Резервы</span>
+          <div className="max-h-48 overflow-y-auto space-y-0.5 pr-1 custom-scrollbar">
+            {reserveEntries.map(reserve => {
+              const current = planet.resources[reserve.resourceId] ?? 0;
+              const isBelowMin = current < reserve.minimum;
+              return (
+                <div key={reserve.resourceId} className="flex items-center justify-between text-[10px] py-0.5">
+                  <span className={`${isBelowMin ? 'text-red-400' : 'text-slate-400'} font-mono truncate`}>
+                    {reserve.resourceId}
+                  </span>
+                  <span className="flex items-center gap-1 shrink-0">
+                    <span className={`font-mono ${isBelowMin ? 'text-red-400' : 'text-slate-500'}`}>
+                      {Math.floor(current)}
+                    </span>
+                    <span className="text-slate-600">/</span>
+                    <span className="text-slate-600 font-mono">{reserve.minimum}</span>
+                    <span className="text-slate-700 ml-0.5">P{reserve.priority}</span>
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Orbit buffer */}
+      {wh.orbitBuffer.capacity > 0 && (
         <div className="space-y-1">
           <div className="flex justify-between text-xs">
-            <span className="text-slate-400">Вместимость</span>
-            <span className="font-mono">{Math.floor(used)} / {wh.totalCapacity}</span>
+            <span className="text-slate-400">Орбитальный буфер</span>
+            <span className="font-mono text-slate-300">{Math.floor(orbitUsed)} / {wh.orbitBuffer.capacity}</span>
           </div>
           <div className="h-2 bg-white/5 rounded-full overflow-hidden">
             <div
-              className={`h-full rounded-full transition-all ${
-                pct > 90 ? 'bg-red-500' : pct > 70 ? 'bg-amber-500' : 'bg-emerald-500'
-              }`}
-              style={{ width: `${Math.min(100, pct)}%` }}
+              className="h-full rounded-full bg-cyan-500"
+              style={{ width: `${Math.min(100, orbitPct)}%` }}
             />
           </div>
         </div>
+      )}
 
-        {/* Colony role selector */}
-        <div className="space-y-1">
-          <span className="text-[10px] text-slate-500 uppercase">Роль колонии</span>
-          <div className="flex gap-1 flex-wrap">
-            {(['mining', 'industrial', 'research', 'capital', 'custom'] as ColonyRole[]).map(role => (
-              <button
-                key={role}
-                onClick={() => setColonyRole(planet.id, role)}
-                className={`text-[9px] px-1.5 py-0.5 rounded transition-colors ${
-                  wh.colonyRole === role
-                    ? 'bg-cyan-600/30 text-cyan-300'
-                    : 'bg-white/5 text-slate-500 hover:text-slate-300'
-                }`}
-              >
-                {ROLE_NAMES[role]}
-              </button>
-            ))}
+      {/* Stored resources in warehouse */}
+      {(() => {
+        const storedEntries = Object.entries(planet.resources).filter(([, amount]) => amount > 0);
+        if (storedEntries.length === 0) return null;
+        return (
+          <div className="space-y-1.5">
+            <span className="text-[10px] text-slate-500 uppercase tracking-wider">Хранимые ресурсы</span>
+            <Card className="bg-white/[0.03] border-white/5 py-3 gap-3">
+              <CardContent className="px-3 py-0">
+                <ResourcePanel resources={planet.resources} className="h-48" />
+              </CardContent>
+            </Card>
           </div>
-        </div>
-
-        {/* Specialization selector */}
-        <div className="space-y-1">
-          <span className="text-[10px] text-slate-500 uppercase">Специализация</span>
-          <div className="flex gap-1 flex-wrap">
-            {(['universal', 'ore', 'metal', 'gas', 'component'] as WarehouseSpecialization[]).map(spec => (
-              <button
-                key={spec}
-                onClick={() => setWarehouseSpecialization(planet.id, spec)}
-                className={`text-[9px] px-1.5 py-0.5 rounded transition-colors ${
-                  wh.specialization === spec
-                    ? 'bg-purple-600/30 text-purple-300'
-                    : 'bg-white/5 text-slate-500 hover:text-slate-300'
-                }`}
-              >
-                {SPEC_NAMES[spec]}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Reserves list */}
-        {reserveEntries.length > 0 && (
-          <div className="space-y-1">
-            <span className="text-[10px] text-slate-500 uppercase">Резервы</span>
-            <div className="max-h-32 overflow-y-auto space-y-0.5 pr-1 custom-scrollbar">
-              {reserveEntries.map(reserve => {
-                const current = planet.resources[reserve.resourceId] ?? 0;
-                const isBelowMin = current < reserve.minimum;
-                return (
-                  <div key={reserve.resourceId} className="flex items-center justify-between text-[10px]">
-                    <span className={`${isBelowMin ? 'text-red-400' : 'text-slate-400'} font-mono truncate`}>
-                      {reserve.resourceId}
-                    </span>
-                    <span className="flex items-center gap-1 shrink-0">
-                      <span className={`font-mono ${isBelowMin ? 'text-red-400' : 'text-slate-500'}`}>
-                        {Math.floor(current)}
-                      </span>
-                      <span className="text-slate-600">/</span>
-                      <span className="text-slate-600 font-mono">{reserve.minimum}</span>
-                      <span className="text-slate-700 ml-0.5">P{reserve.priority}</span>
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* Orbit buffer */}
-        {wh.orbitBuffer.capacity > 0 && (
-          <div className="space-y-1">
-            <div className="flex justify-between text-xs">
-              <span className="text-slate-400">Орбитальный буфер</span>
-              <span className="font-mono">{Math.floor(orbitUsed)} / {wh.orbitBuffer.capacity}</span>
-            </div>
-            <div className="h-1.5 bg-white/5 rounded-full overflow-hidden">
-              <div
-                className="h-full rounded-full bg-cyan-500"
-                style={{ width: `${Math.min(100, orbitPct)}%` }}
-              />
-            </div>
-          </div>
-        )}
-      </CardContent>
-    </Card>
+        );
+      })()}
+    </div>
   );
 }

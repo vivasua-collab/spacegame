@@ -32,10 +32,8 @@ export const ELEMENTS: ElementDef[] = [
   { id: 'N', name: 'Азот', symbol: 'N', category: 'chemical', baseValue: 0.4, density: 0.00125, isAtmospheric: true },
   { id: 'S', name: 'Сера', symbol: 'S', category: 'chemical', baseValue: 0.6, density: 2.07, isAtmospheric: false },
 
-  // Энергия
-  { id: 'U', name: 'Уран', symbol: 'U', category: 'energy', baseValue: 10, density: 19.05, isAtmospheric: false },
-
   // Редкие
+  { id: 'U', name: 'Уран', symbol: 'U', category: 'rare', baseValue: 10, density: 19.05, isAtmospheric: false },
   { id: 'W', name: 'Вольфрам', symbol: 'W', category: 'rare', baseValue: 5, density: 19.25, isAtmospheric: false },
   { id: 'Co', name: 'Кобальт', symbol: 'Co', category: 'rare', baseValue: 4, density: 8.90, isAtmospheric: false },
   { id: 'Pt', name: 'Платина', symbol: 'Pt', category: 'rare', baseValue: 20, density: 21.45, isAtmospheric: false },

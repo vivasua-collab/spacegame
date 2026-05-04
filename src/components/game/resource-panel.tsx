@@ -6,7 +6,7 @@ import { ELEMENT_MAP } from '@/data/elements';
 import type { ElementCategory } from '@/core/types';
 
 const CATEGORY_ORDER: ElementCategory[] = [
-  'structural', 'fuel', 'alloy', 'electronics', 'chemical', 'energy', 'rare', 'light',
+  'structural', 'fuel', 'alloy', 'electronics', 'chemical', 'rare', 'light',
 ];
 
 const CATEGORY_LABELS: Record<ElementCategory, string> = {
@@ -15,7 +15,6 @@ const CATEGORY_LABELS: Record<ElementCategory, string> = {
   alloy: 'Alloys',
   electronics: 'Electronics',
   chemical: 'Chemical',
-  energy: 'Energy',
   rare: 'Rare',
   light: 'Light',
 };
@@ -26,7 +25,6 @@ const CATEGORY_COLORS: Record<ElementCategory, string> = {
   alloy: 'text-orange-400',
   electronics: 'text-yellow-400',
   chemical: 'text-green-400',
-  energy: 'text-purple-400',
   rare: 'text-pink-400',
   light: 'text-sky-400',
 };

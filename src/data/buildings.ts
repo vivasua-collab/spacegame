@@ -1,5 +1,5 @@
 /**
- * Определения зданий — 8 зданий для MVP.
+ * Определения зданий — 9 зданий для MVP.
  * Добавлены поля layer и requiresAtmosphere для соответствия документации.
  */
 
@@ -63,9 +63,9 @@ export const BUILDINGS: BuildingDef[] = [
     requiresAtmosphere: true, // P1-27: только на планетах с атмосферой
   },
   {
-    id: 'smelter',
-    name: 'Плавильня',
-    description: 'Переработка руды в чистые металлы',
+    id: 'processor',
+    name: 'Переработчик',
+    description: 'Универсальная переработка руды в чистые элементы. Выход: 70–85% чистоты.',
     category: 'processing',
     layer: ['surface'],
     size: ['small', 'medium', 'large'],
@@ -77,9 +77,9 @@ export const BUILDINGS: BuildingDef[] = [
     requiresAtmosphere: false,
   },
   {
-    id: 'chemical_plant',
-    name: 'Химзавод',
-    description: 'Химическая переработка и синтез',
+    id: 'synthesizer',
+    name: 'Синтезатор',
+    description: 'Синтез сплавов, материалов и химических соединений из чистых элементов.',
     category: 'processing',
     layer: ['surface'],
     size: ['medium', 'large'],
@@ -87,6 +87,20 @@ export const BUILDINGS: BuildingDef[] = [
     baseProductionTime: 15,
     levels: 10,
     costPerLevel: { Fe: 6, Si: 4, Cu: 2 },
+    terrainBonus: {},
+    requiresAtmosphere: false,
+  },
+  {
+    id: 'refinery',
+    name: 'Очистительный комплекс',
+    description: 'Глубокая очистка элементов. Выход: 95–99% чистоты, но 2× энергозатраты.',
+    category: 'processing',
+    layer: ['surface'],
+    size: ['medium', 'large'],
+    energyConsumption: 8,
+    baseProductionTime: 15,
+    levels: 10,
+    costPerLevel: { Fe: 12, Si: 8, Cu: 4 },
     terrainBonus: {},
     requiresAtmosphere: false,
   },
