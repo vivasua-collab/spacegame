@@ -1,18 +1,28 @@
 /**
  * Основной Zustand-стор для игрового состояния.
- * Включает систему сохранения/загрузки через API.
+ *
+ * Версия 3.0: Работает через GameMediator.
+ * Стор делегирует действия медиатору и модулям,
+ * а сам отвечает за реактивность (React re-renders).
+ *
+ * Паттерн:
+ * - Мутации → через модули/медиатор (движок)
+ * - Реактивность → через Zustand set() (UI)
+ * - События → через TypedEventBus (межмодульное взаимодействие)
  */
 
 import { create } from 'zustand';
 import type { GameState, GameTime, GameSpeed, GamePhase, Galaxy, StarSystem, Planet, EntityId, ProductionQueue, ColonyRole, WarehouseSpecialization } from '@/core/types';
-import { generateGalaxy, type GalaxyGenConfig } from '@/galaxy';
-import { processEconomyTick, buildOnHex, upgradeBuilding, enqueueProduction, giveStarterResources, recalcEnergyBalance, colonizePlanet } from '@/economy';
-import { createDefaultWarehouse, applyColonyRole, calculateWarehouseCapacity, canStoreResource, getOrbitBufferUsed, getOrbitBufferCapacity } from '@/data/warehouse';
-import { gameBus } from '@/core/event-bus';
+import { getGameMediator } from '@/core/game-mediator';
+import { gameBus } from '@/core/typed-event-bus';
+import { processEconomyTick, buildOnHex, upgradeBuilding, enqueueProduction, giveStarterResources, colonizePlanet } from '@/economy';
+import { createDefaultWarehouse, applyColonyRole, calculateWarehouseCapacity, canStoreResource, getOrbitBufferUsed, getOrbitBufferCapacity, ensureReservesForResources } from '@/data/warehouse';
 import { BUILDING_MAP } from '@/data/buildings';
 import { bakeGalaxyModel } from '@/data/chemistry-generator';
 import { ELEMENTS } from '@/data/elements';
 import { setCurrentLookups } from '@/data/baked-lookups';
+import { EconomyModule } from '@/economy/economy-module';
+import { GalaxyModule } from '@/galaxy/galaxy-module';
 
 // ============ Типы стора ============
 
@@ -40,7 +50,7 @@ export interface GameStore {
   isLoading: boolean;
 
   // === Действия ===
-  newGame: (config?: Partial<GalaxyGenConfig>) => void;
+  newGame: (config?: Partial<import('@/galaxy').GalaxyGenConfig>) => void;
   setSpeed: (speed: GameSpeed) => void;
   togglePause: () => void;
   tick: () => void;
@@ -78,12 +88,34 @@ export interface GameStore {
   getSelectedPlanet: () => Planet | undefined;
 }
 
+// ============ Медиатор (инициализация) ============
+
+/** Флаг: были ли модули уже зарегистрированы */
+let modulesRegistered = false;
+
+/** Получить медиатор с зарегистрированными модулями */
+function getMediatorWithModules() {
+  const mediator = getGameMediator();
+
+  if (!modulesRegistered) {
+    const economyModule = new EconomyModule();
+    const galaxyModule = new GalaxyModule();
+
+    // Модули нуждаются в доступе к GameState — устанавливаем accessor
+    economyModule.setGameStateAccessor(() => mediator.getGameState());
+    galaxyModule.setGameStateAccessor(() => mediator.getGameState());
+
+    mediator.registerAndInit([galaxyModule, economyModule]);
+    modulesRegistered = true;
+  }
+
+  return mediator;
+}
+
 // ============ Сериализация ============
 
 /**
  * Сериализует GameState в JSON-строку.
- * systemMap исключается (Map не сериализуется, восстанавливается из systems).
- * productionQueues конвертируется Map → массив пар [key, value].
  */
 function serializeGameState(state: GameState): string {
   const { systemMap: _systemMap, bakedModel: _bakedModel, ...galaxyWithoutMap } = state.galaxy;
@@ -97,42 +129,32 @@ function serializeGameState(state: GameState): string {
 
 /**
  * Десериализует GameState из JSON-строки.
- * Восстанавливает systemMap Map из массива systems (единые ссылки на объекты).
- * Восстанавливает productionQueues Map из массива пар [key, value].
- * Обратно совместим: старые сохранения с systemMap как массив пар тоже поддерживаются.
  */
 function deserializeGameState(json: string): GameState {
   const raw = JSON.parse(json);
 
-  // Восстановить systemMap: из systems (новый формат) или из systemMap-entries (старый)
   const systems: StarSystem[] = raw.galaxy.systems || [];
   const systemMap = new Map<string, StarSystem>();
 
   if (systems.length > 0) {
-    // Новый формат: systemMap восстанавливается из systems
     for (const sys of systems) {
       systemMap.set(sys.id, sys);
     }
   } else if (Array.isArray(raw.galaxy.systemMap)) {
-    // Старый формат: systemMap хранился как массив пар [id, system]
     const entries: [string, StarSystem][] = raw.galaxy.systemMap;
     for (const [id, sys] of entries) {
       systemMap.set(id, sys);
     }
   }
 
-  // Восстановить productionQueues
   const queueEntries: [string, ProductionQueue][] = raw.productionQueues || [];
   const productionQueues = new Map(queueEntries);
 
-  // Восстановить BakedGalaxyModel: из сохранения или re-bake из seed
   let bakedModel = raw.galaxy.bakedModel;
   if (!bakedModel) {
-    // Старое сохранение без baked model — запекаем заново
     bakedModel = bakeGalaxyModel(raw.galaxy.seed ?? 42, ELEMENTS);
   }
 
-  // Установить lookup-структуры для работы движка
   setCurrentLookups(bakedModel);
 
   return {
@@ -145,7 +167,6 @@ function deserializeGameState(json: string): GameState {
     },
     productionQueues,
     fleets: raw.fleets || [],
-    // Миграция: старые сохранения могут иметь time.day вместо time.dayInYear
     time: raw.time?.dayInYear !== undefined
       ? raw.time
       : { tick: raw.time?.tick ?? 0, dayInYear: (raw.time?.day ?? 0) % 365, year: raw.time?.year ?? 1 },
@@ -156,18 +177,10 @@ function deserializeGameState(json: string): GameState {
 
 export const useGameStore = create<GameStore>((set, get) => {
   /** Создать начальное GameState */
-  function createInitialState(config: Partial<GalaxyGenConfig>): GameState {
-    const galaxy = generateGalaxy(config);
-
-    return {
-      time: { tick: 0, dayInYear: 0, year: 1 },
-      speed: 0,
-      phase: 'colonization',
-      galaxy,
-      productionQueues: new Map(),
-      fleets: [],
-      playerFactionId: 'player',
-    };
+  function createInitialState(config: Partial<import('@/galaxy').GalaxyGenConfig>): GameState {
+    const mediator = getMediatorWithModules();
+    const state = mediator.newGame(config);
+    return state;
   }
 
   return {
@@ -220,7 +233,7 @@ export const useGameStore = create<GameStore>((set, get) => {
       const { gameState } = get();
       if (!gameState || gameState.phase !== 'playing') return;
 
-      // 1 тик = 1 игровой день. Speed = количество дней за интервал.
+      // Обновить время
       gameState.time.tick += gameState.speed;
       gameState.time.dayInYear = gameState.time.tick % 365;
       gameState.time.year = Math.floor(gameState.time.tick / 365) + 1;
@@ -285,12 +298,10 @@ export const useGameStore = create<GameStore>((set, get) => {
       const planet = findPlanet(gameState, planetId);
       if (!planet) return false;
 
-      // Найти систему для расчёта энергобаланса
       const system = gameState.galaxy.systemMap.get(planet.systemId);
 
       const result = colonizePlanet(planet, system);
       if (result) {
-        // Инициализация склада при колонизации
         if (!planet.warehouse) {
           planet.warehouse = createDefaultWarehouse();
           planet.warehouse = applyColonyRole(planet.warehouse, 'industrial');
@@ -298,12 +309,9 @@ export const useGameStore = create<GameStore>((set, get) => {
           planet.warehouse.orbitBuffer.capacity = getOrbitBufferCapacity(planet);
         }
 
-        // После колонизации — начать игру
         gameState.phase = 'playing';
         gameState.speed = 1;
         set({
-          // Создаём новые ссылки для galaxy.systems, чтобы все
-          // consumer-компоненты увидели изменение (planet.owner мутируется напрямую)
           gameState: {
             ...gameState,
             galaxy: {
@@ -383,10 +391,10 @@ export const useGameStore = create<GameStore>((set, get) => {
       const moveAmount = Math.min(amount, orbitAmount);
       if (moveAmount <= 0) return false;
 
-      const canStore = canStoreResource(planet, resourceId, moveAmount);
-      if (canStore <= 0) return false;
+      const canStoreAmount = canStoreResource(planet, resourceId, moveAmount);
+      if (canStoreAmount <= 0) return false;
 
-      const actualMove = Math.min(moveAmount, canStore);
+      const actualMove = Math.min(moveAmount, canStoreAmount);
       planet.warehouse.orbitBuffer.resources[resourceId] -= actualMove;
       planet.resources[resourceId] = (planet.resources[resourceId] ?? 0) + actualMove;
       set({ gameState: { ...gameState, galaxy: { ...gameState.galaxy, systems: [...gameState.galaxy.systems] } } });
@@ -399,7 +407,6 @@ export const useGameStore = create<GameStore>((set, get) => {
       const { gameState, currentSaveId } = get();
       if (!gameState) return false;
 
-      // ── Шаг 1: Поставить игру на паузу, остановить все расчёты ──
       const savedSpeed = gameState.speed;
       const savedPhase = gameState.phase;
 
@@ -411,15 +418,12 @@ export const useGameStore = create<GameStore>((set, get) => {
 
       set({ isSaving: true, saveError: null });
 
-      // ── Шаг 2: Дать React очистить интервал тиков (микрозадержка) ──
       await new Promise<void>((resolve) => setTimeout(resolve, 50));
 
       try {
-        // ── Шаг 3: Сериализовать состояние (пока на паузе — никто не мутирует) ──
         const saveName = name || `Galaxy #${gameState.galaxy.seed}`;
         const stateJson = serializeGameState(gameState);
 
-        // Функция fetch с таймаутом (30 секунд)
         const fetchWithTimeout = async (url: string, options: RequestInit) => {
           const controller = new AbortController();
           const timeoutId = setTimeout(() => controller.abort(), 30000);
@@ -432,7 +436,6 @@ export const useGameStore = create<GameStore>((set, get) => {
         };
 
         if (currentSaveId) {
-          // Обновить существующее сохранение
           const res = await fetchWithTimeout(`/api/save/${currentSaveId}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
@@ -443,7 +446,6 @@ export const useGameStore = create<GameStore>((set, get) => {
             throw new Error(`Failed to update save (${res.status}): ${errText}`);
           }
         } else {
-          // Создать новое сохранение
           const res = await fetchWithTimeout('/api/save', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -469,7 +471,6 @@ export const useGameStore = create<GameStore>((set, get) => {
         set({ saveError: errorMsg });
         return false;
       } finally {
-        // ── Шаг 4: Снять с паузы, восстановить скорость ──
         if (savedPhase === 'playing' || savedPhase === 'colonization') {
           gameState.phase = savedPhase === 'colonization' ? 'colonization' : 'playing';
           gameState.speed = savedSpeed || 1;
@@ -516,7 +517,7 @@ export const useGameStore = create<GameStore>((set, get) => {
       }
     },
 
-    deleteSave: async (id: string) => {
+    deleteSave: async (id) => {
       try {
         const res = await fetch(`/api/save/${id}`, { method: 'DELETE' });
         if (!res.ok) throw new Error('Failed to delete save');

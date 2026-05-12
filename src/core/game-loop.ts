@@ -1,16 +1,18 @@
 /**
  * Игровой цикл с управлением временем.
  *
- * Версия 2.0: 1 тик = 1 игровой день.
- * Скорость x1 = 5 дней/сек (200мс интервал),
- * x50 = 250 дней/сек.
+ * Версия 3.0: Интегрирован с ModuleRegistry и TypedEventBus.
+ * - Тики распределяются через bus → registry.tickAll()
+ * - Отложенные события обрабатываются через bus.flush()
+ * - Поддерживает пошаговый режим (step)
  *
- * Note: этот класс НЕ подключён к Zustand-стору напрямую.
- * Основной цикл работает через useEffect в page.tsx → store.tick().
- * GameLoop оставлен для возможного будущего использования (headless-сервер, тесты).
+ * Подключение:
+ * - React: useEffect + setInterval → mediator.tick()
+ * - Headless: loop.start() / loop.step()
  */
 
-import { gameBus } from './event-bus';
+import type { TypedEventBus } from './typed-event-bus';
+import type { ModuleRegistry } from './module-registry';
 import type { GameTime, GameSpeed, GamePhase } from './types';
 
 export class GameLoop {
@@ -18,8 +20,12 @@ export class GameLoop {
   private speed: GameSpeed = 1;
   private phase: GamePhase = 'paused';
   private intervalId: ReturnType<typeof setInterval> | null = null;
+  private bus: TypedEventBus;
+  private registry: ModuleRegistry;
 
-  constructor() {
+  constructor(bus: TypedEventBus, registry: ModuleRegistry) {
+    this.bus = bus;
+    this.registry = registry;
     this.time = { tick: 0, dayInYear: 0, year: 1 };
   }
 
@@ -45,7 +51,7 @@ export class GameLoop {
         this.phase = 'paused';
       }
     }
-    gameBus.emit('speed:changed', speed);
+    this.bus.emit('core:speed-changed', speed);
   }
 
   start(): void {
@@ -54,14 +60,14 @@ export class GameLoop {
     if (this.speed > 0) {
       this.startInterval();
     }
-    gameBus.emit('game:started');
+    this.bus.emit('core:started', undefined);
   }
 
   pause(): void {
     if (this.phase === 'paused') return;
     this.phase = 'paused';
     this.stopInterval();
-    gameBus.emit('game:paused');
+    this.bus.emit('core:paused', undefined);
   }
 
   toggle(): void {
@@ -100,11 +106,15 @@ export class GameLoop {
     this.time.dayInYear = this.time.tick % 365;
     this.time.year = Math.floor(this.time.tick / 365) + 1;
 
-    gameBus.emit('tick', this.time);
+    // Отправить событие тика в шину
+    this.bus.emit('core:tick', { ...this.time });
+
+    // Распределить тик по всем модулям через реестр
+    this.registry.tickAll(this.time);
 
     // Ежегодное событие
     if (this.time.dayInYear === 0 && this.time.tick > 0) {
-      gameBus.emit('year', this.time);
+      this.bus.emit('core:year', { ...this.time });
     }
   }
 
