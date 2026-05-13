@@ -35,6 +35,8 @@ export function processEconomyTick(planets: Planet[], queues: Map<EntityId, Prod
 /**
  * Добыча ресурсов зданиями на планете.
  * P1-27: Газовый экстрактор требует атмосферу.
+ * Руды и соединения кладутся на склад как сырьё —
+ * переработка происходит через рецептурную систему (recipes.ts).
  */
 function processExtraction(planet: Planet): void {
   // Surface buildings
@@ -64,8 +66,12 @@ function processExtraction(planet: Planet): void {
 
         deposit.quantity -= extracted;
         if (extracted > 0) {
-          // Конвертируем руду в содержащиеся элементы
-          extractOreToElements(planet, deposit.elementId, extracted);
+          // Кладём руду на склад как сырьё (переработка через рецепты)
+          const canStore = canStoreResource(planet, deposit.elementId, extracted);
+          const actual = Math.min(extracted, canStore);
+          if (actual > 0) {
+            planet.resources[deposit.elementId] = (planet.resources[deposit.elementId] ?? 0) + actual;
+          }
         }
       }
     }
@@ -83,8 +89,11 @@ function processExtraction(planet: Planet): void {
 
         deposit.quantity -= extracted;
         if (extracted > 0) {
-          // Конвертируем руду в содержащиеся элементы
-          extractOreToElements(planet, deposit.elementId, extracted);
+          const canStore = canStoreResource(planet, deposit.elementId, extracted);
+          const actual = Math.min(extracted, canStore);
+          if (actual > 0) {
+            planet.resources[deposit.elementId] = (planet.resources[deposit.elementId] ?? 0) + actual;
+          }
         }
       }
     }
@@ -103,18 +112,54 @@ function processExtraction(planet: Planet): void {
 
     if (buildingDef.category === 'extraction') {
       const levelMult = 1 + slot.buildingLevel * 0.15;
-      // Газовые гиганты имеют бонус к добыче из атмосферы
       const atmosphereMult = planet.type === 'gas_giant' ? 1.0 : getAtmosphereEfficiency(planet.atmosphere.type);
 
-      // Газовый экстрактор: ~2 единицы/день на элемент при standard атмосфере
-      // C-02 fix: добавлен O — добывается из плотных/стандартных атмосфер
-      const atmosphericElements = ['H', 'He', 'C', 'N', 'O'];
-      for (const elementId of atmosphericElements) {
+      // Получаем список доступных газов для данного типа атмосферы
+      const availableGases = getAtmosphericGasesForType(planet.atmosphere.type);
+      for (const gasId of availableGases) {
         const baseRate = 2.0 * levelMult * atmosphereMult;
-        const canStore = canStoreResource(planet, elementId, baseRate);
+        const canStore = canStoreResource(planet, gasId, baseRate);
         if (canStore > 0) {
-          planet.resources[elementId] = (planet.resources[elementId] ?? 0) + canStore;
+          planet.resources[gasId] = (planet.resources[gasId] ?? 0) + canStore;
         }
+      }
+    }
+  }
+
+  // Автоматическая конвертация чистых газов (не требующих переработки)
+  // H2→H, N2→N, O2→O, He→He, Ne→Ne, Ar→Ar — 1:1 прямое преобразование
+  convertDirectAtmosphericElements(planet);
+}
+
+/** Получить доступные газы для типа атмосферы (из processing-chains.ts) */
+function getAtmosphericGasesForType(atmosphereType: string): string[] {
+  const ATMOSPHERE_GAS_MAP: Record<string, string[]> = {
+    none: [],
+    thin: ['N2', 'CO2'],
+    standard: ['Ar', 'N2', 'CO2', 'O2'],
+    dense: ['H2', 'He', 'Ar', 'N2', 'CO2', 'O2'],
+    toxic: ['N2', 'CO2', 'NH3', 'H2S', 'SO2'],
+    inert: ['He', 'Ne', 'Ar', 'N2'],
+    methane: ['H2', 'CH4', 'NH3'],
+    co2: ['N2', 'CO2'],
+  };
+  return ATMOSPHERE_GAS_MAP[atmosphereType] ?? [];
+}
+
+/** Конвертация чистых атмосферных газов в элементы (1:1, переработка не нужна) */
+function convertDirectAtmosphericElements(planet: Planet): void {
+  const DIRECT_GAS_MAP: Record<string, string> = {
+    'H2': 'H', 'He': 'He', 'Ne': 'Ne', 'Ar': 'Ar', 'N2': 'N', 'O2': 'O',
+  };
+  for (const [gasId, elementId] of Object.entries(DIRECT_GAS_MAP)) {
+    const gasAmount = planet.resources[gasId] ?? 0;
+    if (gasAmount > 0) {
+      const canStore = canStoreResource(planet, elementId, gasAmount);
+      const actual = Math.min(gasAmount, canStore);
+      if (actual > 0) {
+        planet.resources[elementId] = (planet.resources[elementId] ?? 0) + actual;
+        planet.resources[gasId] = gasAmount - actual;
+        if (planet.resources[gasId] <= 0) delete planet.resources[gasId];
       }
     }
   }
@@ -135,10 +180,9 @@ function getAtmosphereEfficiency(type: string): number {
 }
 
 /**
- * Конвертировать добытую руду/соединение в чистые элементы и положить на склад.
- * Использует BakedGalaxyModel (через findContainedElements) для определения
- * содержащихся элементов и их пропорций (yield из 10 единиц сырья).
- * Учитывает вместимость склада для каждого элемента.
+ * @deprecated Руды теперь кладутся на склад как сырьё и перерабатываются через
+ * рецептурную систему (recipes.ts). Эта функция оставлена как fallback для
+ * нестандартных ресурсов, не имеющих рецептов.
  */
 function extractOreToElements(planet: Planet, oreId: string, oreAmount: number): void {
   // Ищем содержащиеся элементы через BakedGalaxyModel

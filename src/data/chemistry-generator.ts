@@ -499,6 +499,18 @@ const ORE_SPECS: Record<string, OreSpec> = {
     processingEnergyCost: 5, processingTime: 250,
     prototype: 'Барит (BaSO₄)', molarFormula: 'BaSO₄',
   },
+  'O-rock': {
+    id: 'O-rock', name: 'Кислородсодержащие породы', oreType: 'nonmetal_ore', sourceBuildingId: 'quarry',
+    formula: null,
+    containedElements: [
+      { elementId: 'Si', yield: 3.0 },
+      { elementId: 'O', yield: 5.0 },
+      { elementId: 'Al', yield: 2.0 },
+    ],
+    minSourceLevel: 1, processingBuildingId: 'processor', minProcessingLevel: 1,
+    processingEnergyCost: 2, processingTime: 150,
+    prototype: 'Кислородсодержащие силикаты', molarFormula: 'SiO₂+Al₂O₃',
+  },
 
   // ── Deep ores (drilling_rig) ──────────────────────────────────────────
   // reactive_metal exceptions
@@ -640,6 +652,22 @@ const ORE_SPECS: Record<string, OreSpec> = {
     prototype: 'Осмиевый сульфид (OsS₂)', molarFormula: 'OsS₂',
   },
 };
+
+/** Special ores not tied to a single element — added after element-based generation. */
+const SPECIAL_ORE_SPECS: OreSpec[] = [
+  {
+    id: 'O-rock', name: 'Кислородсодержащие породы', oreType: 'nonmetal_ore', sourceBuildingId: 'quarry',
+    formula: null,
+    containedElements: [
+      { elementId: 'Si', yield: 3.0 },
+      { elementId: 'O', yield: 5.0 },
+      { elementId: 'Al', yield: 2.0 },
+    ],
+    minSourceLevel: 1, processingBuildingId: 'processor', minProcessingLevel: 1,
+    processingEnergyCost: 2, processingTime: 150,
+    prototype: 'Кислородсодержащие силикаты', molarFormula: 'SiO₂+Al₂O₃',
+  },
+];
 
 /**
  * Maps element IDs to their primary ore spec key in ORE_SPECS.
@@ -1351,20 +1379,28 @@ export function bakeGalaxyModel(seed: number, elements: ElementDef[]): BakedGala
     }
   }
 
-  // O-rock (oxygen-bearing silicates — additional source of Si, O, Al)
-  ores.push({
-    id: 'O-rock', name: 'Кислородсодержащие породы', type: 'nonmetal_ore',
-    sourceBuildingId: 'quarry',
-    containedElements: [
-      { elementId: 'Si', yield: 3.0 },
-      { elementId: 'O', yield: 5.0 },
-      { elementId: 'Al', yield: 2.0 },
-    ],
-    minSourceLevel: 1, processingBuildingId: 'processor', minProcessingLevel: 1,
-    processingEnergyCost: 2, processingTime: 150,
-    prototype: 'Кислородсодержащие силикаты', molarFormula: 'SiO₂+Al₂O₃',
-    molarMass: 0, primaryElement: 'O', chemicalCharacter: 'reactive_nonmetal',
-  });
+  // Add special ores not tied to any element
+  for (const spec of SPECIAL_ORE_SPECS) {
+    const contained = spec.containedElements ?? (spec.formula ? calculateYieldsFromFormula(spec.formula, massMap) : []);
+    const molarMass = spec.formula ? calculateMolarMass(spec.formula, massMap) : 0;
+    ores.push({
+      id: spec.id,
+      name: spec.name,
+      type: spec.oreType,
+      sourceBuildingId: spec.sourceBuildingId,
+      containedElements: contained,
+      minSourceLevel: spec.minSourceLevel,
+      processingBuildingId: spec.processingBuildingId,
+      minProcessingLevel: spec.minProcessingLevel,
+      processingEnergyCost: spec.processingEnergyCost,
+      processingTime: spec.processingTime,
+      prototype: spec.prototype,
+      molarFormula: spec.molarFormula,
+      molarMass,
+      primaryElement: '__compound__',
+      chemicalCharacter: 'reactive_nonmetal',
+    });
+  }
 
   // Refinery alternatives for Au, Pt, U
   for (const [elementId, alt] of Object.entries(REFINERY_ALTERNATIVES)) {

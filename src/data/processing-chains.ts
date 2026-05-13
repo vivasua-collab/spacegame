@@ -429,6 +429,18 @@ export const ORE_DEFINITIONS: OreDefinition[] = [
     molarFormula: 'PbSe', molarMass: 286.2,
   },
   {
+    id: 'Te-ore', name: 'Теллуровая руда', type: 'metal_ore',
+    sourceBuildingId: 'mine',
+    containedElements: [
+      { elementId: 'Pb', yield: 6.2 },
+      { elementId: 'Te', yield: 3.8 },
+    ],
+    minSourceLevel: 1, processingBuildingId: 'processor', minProcessingLevel: 4,
+    processingEnergyCost: 5, processingTime: 300,
+    prototype: 'Алтаит (PbTe)',
+    molarFormula: 'PbTe', molarMass: 334.8,
+  },
+  {
     id: 'U-ore', name: 'Урановая руда', type: 'metal_ore',
     sourceBuildingId: 'mine',
     containedElements: [
