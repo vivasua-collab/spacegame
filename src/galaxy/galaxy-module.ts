@@ -20,7 +20,7 @@ export class GalaxyModule implements IGameModule {
     name: 'Галактика',
     version: '1.0.0',
     description: 'Генерация галактики, звёздные системы, планеты',
-    dependencies: ['core'],
+    dependencies: [],
     emits: [
       'galaxy:generated',
       'galaxy:system-discovered',
