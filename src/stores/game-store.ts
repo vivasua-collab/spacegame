@@ -16,7 +16,7 @@ import type { GameState, GameTime, GameSpeed, GamePhase, Galaxy, StarSystem, Pla
 import { getGameMediator } from '@/core/game-mediator';
 import { gameBus } from '@/core/typed-event-bus';
 import { processEconomyTick, buildOnHex, upgradeBuilding, enqueueProduction, giveStarterResources, colonizePlanet } from '@/economy';
-import { createDefaultWarehouse, applyColonyRole, calculateWarehouseCapacity, canStoreResource, getOrbitBufferUsed, getOrbitBufferCapacity, ensureReservesForResources } from '@/data/warehouse';
+import { createDefaultWarehouse, applyColonyRole, calculateWarehouseCapacity, calculateWarehouseCapacities, canStoreResource, getOrbitBufferUsed, getOrbitBufferCapacity, ensureReservesForResources } from '@/data/warehouse';
 import { BUILDING_MAP } from '@/data/buildings';
 import { bakeGalaxyModel } from '@/data/chemistry-generator';
 import { ELEMENTS } from '@/data/elements';
@@ -305,6 +305,7 @@ export const useGameStore = create<GameStore>((set, get) => {
         if (!planet.warehouse) {
           planet.warehouse = createDefaultWarehouse();
           planet.warehouse = applyColonyRole(planet.warehouse, 'industrial');
+          planet.warehouse.capacities = calculateWarehouseCapacities(planet);
           planet.warehouse.totalCapacity = calculateWarehouseCapacity(planet);
           planet.warehouse.orbitBuffer.capacity = getOrbitBufferCapacity(planet);
         }
@@ -357,6 +358,7 @@ export const useGameStore = create<GameStore>((set, get) => {
       const planet = findPlanet(gameState, planetId);
       if (!planet || !planet.warehouse) return;
       planet.warehouse.specialization = spec;
+      planet.warehouse.capacities = calculateWarehouseCapacities(planet);
       planet.warehouse.totalCapacity = calculateWarehouseCapacity(planet);
       set({ gameState: { ...gameState, galaxy: { ...gameState.galaxy, systems: [...gameState.galaxy.systems] } } });
     },

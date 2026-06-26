@@ -9,7 +9,7 @@ import { BUILDING_MAP } from '@/data/buildings';
 import { RECIPE_MAP } from '@/data/recipes';
 import { ELEMENT_MAP } from '@/data/elements';
 import { getCurrentLookups, findContainedElements } from '@/data/baked-lookups';
-import { canStoreResource, calculateWarehouseCapacity, getOrbitBufferCapacity, ensureReservesForResources } from '@/data/warehouse';
+import { canStoreResource, calculateWarehouseCapacity, calculateWarehouseCapacities, getOrbitBufferCapacity, ensureReservesForResources } from '@/data/warehouse';
 import { gameBus } from '@/core/event-bus';
 
 /**
@@ -353,7 +353,11 @@ export function recalcEnergyBalance(planet: Planet, system?: StarSystem): void {
 
   // Пересчёт вместимости склада и орбитального буфера
   if (planet.warehouse) {
-    planet.warehouse.totalCapacity = calculateWarehouseCapacity(planet);
+    // v3.0: раздельная система складов
+    const caps = calculateWarehouseCapacities(planet);
+    planet.warehouse.capacities = caps;
+    // Legacy totalCapacity (сумма всех 3) — для обратной совместимости
+    planet.warehouse.totalCapacity = caps.ore + caps.processed + caps.highTech;
     planet.warehouse.orbitBuffer.capacity = getOrbitBufferCapacity(planet);
   }
 }

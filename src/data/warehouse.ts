@@ -14,17 +14,39 @@ import { ELEMENT_MAP } from '@/data/elements';
 import { getCurrentLookups, hasCurrentLookups } from '@/data/baked-lookups';
 
 // ============================================================================
-// Константы
+// Константы (раздельная система складов v3.0)
+// См. docs/35-warehouse-and-logistics.md §1.3
+// Единица измерения: 1 ед. = 1 млн т = 0.001 млрд т
 // ============================================================================
 
-/** Базовая вместимость склада (предоставляется Колониальным Хабом) */
-export const BASE_CAPACITY = 10000;
+/** @deprecated Используйте PROCESSED_WAREHOUSE_BASE. Legacy совместимость. */
+export const BASE_CAPACITY = 100;
 
-/** Бонус вместимости за уровень здания склада */
-export const WAREHOUSE_PER_LEVEL = 2500;
+/** @deprecated Используйте PROCESSED_WAREHOUSE_PER_LEVEL. Legacy совместимость. */
+export const WAREHOUSE_PER_LEVEL = 25;
 
 /** Бонус орбитального буфера за уровень космопорта */
-export const SPACEPORT_PER_LEVEL = 500;
+export const SPACEPORT_PER_LEVEL = 5;
+
+// --- Раздельные константы (v3.0) ---
+
+/** Базовая вместимость рудного склада (открытое хранение) = 1 млрд т */
+export const ORE_WAREHOUSE_BASE = 1000;
+
+/** Бонус рудного склада за уровень open_warehouse = +0.25 млрд т/ур. */
+export const ORE_WAREHOUSE_PER_LEVEL = 250;
+
+/** Базовая вместимость переработанного склада (крытое хранение) = 0.1 млрд т */
+export const PROCESSED_WAREHOUSE_BASE = 100;
+
+/** Бонус переработанного склада за уровень warehouse = +0.025 млрд т/ур. */
+export const PROCESSED_WAREHOUSE_PER_LEVEL = 25;
+
+/** Базовая вместимость высокотехнологичного склада (спец хранение) = 0.01 млрд т */
+export const HIGH_TECH_STORAGE_BASE = 10;
+
+/** Бонус высокотехнологичного склада за уровень high_tech_storage = +0.0025 млрд т/ур. */
+export const HIGH_TECH_STORAGE_PER_LEVEL = 2.5;
 
 /** Минимальный резерв по умолчанию */
 const DEFAULT_MINIMUM = 50;
@@ -156,7 +178,12 @@ export function getSpecInfo(spec: WarehouseSpecialization): { multiplier: number
 /** Создать склад по умолчанию для новой колонии */
 export function createDefaultWarehouse(): PlanetWarehouse {
   return {
-    totalCapacity: BASE_CAPACITY,
+    totalCapacity: PROCESSED_WAREHOUSE_BASE,
+    capacities: {
+      ore: ORE_WAREHOUSE_BASE,
+      processed: PROCESSED_WAREHOUSE_BASE,
+      highTech: HIGH_TECH_STORAGE_BASE,
+    },
     specialization: 'universal',
     reserves: {},
     colonyRole: 'industrial',
@@ -167,32 +194,110 @@ export function createDefaultWarehouse(): PlanetWarehouse {
   };
 }
 
-/** Рассчитать общую вместимость склада на основе зданий */
-export function calculateWarehouseCapacity(planet: Planet): number {
-  let capacity = BASE_CAPACITY; // Colony Hub base
+/**
+ * Рассчитать раздельные вместимости складов на основе зданий (v3.0).
+ * Возвращает объект с 3 вместимостями: ore, processed, highTech.
+ */
+export function calculateWarehouseCapacities(planet: Planet): { ore: number; processed: number; highTech: number } {
+  let oreCap = ORE_WAREHOUSE_BASE;
+  let processedCap = PROCESSED_WAREHOUSE_BASE;
+  let highTechCap = HIGH_TECH_STORAGE_BASE;
 
-  // Вместимость от зданий склада на поверхности
+  // Подсчёт по зданиям на поверхности
   for (const hex of planet.hexes) {
-    if (hex.buildingId === 'warehouse') {
-      capacity += WAREHOUSE_PER_LEVEL * hex.buildingLevel;
+    if (!hex.buildingId) continue;
+    switch (hex.buildingId) {
+      case 'open_warehouse':
+        oreCap += ORE_WAREHOUSE_PER_LEVEL * hex.buildingLevel;
+        break;
+      case 'warehouse':
+        processedCap += PROCESSED_WAREHOUSE_PER_LEVEL * hex.buildingLevel;
+        break;
+      case 'high_tech_storage':
+        highTechCap += HIGH_TECH_STORAGE_PER_LEVEL * hex.buildingLevel;
+        break;
     }
   }
 
-  // Вместимость от складов на орбитальных слотах
+  // Подсчёт по зданиям на орбитальных слотах
   for (const slot of planet.orbitSlots) {
-    if (slot.buildingId === 'warehouse') {
-      capacity += WAREHOUSE_PER_LEVEL * slot.buildingLevel;
+    if (!slot.buildingId) continue;
+    switch (slot.buildingId) {
+      case 'open_warehouse':
+        oreCap += ORE_WAREHOUSE_PER_LEVEL * slot.buildingLevel;
+        break;
+      case 'warehouse':
+        processedCap += PROCESSED_WAREHOUSE_PER_LEVEL * slot.buildingLevel;
+        break;
+      case 'high_tech_storage':
+        highTechCap += HIGH_TECH_STORAGE_PER_LEVEL * slot.buildingLevel;
+        break;
     }
   }
 
-  // Бонус специализации
-  const spec = planet.warehouse?.specialization ?? 'universal';
-  const specBonus = SPEC_BONUSES[spec];
-  if (specBonus && specBonus.multiplier > 1) {
-    capacity = Math.floor(capacity * specBonus.multiplier);
+  return { ore: oreCap, processed: processedCap, highTech: highTechCap };
+}
+
+/**
+ * @deprecated Используйте calculateWarehouseCapacities. Legacy совместимость.
+ * Возвращает сумму всех 3 вместимостей (для обратной совместимости).
+ */
+export function calculateWarehouseCapacity(planet: Planet): number {
+  const caps = calculateWarehouseCapacities(planet);
+  return caps.ore + caps.processed + caps.highTech;
+}
+
+/**
+ * Получить тип склада для ресурса.
+ * 'ore' — рудный склад (руды, газы, ледяные)
+ * 'processed' — переработанный (чистые элементы abundant/common, конструкционные)
+ * 'highTech' — высокотехнологичный (электроника, сверхпроводники, редкие элементы)
+ */
+export function getWarehouseType(resourceId: string): 'ore' | 'processed' | 'highTech' {
+  const resType = getResourceType(resourceId);
+
+  // Руды, газы (сырые), ледяные → рудный склад
+  if (resType === 'ore' || resType === 'atmospheric' || resType === 'ice') {
+    return 'ore';
   }
 
-  return capacity;
+  // Проверяем на высокотехнологичные материалы (по ID)
+  const HIGH_TECH_MATERIALS = new Set([
+    'microchip', 'superconductor', 'silicon_crystal', 'sensor_array',
+    'shield_generator', 'engine_section', 'ion_engine', 'laser',
+    'cargo_bay', 'scanner',
+  ]);
+  if (HIGH_TECH_MATERIALS.has(resourceId)) {
+    return 'highTech';
+  }
+
+  // Редкие и уникальные чистые элементы → высокотехнологичный
+  const category = getResourceCategory(resourceId);
+  if (category === 'noble' || category === 'rare' || category === 'lanthanide' ||
+      category === 'transuranic' || category === 'platinoid' || category === 'rare_earth') {
+    return 'highTech';
+  }
+
+  // Остальные чистые элементы и материалы → переработанный
+  if (resType === 'element' || resType === 'unknown') {
+    return 'processed';
+  }
+
+  return 'processed';
+}
+
+/**
+ * Получить использованный объём для конкретного типа склада.
+ */
+export function getUsedCapacityByType(planet: Planet, warehouseType: 'ore' | 'processed' | 'highTech'): number {
+  let total = 0;
+  for (const [id, amount] of Object.entries(planet.resources)) {
+    if (id === 'Energy') continue;
+    if (getWarehouseType(id) === warehouseType) {
+      total += amount;
+    }
+  }
+  return total;
 }
 
 // ============================================================================
@@ -231,12 +336,29 @@ export function getOrbitBufferUsed(planet: Planet): number {
 
 /**
  * Проверить, можно ли хранить ресурс на складе.
+ * Использует раздельную систему складов (v3.0): ресурс направляется в
+ * соответствующий склад (ore/processed/highTech), и проверяется вместимость
+ * именно этого склада.
+ *
  * Возвращает фактическое количество, которое можно разместить
  * (может быть меньше запрошенного).
  */
 export function canStoreResource(planet: Planet, resourceId: string, amount: number): number {
   if (!planet.warehouse) return amount; // Нет склада = безлимит (обратная совместимость)
 
+  // v3.0: раздельная система складов
+  if (planet.warehouse.capacities) {
+    const whType = getWarehouseType(resourceId);
+    const caps = calculateWarehouseCapacities(planet);
+    const capacity = whType === 'ore' ? caps.ore : whType === 'highTech' ? caps.highTech : caps.processed;
+    const used = getUsedCapacityByType(planet, whType);
+    const available = capacity - used;
+    if (available <= 0) return 0;
+    if (amount <= available) return amount;
+    return available;
+  }
+
+  // Legacy: общая вместимость (для старых сохранений без capacities)
   const capacity = planet.warehouse.totalCapacity;
   const used = getUsedCapacity(planet);
   const available = capacity - used;

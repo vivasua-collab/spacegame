@@ -1076,65 +1076,146 @@ yield = 0.450 + 0.005 × (level - 1)   (максимум 0.500 на уровне
 
 ## 11. Формулы и расчёты
 
-### 11.1 Полная формула добычи
+> ⚠️ **Версия 3.0-draft**: формулы обновлены под шкалу «млрд тонн» и раздельную систему складов.
+> **Единица измерения в коде:** 1 ед. = 1 млн т = 0.001 млрд т. См. §1.5.
 
-```
-final_production = base_production × level_multiplier
-                   × planet_modifier
-                   × workforce_efficiency
-                   × adjacency_bonus
-                   × energy_efficiency
-```
+### 11.1 Базовые константы (TypeScript)
 
-| Множитель | Диапазон | Источник |
-|-----------|----------|----------|
-| `base_production` | 1.0 | Базовый параметр здания |
-| `level_multiplier` | 1.0–5.0 | Таблица из раздела 9.3 |
-| `planet_modifier` | 0.1–1.5 | Зависит от типа здания и планеты |
-| `workforce_efficiency` | 0.1–1.0 | `= habitability / 100` |
-| `adjacency_bonus` | 1.0–1.3+ | См. раздел 5 |
-| `energy_efficiency` | 0.0–1.0 | `= min(1.0, available_energy / required_energy)` |
+```typescript
+// Шкала: 1 ед. = 1 млн т = 0.001 млрд т
 
-### 11.2 Формула энергопотребления здания
+// Скорости (ед./день, эквивалент млрд т/день × 1000)
+export const BASE_EXTRACTION_RATE = 1.0;      // шахта, карьер, газовый экстрактор (1 ед/день = 0.001 млрд т/день)
+export const BASE_PROCESSING_RATE = 2.0;      // processor, synthesizer, refinery (2 ед/день = 0.002 млрд т/день)
+export const BASE_PRODUCTION_RATE = 0.1;      // верфь, завод (0.1 ед/день = 0.0001 млрд т/день)
 
-```
-actual_energy_cost = base_energy × level_multiplier / energy_efficiency_per_level
-```
+// Вместимость складов (ед.)
+export const ORE_WAREHOUSE_BASE = 1000;        // рудный склад (1 млрд т)
+export const ORE_WAREHOUSE_PER_LEVEL = 250;    // +0.25 млрд т/ур.
+export const PROCESSED_WAREHOUSE_BASE = 100;   // переработанный склад (0.1 млрд т)
+export const PROCESSED_WAREHOUSE_PER_LEVEL = 25; // +0.025 млрд т/ур.
+export const HIGH_TECH_STORAGE_BASE = 10;      // высокотехнологичный склад (0.01 млрд т)
+export const HIGH_TECH_STORAGE_PER_LEVEL = 2.5; // +0.0025 млрд т/ур.
+export const ORBIT_BUFFER_PER_LEVEL = 5;       // +0.005 млрд т/ур. (космопорт)
 
-| Параметр | Описание |
-|----------|----------|
-| `base_energy` | Базовое энергопотребление здания уровня 1 |
-| `level_multiplier` | Множитель скорости (здание быстрее работает → больше потребляет) |
-| `energy_efficiency_per_level` | Уменьшение удельного потребления (0.55 на ур. 10) |
-
-**Пример**: Переработчик уровня 5:
-```
-actual_energy = 10 × 2.2 / 0.80 = 27.5 ед./тик
+// Множители уровня
+export const EXTRACTION_LEVEL_MULT = 0.15;     // 1 + level × 0.15
+export const PROCESSING_LEVEL_MULT = 0.15;
+export const PRODUCTION_LEVEL_MULT = 0.15;
+export const ENERGY_LEVEL_MULT = 0.20;
 ```
 
-### 11.3 Формула стоимости строительства
+### 11.2 Полная формула добычи
 
 ```
-build_cost(resource) = base_cost(resource) × (1 + 0.2 × (level - 1))
-build_time_ticks = base_build_time × level
+extraction_rate = BASE_EXTRACTION_RATE × availability × levelMult × terrainMult
 ```
 
-### 11.4 Износ зданий
+Где:
+- `BASE_EXTRACTION_RATE = 1.0 ед./день` (= 0.001 млрд т/день)
+- `availability` — доступность залежи (0.05–1.0)
+- `levelMult = 1 + level × 0.15`
+- `terrainMult` — бонус местности (1.0–1.5)
 
-Каждое здание имеет **прочность** (hit points), которая медленно снижается со временем:
+**Пример:** Шахта ур.5, availability=0.5, mountains (×1.5):
+```
+rate = 1.0 × 0.5 × (1 + 5×0.15) × 1.5 = 1.31 ед./день = 0.00131 млрд т/день
+```
+
+### 11.3 Формула переработки
 
 ```
-wear_per_tick = 0.001   (базовый износ)
-wear_modifier = 1.0     (нормальные условия)
-                   1.5  (токсичная атмосфера)
-                   2.0  (вулканическая планета)
-                   0.5  (герметичное здание на комфортной планете)
+processing_rate = BASE_PROCESSING_RATE × levelMult
 ```
 
-При прочности < 30% — здание работает с штрафом −50% скорости.
-При прочности 0% — здание останавливается.
+Где:
+- `BASE_PROCESSING_RATE = 2.0 ед./день` (= 0.002 млрд т/день)
+- `levelMult = 1 + level × 0.15`
 
-**Ремонт**: стоит 10% от стоимости строительства, восстанавливает 25% прочности. Можно заказать автоматический ремонт при прочности < 50%.
+**Пример:** Processor ур.5:
+```
+rate = 2.0 × (1 + 5×0.15) = 3.5 ед./день = 0.0035 млрд т/день
+```
+
+### 11.4 Формула производства (верфь)
+
+```
+production_rate = BASE_PRODUCTION_RATE × levelMult
+```
+
+Где:
+- `BASE_PRODUCTION_RATE = 0.1 ед./день` (= 0.0001 млрд т/день)
+- `levelMult = 1 + level × 0.15`
+
+**Пример:** Верфь ур.5:
+```
+rate = 0.1 × (1 + 5×0.15) = 0.175 ед./день = 0.000175 млрд т/день
+```
+
+### 11.5 Энергобаланс
+
+```
+energyBalance = Σ(production) − Σ(consumption)
+```
+
+**Производство:**
+- Solar: `10 × levelMult × starLuminosity / orbitalRadius` (орбита: ×1.2)
+- Nuclear: `25 × levelMult`
+- Colony Hub: `5 × levelMult`
+
+**Потребление:** `buildingDef.energyConsumption × levelMult`
+
+Где `levelMult = 1 + level × 0.20` для энергии.
+
+### 11.6 Формула стоимости строительства
+
+```
+build_cost(resource) = costPerLevel(resource) × (1 + 0.2 × (level - 1))
+build_time_ticks = baseProductionTime × level
+```
+
+**Пример:** Шахта ур.3 (costPerLevel: { Fe: 5, Si: 3 }):
+```
+cost = { Fe: 5 × (1 + 0.2×2) = 7, Si: 3 × (1 + 0.2×2) = 4.2 }
+     = { Fe: 7 ед. = 0.007 млрд т, Si: 4.2 ед. = 0.0042 млрд т }
+```
+
+### 11.7 Раздельная система складов (вместимость)
+
+```
+oreCapacity = ORE_WAREHOUSE_BASE + ORE_WAREHOUSE_PER_LEVEL × Σ(open_warehouse.levels)
+processedCapacity = PROCESSED_WAREHOUSE_BASE + PROCESSED_WAREHOUSE_PER_LEVEL × Σ(warehouse.levels)
+highTechCapacity = HIGH_TECH_STORAGE_BASE + HIGH_TECH_STORAGE_PER_LEVEL × Σ(high_tech_storage.levels)
+orbitBufferCapacity = ORBIT_BUFFER_PER_LEVEL × Σ(spaceport.levels)
+```
+
+**Пример:** Планета с 1 warehouse ур.3 и 1 open_warehouse ур.2:
+```
+oreCapacity = 1000 + 250×2 = 1500 ед. = 1.5 млрд т
+processedCapacity = 100 + 25×3 = 175 ед. = 0.175 млрд т
+highTechCapacity = 10 ед. = 0.01 млрд т (нет high_tech_storage)
+```
+
+### 11.8 Проверка переполнения склада
+
+```
+При попытке добавить ресурс на склад:
+  if (getResourceCategory(resourceId) === 'ore') {
+    if (oreUsed + amount > oreCapacity) {
+      amount = oreCapacity - oreUsed  // остаток теряется или блокирует добычу
+      if (amount <= 0) stopExtraction()
+    }
+  }
+  // аналогично для processed и high_tech
+```
+
+### 11.9 Износ зданий (без изменений)
+
+```
+wear_per_tick = 0.001 (базовый износ)
+```
+
+При прочности < 30% — штраф −50% скорости. При 0% — остановка. Ремонт: 10% от стоимости, восстанавливает 25%.
 
 ---
 

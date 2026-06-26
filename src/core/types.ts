@@ -347,17 +347,33 @@ export interface WarehouseReserve {
   priority: number;
 }
 
-/** Тип специализации склада (влияет на бонусы) */
+/** Тип специализации склада (влияет на бонусы) — deprecated, сохранён для обратной совместимости */
 export type WarehouseSpecialization = 'universal' | 'ore' | 'metal' | 'gas' | 'component';
 
 /** Роль колонии (определяет пресет резервов) */
 export type ColonyRole = 'mining' | 'industrial' | 'research' | 'capital' | 'custom';
 
+/**
+ * Раздельная система складов (3 типа).
+ * См. docs/35-warehouse-and-logistics.md §1.3.
+ * Единица измерения: 1 ед. = 1 млн т = 0.001 млрд т.
+ */
+export interface WarehouseCapacities {
+  /** Рудный склад (открытое хранение): руды, газы (сырые), ледяные. Базовая 1000 ед. = 1 млрд т */
+  ore: number;
+  /** Переработанный склад (крытое хранение): чистые элементы, конструкционные материалы. Базовая 100 ед. = 0.1 млрд т */
+  processed: number;
+  /** Высокотехнологичный склад (спец хранение): электроника, сверхпроводники, редкие элементы. Базовая 10 ед. = 0.01 млрд т */
+  highTech: number;
+}
+
 /** Виртуальный склад планеты */
 export interface PlanetWarehouse {
-  /** Общая вместимость (базовая 10000 + здания склада + бонус специализации до +25%) */
+  /** Общая вместимость (legacy, вычисляется как сумма ore+processed+highTech) */
   totalCapacity: number;
-  /** Специализация склада */
+  /** Раздельные вместимости по типам складов (v3.0) */
+  capacities: WarehouseCapacities;
+  /** Специализация склада (deprecated, сохранён для обратной совместимости) */
   specialization: WarehouseSpecialization;
   /** Конфигурация резервов по типам ресурсов */
   reserves: Record<string, WarehouseReserve>;
