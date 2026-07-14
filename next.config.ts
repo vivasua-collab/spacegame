@@ -11,6 +11,7 @@ const nextConfig: NextConfig = {
     // Preview panel via space-z.ai gateway (wildcard for subdomains)
     "*.space-z.ai",
     "localhost",
+    "127.0.0.1",
   ],
 };
 
