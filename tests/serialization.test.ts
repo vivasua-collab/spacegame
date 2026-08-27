@@ -35,6 +35,10 @@ import { getGameMediator, resetGameMediator, GameMediator } from '@/core';
 import { EconomyModule } from '@/economy/economy-module';
 import { GalaxyModule } from '@/galaxy/galaxy-module';
 import { serializeGameState, deserializeGameState } from '@/stores/game-store';
+import {
+  SerializedGameStateSchema,
+  validateGameState,
+} from '@/lib/schemas/game-state-schema';
 import type { GameState } from '@/core/types';
 
 /**
@@ -196,5 +200,109 @@ describe('Block 01 T5: Serialization round-trip', () => {
     // be byte-identical — this proves serialize GameState is a fixed
     // point under the round-trip.
     expect(json2).toBe(json1);
+  });
+
+  // ─── Block 08 gap-9: GameStateSchema validation (NEW) ──────────────
+  //
+  // The next 3 tests verify that `SerializedGameStateSchema` (used by
+  // `deserializeGameState` for top-level validation) rejects malformed
+  // state. Per the audit recommendation, deep validation (Planet/System
+  // shapes) is deferred to Etap 4 — only top-level structure is checked
+  // here.
+
+  test('5. SerializedGameStateSchema.parse(malformedObject) throws (Block 08 gap-9)', () => {
+    // Valid v1-shaped state — should parse cleanly (proves the schema
+    // accepts the canonical form; otherwise the `parse` rejection test
+    // below would be vacuously true).
+    const validState = {
+      time: { tick: 0, dayInYear: 0, year: 1 },
+      speed: 1,
+      phase: 'playing',
+      galaxy: { id: 'galaxy_1', seed: 42, systems: [] },
+      productionQueues: [],
+      fleets: [],
+      playerFactionId: 'player',
+    };
+    expect(() => SerializedGameStateSchema.parse(validState)).not.toThrow();
+
+    // Invalid phase — must throw.
+    const invalidPhase = { ...validState, phase: 'not-a-real-phase' };
+    expect(() => SerializedGameStateSchema.parse(invalidPhase)).toThrow();
+
+    // Invalid speed — must throw (5 is allowed, 7 is not).
+    const invalidSpeed = { ...validState, speed: 7 };
+    expect(() => SerializedGameStateSchema.parse(invalidSpeed)).toThrow();
+
+    // Missing galaxy — must throw.
+    const { galaxy: _omitGalaxy, ...missingGalaxy } = validState;
+    expect(() => SerializedGameStateSchema.parse(missingGalaxy)).toThrow();
+
+    // Missing playerFactionId — must throw.
+    const { playerFactionId: _omitFaction, ...missingFaction } = validState;
+    expect(() => SerializedGameStateSchema.parse(missingFaction)).toThrow();
+
+    // Missing time — must throw.
+    const { time: _omitTime, ...missingTime } = validState;
+    expect(() => SerializedGameStateSchema.parse(missingTime)).toThrow();
+  });
+
+  test('6. validateGameState(malformedJson) returns { success: false, error } (Block 08 gap-9)', () => {
+    // Malformed JSON (syntax error) — `validateGameState` returns a
+    // SyntaxError-wrapped failure.
+    const malformedJson = '{"time": {"tick": 0, "dayInYear": 0, "year": 1}, ...';
+    const result = validateGameState(malformedJson);
+    expect(result.success).toBe(false);
+    expect(result.success === false && result.error).toBeDefined();
+
+    // Valid JSON but missing required top-level fields.
+    const incompleteJson = JSON.stringify({ speed: 1 });
+    const result2 = validateGameState(incompleteJson);
+    expect(result2.success).toBe(false);
+
+    // A fully-valid serialized state passes.
+    const validJson = JSON.stringify({
+      time: { tick: 5, dayInYear: 100, year: 2 },
+      speed: 5,
+      phase: 'playing',
+      galaxy: { id: 'galaxy_test', seed: 42, systems: [] },
+      productionQueues: [],
+      fleets: [],
+      playerFactionId: 'player',
+    });
+    const result3 = validateGameState(validJson);
+    expect(result3.success).toBe(true);
+  });
+
+  test('7. deserializeGameState logs but does not throw on schema-invalid JSON (Block 08 gap-9 fallback)', () => {
+    // Construct a JSON that parses syntactically but fails the schema
+    // (e.g., `phase` is the wrong literal). The escape hatch in
+    // `deserializeGameState` should log a warning and return a
+    // best-effort parsed object — NOT throw.
+    //
+    // We use a minimal state shape with an invalid `phase` value; the
+    // existing `deserializeGameState` post-processing uses
+    // `raw.galaxy.systems || []` etc., so an empty galaxy should still
+    // produce a usable GameState (with empty systems list).
+    const schemaInvalidJson = JSON.stringify({
+      time: { tick: 0, dayInYear: 0, year: 1 },
+      speed: 1,
+      phase: 'NOT_A_REAL_PHASE', // invalid literal — schema rejects
+      galaxy: { id: 'galaxy_x', seed: 42, systems: [] },
+      productionQueues: [],
+      fleets: [],
+      playerFactionId: 'player',
+    });
+
+    // Should NOT throw — fallback path returns parsed as-is.
+    let state: GameState | undefined;
+    expect(() => {
+      state = deserializeGameState(schemaInvalidJson);
+    }).not.toThrow();
+
+    // The returned state still has the (invalid) phase value — we
+    // explicitly chose to log+continue rather than reject, to preserve
+    // backward compat with hand-crafted fixtures.
+    expect(state).toBeDefined();
+    expect(state?.phase).toBe('NOT_A_REAL_PHASE' as never);
   });
 });

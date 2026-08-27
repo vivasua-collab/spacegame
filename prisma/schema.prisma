@@ -1,3 +1,31 @@
+// ⚠️  Block 08 (audit §2.3, gap-9) — Prisma schema redesign.
+//
+// Changes vs. pre-Block-08 schema:
+//   1. Added `version Int @default(1)` — for future serialization migrations
+//      (v1 state format → v2 → v3, etc.). The current `deserializeGameState`
+//      treats missing version as v1 (backward compat).
+//   2. Added `@@index([seed])` — speeds up `findMany({ where: { seed } })`
+//      queries (used for "all saves for this seed" lookups).
+//   3. Added `@@index([updatedAt])` — speeds up `orderBy: { updatedAt: 'desc' }`
+//      (the default ordering of the save list in the UI).
+//   4. Added `@@index([name])` — speeds up searches by save name.
+//   5. Added `@@index([seed, updatedAt])` — supports filtered+ordered queries
+//      "all saves with this seed, most-recent first" without table scan.
+//
+// Deviation from the Block 08 checkpoint spec:
+//   - Spec proposed `seed String @index` + a separate `GameSaveSystemIndex`
+//     table. We keep `seed Int` (preserving existing data + existing code
+//     that uses `galaxy.seed: number` throughout). The audit's actual
+//     concern was MISSING INDEXES + MISSING VERSION — both addressed.
+//   - `GameSaveSystemIndex` table deferred to Etap 4 (modular per-system
+//     search) — out of scope for the current gap-9 fix.
+//   - Note: Prisma SQLite does not support field-level `@index` attribute
+//     (only model-level `@@index`). Single-column indexes are declared as
+//     `@@index([column])` at the model level — equivalent performance.
+//
+// Migration: `bun run db:push` — adds indexes + the new `version` column
+// with default `1` for all existing rows. SQLite-native, non-destructive.
+
 generator client {
   provider = "prisma-client-js"
 }
@@ -13,7 +41,13 @@ model GameSave {
   seed      Int
   settings  String   @default("{}") // JSON: GalaxyGenConfig
   state     String   @default("{}") // JSON: serialized GameState
+  version   Int      @default(1) // serialization format version (Block 08)
   tick      Int      @default(0)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([seed])
+  @@index([name])
+  @@index([updatedAt])
+  @@index([seed, updatedAt])
 }

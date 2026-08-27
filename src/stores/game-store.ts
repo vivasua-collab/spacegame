@@ -29,6 +29,7 @@ import { setCurrentLookups } from '@/data/baked-lookups';
 import { EconomyModule } from '@/economy/economy-module';
 import { GalaxyModule } from '@/galaxy/galaxy-module';
 import { resetProductionItemCounter } from '@/economy/engine';
+import { SerializedGameStateSchema } from '@/lib/schemas/game-state-schema'; // Block 08 gap-9: state validation on deserialize
 
 // ============ Типы стора ============
 
@@ -164,6 +165,13 @@ export function serializeGameState(state: GameState): string {
  * and regenerates `galaxy.bakedModel` from the galaxy seed when the field is
  * absent in the serialized JSON (always — `serializeGameState` strips it).
  *
+ * Block 08 (audit §2.3, gap-9): top-level state structure is now validated
+ * against `SerializedGameStateSchema` (zod). On validation failure, we log
+ * the issues and fall back to the unvalidated parse — preserving backward
+ * compat with test fixtures / hand-crafted saves that may not match the
+ * strict v1 schema. Deep validation (Planet/System/Resources) is deferred
+ * to Etap 4 per the audit recommendation.
+ *
  * NOTE: `bakeGalaxyModel` embeds `new Date().toISOString()` in `bakedModel.createdAt`,
  * so the deserialized state's `bakedModel.createdAt` will differ from the original
  * state's timestamp. This is a known non-determinism bug — see
@@ -173,6 +181,17 @@ export function serializeGameState(state: GameState): string {
  */
 export function deserializeGameState(json: string): GameState {
   const raw = JSON.parse(json);
+
+  // ─── Block 08 gap-9: top-level schema validation ──────────────────
+  // Best-effort: log issues but don't throw — preserves backward compat
+  // for any pre-existing saves that may not conform to the v1 schema.
+  const validationResult = SerializedGameStateSchema.safeParse(raw);
+  if (!validationResult.success) {
+    console.warn(
+      'deserializeGameState: SerializedGameStateSchema validation failed — falling back to unvalidated parse. Issues:',
+      validationResult.error.issues,
+    );
+  }
 
   const systems: StarSystem[] = raw.galaxy.systems || [];
   const systemMap = new Map<string, StarSystem>();
