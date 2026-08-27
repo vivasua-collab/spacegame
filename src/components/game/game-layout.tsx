@@ -8,6 +8,17 @@ import { PlanetView } from './planet-view';
 import { TimeControls } from './time-controls';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
 import { TYPE_NAMES } from '@/data/planet-types';
 import type { GameState, EntityId } from '@/core/types';
 import { toast } from '@/hooks/use-toast';
@@ -77,20 +88,39 @@ export function GameLayout() {
         {/* Save button */}
         <SaveButton />
 
-        {/* New game button */}
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-7 text-xs text-slate-400 hover:text-white"
-          onClick={() => {
-            if (confirm('Start a new game? Current progress will be lost.')) {
-              newGame();
-            }
-          }}
-        >
-          <RotateCcw className="size-3 mr-1" />
-          New Game
-        </Button>
+        {/* New game button — uses AlertDialog instead of native confirm() (C9, gap-10) */}
+        <AlertDialog>
+          <AlertDialogTrigger asChild>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-xs text-slate-400 hover:text-white"
+              aria-label="Начать новую игру"
+            >
+              <RotateCcw className="size-3 mr-1" />
+              New Game
+            </Button>
+          </AlertDialogTrigger>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Начать новую игру?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Текущий прогресс будет потерян. Убедитесь, что сохранили игру, если хотите вернуться к ней позже.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Отмена</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={() => {
+                  newGame();
+                  toast({ title: 'Новая игра создана', description: 'Галактика сгенерирована заново.' });
+                }}
+              >
+                Начать заново
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </header>
 
       {/* Colonization banner */}

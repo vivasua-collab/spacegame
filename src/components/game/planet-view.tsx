@@ -128,12 +128,16 @@ export function PlanetView() {
           </Badge>
           <div className="flex-1" />
           {/* Tab buttons + Warehouse button */}
-          <div className="flex gap-1 items-center">
+          <div className="flex gap-1 items-center" role="tablist" aria-label="Вкладки планеты">
             <button
               className={`text-[10px] px-2 py-0.5 rounded transition-colors ${
                 activeTab === 'map' ? 'bg-white/15 text-white' : 'text-slate-500 hover:text-slate-300'
               }`}
               onClick={() => setActiveTab('map')}
+              role="tab"
+              aria-selected={activeTab === 'map'}
+              aria-controls="panel-map"
+              id="tab-map"
             >
               <Map className="size-3 inline mr-0.5" />
               Карта
@@ -143,6 +147,10 @@ export function PlanetView() {
                 activeTab === 'resources' ? 'bg-white/15 text-white' : 'text-slate-500 hover:text-slate-300'
               }`}
               onClick={() => setActiveTab('resources')}
+              role="tab"
+              aria-selected={activeTab === 'resources'}
+              aria-controls="panel-resources"
+              id="tab-resources"
             >
               <Gem className="size-3 inline mr-0.5" />
               Ресурсы ({planet.resourceDeposits.length})
@@ -437,6 +445,8 @@ function HexGrid({ hexes, onHexClick, onHexHover, hoveredHexIndex }: HexGridProp
       viewBox={viewBox}
       className="w-full h-full"
       xmlns="http://www.w3.org/2000/svg"
+      role="img"
+      aria-label={`Гекс-сетка планеты: ${hexes.length} гексов. Кликните на гекс для строительства.`}
     >
       {hexPositions.map((pos) => {
         const hex = hexes[pos.index];

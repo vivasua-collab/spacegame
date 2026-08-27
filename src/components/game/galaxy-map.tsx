@@ -305,6 +305,8 @@ export function GalaxyMap() {
           pointerEvents: isDragging ? 'none' : 'auto',
         }}
         xmlns="http://www.w3.org/2000/svg"
+        role="img"
+        aria-label={`Карта галактики: ${systems.length} звёздных систем. Используйте кнопки масштабирования или колесо мыши для навигации.`}
       >
         {/* Jump point lines — constant screen width */}
         {jumpLines.map((line, i) => (
@@ -455,12 +457,12 @@ export function GalaxyMap() {
 
       {/* Zoom controls */}
       <div className="absolute top-3 right-3 flex items-center gap-1">
-        <button onClick={() => zoomCenter(1 / ZOOM_BUTTON_STEP)} className="bg-black/60 rounded-lg w-7 h-7 flex items-center justify-center text-slate-400 hover:text-white backdrop-blur-sm border border-white/5 hover:border-white/20 transition-colors text-sm font-bold" title="Zoom out">−</button>
-        <div className="bg-black/60 rounded-lg px-2 py-1 text-[10px] text-slate-400 backdrop-blur-sm border border-white/5 font-mono min-w-[48px] text-center">
+        <button onClick={() => zoomCenter(1 / ZOOM_BUTTON_STEP)} aria-label="Уменьшить масштаб" className="bg-black/60 rounded-lg w-7 h-7 flex items-center justify-center text-slate-400 hover:text-white backdrop-blur-sm border border-white/5 hover:border-white/20 transition-colors text-sm font-bold" title="Zoom out">−</button>
+        <div className="bg-black/60 rounded-lg px-2 py-1 text-[10px] text-slate-400 backdrop-blur-sm border border-white/5 font-mono min-w-[48px] text-center" role="status" aria-live="polite">
           {zoom >= 10 ? `${Math.round(zoom)}x` : `${(zoom * 100).toFixed(0)}%`}
         </div>
-        <button onClick={() => zoomCenter(ZOOM_BUTTON_STEP)} className="bg-black/60 rounded-lg w-7 h-7 flex items-center justify-center text-slate-400 hover:text-white backdrop-blur-sm border border-white/5 hover:border-white/20 transition-colors text-sm font-bold" title="Zoom in">+</button>
-        <button onClick={resetView} className="bg-black/60 rounded-lg px-2 py-1 text-[10px] text-slate-400 hover:text-white backdrop-blur-sm border border-white/5 hover:border-white/20 transition-colors ml-1" title="Reset view">Fit</button>
+        <button onClick={() => zoomCenter(ZOOM_BUTTON_STEP)} aria-label="Увеличить масштаб" className="bg-black/60 rounded-lg w-7 h-7 flex items-center justify-center text-slate-400 hover:text-white backdrop-blur-sm border border-white/5 hover:border-white/20 transition-colors text-sm font-bold" title="Zoom in">+</button>
+        <button onClick={resetView} aria-label="Сбросить вид" className="bg-black/60 rounded-lg px-2 py-1 text-[10px] text-slate-400 hover:text-white backdrop-blur-sm border border-white/5 hover:border-white/20 transition-colors ml-1" title="Reset view">Fit</button>
       </div>
 
       {/* Zoom hint */}
@@ -524,7 +526,7 @@ function Minimap({
 
   return (
     <div className="absolute bottom-3 right-3 bg-black/70 rounded-lg p-1.5 backdrop-blur-sm border border-white/10">
-      <svg width={minimapW} height={minimapH} viewBox={`0 0 ${minimapW} ${minimapH}`} className="cursor-pointer" onClick={handleClick}>
+      <svg width={minimapW} height={minimapH} viewBox={`0 0 ${minimapW} ${minimapH}`} className="cursor-pointer" onClick={handleClick} role="img" aria-label="Мини-карта галактики для быстрой навигации">
         {systems.map((sys) => {
           const pos = systemPositions.get(sys.id);
           if (!pos) return null;
