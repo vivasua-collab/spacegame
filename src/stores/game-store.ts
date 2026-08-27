@@ -139,8 +139,11 @@ function getMediatorWithModules() {
 
 /**
  * Сериализует GameState в JSON-строку.
+ *
+ * Exported for Block 01 T5 (serialization round-trip test) so test code can
+ * exercise the same save/load pipeline used by `saveGame`/`loadGame`.
  */
-function serializeGameState(state: GameState): string {
+export function serializeGameState(state: GameState): string {
   const { systemMap: _systemMap, bakedModel: _bakedModel, ...galaxyWithoutMap } = state.galaxy;
   const serializable = {
     ...state,
@@ -152,8 +155,20 @@ function serializeGameState(state: GameState): string {
 
 /**
  * Десериализует GameState из JSON-строки.
+ *
+ * Exported for Block 01 T5 (serialization round-trip test). The function is
+ * pure with respect to input: it rebuilds `systemMap` from `galaxy.systems`
+ * and regenerates `galaxy.bakedModel` from the galaxy seed when the field is
+ * absent in the serialized JSON (always — `serializeGameState` strips it).
+ *
+ * NOTE: `bakeGalaxyModel` embeds `new Date().toISOString()` in `bakedModel.createdAt`,
+ * so the deserialized state's `bakedModel.createdAt` will differ from the original
+ * state's timestamp. This is a known non-determinism bug — see
+ * `08_27_block_01_progress.md` (T5) and `docs/galaxy-bake.md` (todo: strip
+ * `createdAt` from bakeGalaxyModel). Tests work around it by stripping the
+ * `createdAt` field before deep-equal comparisons.
  */
-function deserializeGameState(json: string): GameState {
+export function deserializeGameState(json: string): GameState {
   const raw = JSON.parse(json);
 
   const systems: StarSystem[] = raw.galaxy.systems || [];
