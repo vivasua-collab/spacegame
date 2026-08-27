@@ -149,7 +149,7 @@ import { immer } from 'zustand/middleware/immer';
 
 ---
 
-### P7 — Убрать мёртвый тип `transuranic` 🟢 (0.5 ч)
+### P7 — Убрать мёртвый тип `transuranic` 🟢 (0.5 ч) — ✅ ВЫПОЛНЕНО
 
 **Цель:** либо добавить трансурановые элементы (Np, Pu, Am), либо убрать `'transuranic'` из `ElementCategory`.
 
@@ -160,6 +160,8 @@ import { immer } from 'zustand/middleware/immer';
 - `docs/32-mendeleev.md` — добавить в таблицу (если расширяем)
 
 **Критерий готовности:** `transuranic` либо используется (≥1 элемент), либо убран из `ElementCategory`.
+
+**Статус:** ✅ Выполнено (см. `08_27_block_01_progress.md`). Добавлены Np, Pu, Am. Всего элементов: 60 (57 + 3 трансурановых).
 
 ---
 
@@ -178,6 +180,119 @@ import { immer } from 'zustand/middleware/immer';
 **Инфраструктура:** использовать `bun test` (Bun встроенный); тесты в `tests/` (создать, если нет).
 
 **Критерий готовности:** `bun test` проходит 5/5; CI-готовность.
+
+---
+
+### P8 — Complex gas recipes 🔴 (gap-2 из аудита §2.3) (2 ч)
+
+**Цель:** добавить рецепты для атмосферных соединений CO₂, CH₄, NH₃, H₂S, SO₂, которые сейчас копятся в складе как мусор (audit §2.3 — gameplay-блокер #1).
+
+**Файлы:**
+- `src/data/recipes.ts` (или `src/data/recipe-generator.ts` после Блока 01 P1) — добавить 5 рецептов:
+
+```typescript
+// CO₂ → C (2.7) + O (7.3) — время 150, энергия 4
+{ id: 'process_CO2', buildingId: 'processor', inputs: { 'CO2': 10 }, outputs: { 'C': 2.7, 'O': 7.3 }, time: 150, energy: 4 },
+// CH₄ → C (2.5) + H (7.5)
+{ id: 'process_CH4', buildingId: 'processor', inputs: { 'CH4': 10 }, outputs: { 'C': 2.5, 'H': 7.5 }, time: 150, energy: 4 },
+// NH₃ → N (5.6) + H (4.4)
+{ id: 'process_NH3', buildingId: 'processor', inputs: { 'NH3': 10 }, outputs: { 'N': 5.6, 'H': 4.4 }, time: 150, energy: 4 },
+// H₂S → H (2.5) + S (7.5)
+{ id: 'process_H2S', buildingId: 'processor', inputs: { 'H2S': 10 }, outputs: { 'H': 2.5, 'S': 7.5 }, time: 150, energy: 4 },
+// SO₂ → S (5.0) + O (5.0)
+{ id: 'process_SO2', buildingId: 'processor', inputs: { 'SO2': 10 }, outputs: { 'S': 5.0, 'O': 5.0 }, time: 150, energy: 4 },
+```
+
+**Критерий готовности:** на планете с co2/methane/toxic атмосферой газовый экстрактор производит CO₂/CH₄/... → processor перерабатывает в C + O + ... → в складе нет «мусорных» газов.
+
+**Зависимость:** Блок 01 P1 (если recipes.ts мигрирует на recipe-generator.ts — рецепты сложных газов тоже должны быть в generator, а не в хардкод-recipes.ts).
+
+---
+
+### P9 — ProductionItem deterministic IDs 🟡 (gap-6 из аудита §2.3) (1 ч)
+
+**Цель:** устранить недетерминизм в `engine.ts:532` — `id: \prod_{Date.now()}}_{Math.random().toString(36).slice(2, 6)}` — нарушает принцип детерминизма игры.
+
+**Файлы:**
+- `src/economy/engine.ts` — заменить генерацию ID:
+  - Использовать счётчик: `id: \`item-${planetId}-${queueCounter++}\`` (глобальный или на planet).
+  - Альтернатива: `id: \`item-${planetId}-${queue.length}-${tick}\`` (детерминированный по позиции).
+- Добавить `let queueCounter = 0` в module scope (или `productionQueues.counter`).
+
+**Критерий готовности:** для одинакового seed и одинаковой последовательности actions — ProductionItem IDs одинаковые. T1 (PRNG) + новый T7 не выявляют недетерминизма.
+
+---
+
+### C6 — warehouse.ts dead comparisons cleanup 🟡 (gap-5 из аудита §2.3) (0.5 ч)
+
+**Цель:** убрать мёртвый код в `warehouse.ts:275-279` — сравнения `category === 'platinoid' || category === 'rare_earth'`, которые всегда false (это значения `ChemicalCharacter`, а не `ElementCategory`).
+
+**Файлы:**
+- `src/data/warehouse.ts` — удалить две dead-проверки (или заменить на корректные: `chemicalCharacter === 'platinoid' || chemicalCharacter === 'rare_earth'`).
+
+**Критерий готовности:** `grep -n "platinoid\|rare_earth" src/data/warehouse.ts` — либо отсутствует, либо в правильном месте (сравнение с `chemicalCharacter`, не с `category`).
+
+---
+
+### C7 — processProductionQueue emit on cancellation 🟡 (gap-7 из аудита §2.3) (1 ч)
+
+**Цель:** `engine.ts:243-268` — при удалении элемента из очереди (не хватает ресурсов) эмитить событие `economy:production-cancelled` с `{ recipeId, reason: 'insufficient_inputs', queueItemId }`.
+
+**Файлы:**
+- `src/economy/engine.ts` — добавить `bus.emit('economy:production-cancelled', { ... })` перед `queue.splice(i, 1)`.
+- UI в Блоке 01 P4 — подписаться на это событие → показывать toast «Рецепт X отменён: не хватает Y».
+
+**Критерий готовности:** при отмене рецепта из-за нехватки ресурсов — UI показывает уведомление (не silent loss).
+
+**Зависимость:** Блок 06 (modular integration) — без typed bus событие уходит в пустоту.
+
+---
+
+### C8 — nuclear_reactor rename 🟢 (gap-11 из аудита §3.2) (0.5 ч)
+
+**Цель:** синхронизировать ID ядерного реактора: `nuclear_reactor` (40-buildings.md §10.1) vs `nuclear_plant` (buildings.ts:122).
+
+**Решение:** переименовать в коде с `nuclear_plant` → `nuclear_reactor` (документация — источник истины).
+
+**Файлы:**
+- `src/data/buildings.ts` — `id: 'nuclear_reactor'` (вместо `'nuclear_plant'`).
+- `src/economy/engine.ts` — grep на `'nuclear_plant'` → заменить.
+- Любые UI или store ссылки на `'nuclear_plant'` → заменить.
+
+**Критерий готовности:** `grep -rn "nuclear_plant" src/` → 0 результатов.
+
+---
+
+### C9 — a11y improvements 🟡 (gap-10 из аудита §2.3) (4 ч)
+
+**Цель:** устранить a11y-проблемы, выявленные в аудите §2.3:
+- Кнопки без `aria-label` (`galaxy-map.tsx:458-463` — zoom controls).
+- Tab buttons без `role="tab"`, `aria-selected`, `aria-controls` (`planet-view.tsx:132-149`).
+- SVG без `role="img"` / `aria-label` (карта галактики, гекс-сетка).
+- `confirm()` в `game-layout.tsx:86` — блокирующий native dialog вместо `AlertDialog` из shadcn/ui.
+
+**Файлы:**
+- `src/components/game/galaxy-map.tsx` — добавить `aria-label` на zoom-in/zoom-out кнопки.
+- `src/components/game/planet-view.tsx` — добавить `role="tab"`, `aria-selected`, `aria-controls` на табы.
+- `src/components/game/galaxy-map.tsx` + `src/components/game/planet-view.tsx` — SVG `role="img"` + `<title>` + `aria-label`.
+- `src/components/game/game-layout.tsx:86` — заменить `confirm()` на shadcn `AlertDialog`.
+
+**Критерий готовности:** Lighthouse a11y score ≥ 90; ручной скрин-ридер проходка по основным экранам.
+
+---
+
+### T7 — PRNG reference conformance 🟡 (gap-3 из аудита §2.3) (1 ч)
+
+**Цель:** тест, проверяющий, что порт `xoshiro256**` соответствует reference implementation Vigna.
+
+**Файлы:**
+- `tests/prng-reference.test.ts` (новый) —
+  - Известный тест-вектор: для seed `[1, 2, 3, 4]` → первые 5 чисел должны совпадать с эталонной реализацией.
+  - Сверка с C-reference Vigna: для seed `[0x9E3779B97F4A7C15, ...]` → первые 100 чисел сравниваются с выходом C-кода.
+
+**Критерий готовности:** тест зелёный. Если порт неверный (gap-3) — тест красный; правка в Блоке 07.
+
+**Зависимость:** Блок 07 (PRNG port fix).
 
 ---
 

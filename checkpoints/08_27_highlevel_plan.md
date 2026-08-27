@@ -37,10 +37,40 @@
 - Карта галактики, экраны системы/планеты, панель ресурсов, химия + запекание.
 
 ### Этап 2.5: Стабилизация и технический долг ⏳
-- **Блок 1**: `08_27_block_01_stabilization.md`
-- Содержание: P1 (ID руд), P2 (immutable store), P3 (UI атмосферы/орбиты), P4 (UI очереди), P5 (крафтовые материалы), P6 (Colony Hub стоимость), P7 (transuranic), тесты T1–T5, чистота C1–C5.
+
+Включает 4 подблока:
+
+#### Блок 01 — P1–P7 + P8/P9 + C1–C5 + C6–C9 + T1–T7
+- `08_27_block_01_stabilization.md` (+ `08_27_block_01_progress.md` — ход выполнения)
+- Содержание:
+  - P1 (ID руд), P2 (immutable store), P3 (UI атмосферы/орбиты), P4 (UI очереди)
+  - P5 (крафтовые материалы), P6 (Colony Hub стоимость) ✅, P7 (transuranic) ✅
+  - **P8 (complex gas recipes CO₂/CH₄/NH₃/H₂S/SO₂)** — gap-2
+  - **P9 (ProductionItem deterministic IDs)** — gap-6
+  - C1 (delete deprecated bus), C2 (dead code), C3 (hardcode), C4 (recalc merge), C5 (split chemistry)
+  - **C6 (warehouse dead comparisons)** — gap-5
+  - **C7 (processProductionQueue emit on cancel)** — gap-7
+  - **C8 (nuclear_reactor rename)** — gap-11
+  - **C9 (a11y improvements)** — gap-10
+  - T1–T6 (тесты) + **T7 (PRNG reference conformance)** — gap-3
 - Срок: ~1 неделя.
-- Результат: стабильная, протестированная кодовая база.
+
+#### Блок 06 — Modular-bus integration (КРИТИЧНО #1)
+- `08_27_block_06_modular_integration.md`
+- Содержание: store → mediator, EconomyModule подписки, GameLoop.start/stop, удаление setInterval из page.tsx.
+- gap-1 (audit §2.1 — архитектурный долг #1).
+
+#### Блок 07 — Engineering quality (TS strict + ESLint + PRNG port fix)
+- `08_27_block_07_engineering_quality.md`
+- Содержание: `noImplicitAny: true`, `ignoreBuildErrors: false`, ESLint warn-level, PRNG xoshiro256** port correctness.
+- gap-3, gap-4.
+
+#### Блок 08 — Security & Data (API validation + Prisma schema redesign)
+- `08_27_block_08_security_data.md`
+- Содержание: zod-схемы для /api/save, rate limiting, Prisma schema с индексами + version, state validation.
+- gap-8, gap-9.
+
+**Результат этапа:** стабильная, протестированная кодовая база с закрытыми gap-1..gap-11.
 
 ### Этап 2.6: Переработчики (универсальный → специализированный) ⏳ НОВЫЙ
 - **Блок 5**: `08_27_block_05_processors.md`
@@ -83,17 +113,30 @@
 ## Порядок внедрения блоков
 
 ```
-Документация (правка противоречий) ──► Блок 1 (стабилизация)
-                                  └──► Блок 5 (переработчики)
-                                        │
-Блок 1 ──► Блок 2 (флот) ──► Блок 4 (AI-фракция)
-        └──► Блок 3 (исследования) ─┘
+Блок 06 (modular integration, КРИТИЧНО #1)
+  ↓
+Блок 01 (стабилизация) — P1/P8/P5/C2/C3/C6/C8 + P2/C1/C4/C5 + P3/P4/P9/C7/C9 + T1-T7
+  ↓
+Блок 07 (engineering quality) — TS strict + ESLint + PRNG port fix
+  ↓
+Блок 08 (security/data) — API validation + Prisma schema
+  ↓
+Блок 05 (переработчики) — после Блока 01 P1+C3 (recipes/gas maps готовы)
+  ↓
+Блок 02 (флот) + Блок 03 (исследования) — параллельно
+  ↓
+Блок 04 (AI-фракция)
 ```
 
-- **Блок 1 (стабилизация)** — фундамент; без него ИИ-агенты не смогут верифицировать последующие блоки.
-- **Блок 5 (переработчики)** — зависит только от правки `40-buildings.md`; может идти параллельно с Блоком 1.
-- **Блок 2 (флот)** и **Блок 3 (исследования)** — после Блока 1; могут идти параллельно.
-- **Блок 4 (AI-фракция)** — после флота и исследований (AI использует корабли и технологии).
+- **Блок 06 (modular integration)** — фундамент; без него все подписки на события уходят в пустоту (gap-1).
+- **Блок 01 (стабилизация)** — закрывает P1–P9, C1–C9, T1–T7.
+- **Блок 07 (engineering)** — TS strict + ESLint + PRNG port fix.
+- **Блок 08 (security/data)** — API validation + Prisma schema.
+- **Блок 05 (переработчики)** — после правки `40-buildings.md` §3 (готово в `08_27_doc_fixes.md`).
+- **Блок 02 (флот)** и **Блок 03 (исследования)** — после Блока 01; могут идти параллельно.
+- **Блок 04 (AI-фракция)** — после флота и исследований.
+
+> 👉 Все 11 gap-ов из аудита зафиксированы в планах (см. `08_27_gap_analysis.md`).
 
 ---
 
@@ -101,13 +144,17 @@
 
 | Метрика | Сейчас | Цель |
 |---------|--------|------|
-| Lint-ошибок | 0 ✅ | 0 |
-| Тестов | 0 ❌ | ≥5 (PRNG, snapshot, экономика, химия, сериализация) |
-| Зданий | 12/27 | 27/27 (Блок 1 закрывает пробелы) |
-| Переработчиков | 3 универсальных | 3 универсальных + специализации (Блок 5) |
-| Флот | 0% | MVP (Блок 2) |
-| Исследования | 0% | MVP (Блок 3) |
-| AI-фракции | 0% | 5 базовых (Блок 4) |
+| Lint-ошибок | 0 ✅ (но правила off — meaningless) | 0 (с включёнными правилами warn-level, Блок 07) |
+| Тестов | 0 ❌ | ≥7 (PRNG + ref + snapshot + экономика + химия + сериализация + immutability) |
+| TS-ошибок | 2 pre-existing (Блок 01 progress §71) | 0 (Блок 07 — `ignoreBuildErrors: false`) |
+| Modular-bus используемость | 0% (декоративно) | 100% (Блок 06) |
+| API validation | 0% | 100% (Блок 08 — zod-схемы + rate-limit) |
+| a11y score | ~50 (audit §2.3) | ≥90 (Блок 01 C9) |
+| Зданий | 12/27 | 27/27 (Блок 01 закрывает пробелы) |
+| Переработчиков | 3 универсальных | 3 универсальных + специализации (Блок 05) |
+| Флот | 0% | MVP (Блок 02) |
+| Исследования | 0% | MVP (Блок 03) |
+| AI-фракции | 0% | 5 базовых (Блок 04) |
 
 ---
 
