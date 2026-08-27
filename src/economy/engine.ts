@@ -265,6 +265,9 @@ function processProductionQueue(planet: Planet, queues: Map<EntityId, Production
 /**
  * Пересчёт энергетического баланса планеты.
  * P1-26: Солнечная станция зависит от светимости звезды и расстояния.
+ *
+ * (C4 — audit §2.3: ранее 3 отдельных цикла по surface/atmosphere/orbit с дублированной
+ * логикой. Объединены в один helper `processBuildingEnergy` + 3 коротких цикла.)
  */
 export function recalcEnergyBalance(planet: Planet, system?: StarSystem): void {
   let production = 0;
@@ -274,18 +277,26 @@ export function recalcEnergyBalance(planet: Planet, system?: StarSystem): void {
   const starLuminosity = Math.max(0.0001, system?.stars[0]?.luminosity ?? 1.0);
   const distanceFactor = Math.max(0.01, planet.orbitalRadius);
 
-  // Surface buildings
-  for (const hex of planet.hexes) {
-    if (!hex.buildingId) continue;
-    const buildingDef = BUILDING_MAP.get(hex.buildingId);
-    if (!buildingDef) continue;
+  // Helper: process one building's energy contribution (C4 — extracted from 3 inline copies).
+  // layer: 'surface' | 'atmosphere' | 'orbit' — affects solar_plant bonus (orbit ×1.2)
+  //        and colony_hub special-case (only on surface).
+  const processBuildingEnergy = (
+    buildingId: string | null | undefined,
+    buildingLevel: number,
+    layer: 'surface' | 'atmosphere' | 'orbit',
+  ): void => {
+    if (!buildingId) return;
+    const buildingDef = BUILDING_MAP.get(buildingId);
+    if (!buildingDef) return;
 
-    const levelMult = 1 + hex.buildingLevel * 0.2;
+    const levelMult = 1 + buildingLevel * 0.2;
+    const orbitBonus = layer === 'orbit' ? 1.2 : 1.0;
 
     if (buildingDef.category === 'energy') {
       if (buildingDef.id === 'solar_plant') {
         // P1-26: power_output = base_output × level × star_luminosity / distance_factor
-        production += 10 * levelMult * starLuminosity / distanceFactor;
+        // Orbit solar plants work 1.2× better (no atmosphere attenuation).
+        production += 10 * levelMult * starLuminosity / distanceFactor * orbitBonus;
       } else if (buildingDef.id === 'nuclear_reactor') {
         // P2-06/P2-07: nuclear plant base output = 25, no luminosity factor
         production += 25 * levelMult;
@@ -293,54 +304,28 @@ export function recalcEnergyBalance(planet: Planet, system?: StarSystem): void {
         production += 10 * levelMult; // fallback for unknown energy buildings
       }
     } else if (buildingDef.id === 'colony_hub') {
-      // Colony hub: базовая энергия 5, не зависит от светимости
-      production += 5 * levelMult;
+      // Colony hub: базовая энергия 5 — только на surface (colony_hub строится только там).
+      if (layer === 'surface') {
+        production += 5 * levelMult;
+      }
     } else {
       consumption += buildingDef.energyConsumption * levelMult;
     }
+  };
+
+  // Surface buildings
+  for (const hex of planet.hexes) {
+    processBuildingEnergy(hex.buildingId, hex.buildingLevel, 'surface');
   }
 
   // Atmospheric slot buildings
   for (const slot of planet.atmosphericSlots) {
-    if (!slot.buildingId) continue;
-    const buildingDef = BUILDING_MAP.get(slot.buildingId);
-    if (!buildingDef) continue;
-
-    const levelMult = 1 + slot.buildingLevel * 0.2;
-    if (buildingDef.category === 'energy') {
-      if (buildingDef.id === 'solar_plant') {
-        production += 10 * levelMult * starLuminosity / distanceFactor;
-      } else if (buildingDef.id === 'nuclear_reactor') {
-        // P2-06/P2-07: nuclear plant base output = 25
-        production += 25 * levelMult;
-      } else {
-        production += 10 * levelMult;
-      }
-    } else {
-      consumption += buildingDef.energyConsumption * levelMult;
-    }
+    processBuildingEnergy(slot.buildingId, slot.buildingLevel, 'atmosphere');
   }
 
   // Orbit slot buildings
   for (const slot of planet.orbitSlots) {
-    if (!slot.buildingId) continue;
-    const buildingDef = BUILDING_MAP.get(slot.buildingId);
-    if (!buildingDef) continue;
-
-    const levelMult = 1 + slot.buildingLevel * 0.2;
-    if (buildingDef.category === 'energy') {
-      if (buildingDef.id === 'solar_plant') {
-        // Орбитальные солнечные станции работают эффективнее
-        production += 10 * levelMult * starLuminosity / distanceFactor * 1.2;
-      } else if (buildingDef.id === 'nuclear_reactor') {
-        // P2-06/P2-07: nuclear plant base output = 25
-        production += 25 * levelMult;
-      } else {
-        production += 10 * levelMult;
-      }
-    } else {
-      consumption += buildingDef.energyConsumption * levelMult;
-    }
+    processBuildingEnergy(slot.buildingId, slot.buildingLevel, 'orbit');
   }
 
   planet.energyBalance = production - consumption;

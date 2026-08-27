@@ -120,6 +120,37 @@ export const CRAFTED_MATERIALS: Record<string, CraftedMaterialDef> = {
     category: 'crafted',
     description: 'Дальнобойный сенсорный комплекс',
   },
+
+  // === Химические синтетические материалы ===
+  // (добавлены после P1 validate-recipes.ts — см. commit)
+  plastic: {
+    id: 'plastic',
+    name: 'Пластик',
+    symbol: 'PL',
+    category: 'crafted',
+    description: 'Полимерный материал для корпусов, изоляции, упаковки',
+  },
+  synfuel: {
+    id: 'synfuel',
+    name: 'Синтетическое топливо',
+    symbol: 'SF',
+    category: 'crafted',
+    description: 'Высокоплотное ракетное топливо искусственного происхождения',
+  },
+  hull_element: {
+    id: 'hull_element',
+    name: 'Корпусной элемент',
+    symbol: 'HE',
+    category: 'crafted',
+    description: 'Готовая секция корпуса корабля',
+  },
+  armor_plate: {
+    id: 'armor_plate',
+    name: 'Бронеплита',
+    symbol: 'AP',
+    category: 'crafted',
+    description: 'Слоистая броневая плита для защиты кораблей',
+  },
 };
 
 /**

@@ -199,6 +199,14 @@ export function createDefaultWarehouse(): PlanetWarehouse {
  * Возвращает объект с 3 вместимостями: ore, processed, highTech.
  */
 export function calculateWarehouseCapacities(planet: Planet): { ore: number; processed: number; highTech: number } {
+  // C4 (audit §2.3 — O(N²M) per tick): memoize by Planet object identity.
+  // Immer creates a NEW Planet object on every mutation (build/upgrade/setResources),
+  // so the cache automatically invalidates when planet changes.
+  // For the duration of one tick (where planet reference is stable), the cache is reused
+  // for all canStoreResource() calls in processExtraction → O(N+M) per tick instead of O(N*M).
+  const cached = CAPACITIES_CACHE.get(planet);
+  if (cached) return cached;
+
   let oreCap = ORE_WAREHOUSE_BASE;
   let processedCap = PROCESSED_WAREHOUSE_BASE;
   let highTechCap = HIGH_TECH_STORAGE_BASE;
@@ -235,8 +243,18 @@ export function calculateWarehouseCapacities(planet: Planet): { ore: number; pro
     }
   }
 
-  return { ore: oreCap, processed: processedCap, highTech: highTechCap };
+  const result = { ore: oreCap, processed: processedCap, highTech: highTechCap };
+  CAPACITIES_CACHE.set(planet, result);
+  return result;
 }
+
+/**
+ * Per-tick cache for calculateWarehouseCapacities (C4).
+ * Keyed by Planet object reference — automatically invalidates when immer creates
+ * a new Planet on mutation (build/upgrade/setResources).
+ * WeakMap so GC can clean up old Planet references.
+ */
+const CAPACITIES_CACHE: WeakMap<Planet, { ore: number; processed: number; highTech: number }> = new WeakMap();
 
 /**
  * @deprecated Используйте calculateWarehouseCapacities. Legacy совместимость.
