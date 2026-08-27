@@ -16,7 +16,7 @@ export const BUILDINGS: BuildingDef[] = [
     energyConsumption: 0,
     baseProductionTime: 0,
     levels: 3,
-    costPerLevel: {}, // Бесплатно при колонизации; улучшение требует ресурсы
+    costPerLevel: { Fe: 10, Si: 5, Al: 3 }, // P6 fix: апгрейд хаба стоит ресурсы (L1 бесплатный при колонизации, L2/L3 — стоимость)
     terrainBonus: {},
     requiresAtmosphere: false,
   },

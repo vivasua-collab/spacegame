@@ -148,6 +148,16 @@ export const ELEMENTS: ElementDef[] = [
   { id: 'Hf', name: 'Гафний', symbol: 'Hf', category: 'rare', baseValue: 8, density: 13.31, isAtmospheric: false,
     atomicNumber: 72, atomicMass: 178.5, chemicalCharacter: 'refractory_metal', oxidationState: 4, rarity: 'ultra_rare' },
 
+  // ============ Трансурановые (P7 fix) — ядерное топливо и изотопные источники ============
+  // Источник: docs/32-mendeleev.md §2.11 (трансурановые). Получаются в основном синтезом
+  // в реакторах/ускорителях, не встречаются как самородные руды (см. 32-mendeleev.md §2.11 примечание).
+  { id: 'Np', name: 'Нептуний', symbol: 'Np', category: 'transuranic', baseValue: 25, density: 20.45, isAtmospheric: false,
+    atomicNumber: 93, atomicMass: 237.0, chemicalCharacter: 'transuranic', oxidationState: 4, rarity: 'ultra_rare' },
+  { id: 'Pu', name: 'Плутоний', symbol: 'Pu', category: 'transuranic', baseValue: 40, density: 19.84, isAtmospheric: false,
+    atomicNumber: 94, atomicMass: 244.0, chemicalCharacter: 'transuranic', oxidationState: 4, rarity: 'ultra_rare' },
+  { id: 'Am', name: 'Америций', symbol: 'Am', category: 'transuranic', baseValue: 35, density: 13.69, isAtmospheric: false,
+    atomicNumber: 95, atomicMass: 243.0, chemicalCharacter: 'transuranic', oxidationState: 3, rarity: 'ultra_rare' },
+
   // ============ Переходные металлы для электроники ============
   { id: 'Cd', name: 'Кадмий', symbol: 'Cd', category: 'transmetal', baseValue: 5, density: 8.65, isAtmospheric: false,
     atomicNumber: 48, atomicMass: 112.4, chemicalCharacter: 'reactive_metal', oxidationState: 2, rarity: 'rare' },

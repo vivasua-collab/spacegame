@@ -123,7 +123,7 @@
 |----------|---------|-------|----------|
 | [`STATUS.md`](./STATUS.md) | ~5.7K | 334 | Отчёт реализации vs спецификация |
 | [`audit-history.md`](./audit-history.md) | ~3.3K | 170 | История аудитов (69 расхождений, 14 P0 закрыто) |
-| [`buildings-verification.md`](./buildings-verification.md) | ~5.5K | 266 | Верификация: ARCHITECTURE.md vs 40-buildings.md |
+| [`buildings-verification.md`](./buildings-verification.md) | ~5.5K | 266 | Верификация: 00-ARCHITECTURE.md vs 40-buildings.md |
 
 ---
 
