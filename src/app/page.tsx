@@ -5,6 +5,7 @@ import { useGameStore, type SaveInfo } from '@/stores/game-store';
 import { GameLayout } from '@/components/game/game-layout';
 import { Button } from '@/components/ui/button';
 import { Rocket, Save, Trash2, Loader2, FolderOpen } from 'lucide-react';
+import { getGameMediator } from '@/core/game-mediator';
 
 /**
  * Deterministic pseudo-random number generator (simple LCG).
@@ -21,7 +22,6 @@ export default function Home() {
   const gameState = useGameStore((s) => s.gameState);
   const isInitialized = useGameStore((s) => s.isInitialized);
   const newGame = useGameStore((s) => s.newGame);
-  const tick = useGameStore((s) => s.tick);
   const loadGame = useGameStore((s) => s.loadGame);
   const loadSaveList = useGameStore((s) => s.loadSaveList);
   const deleteSave = useGameStore((s) => s.deleteSave);
@@ -46,12 +46,18 @@ export default function Home() {
     }));
   }, []);
 
-  // Game tick loop
+  // Game loop lifecycle — управляется медиатором (Block 06 §3.4).
+  // Mediator.start() запускает registry.startAll() (модули → 'started') + loop.start() (setInterval).
+  // Mediator.stop() очищает интервал при размонтировании компонента.
+  // Подписка на `core:state-changed` (в game-store.getMediatorWithModules)
+  // обновляет Zustand-state после каждого тика.
   useEffect(() => {
-    if (!gameState || gameState.phase !== 'playing' || gameState.speed === 0) return;
-    const interval = setInterval(() => { tick(); }, 200);
-    return () => clearInterval(interval);
-  }, [gameState?.phase, gameState?.speed, tick]);
+    const mediator = getGameMediator();
+    mediator.start();
+    return () => {
+      mediator.stop();
+    };
+  }, [isInitialized]);
 
   // Load saves — async callback, setState only in .then() (not sync in effect)
   useEffect(() => {

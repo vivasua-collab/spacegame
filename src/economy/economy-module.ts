@@ -45,6 +45,7 @@ export class EconomyModule implements IGameModule {
       'economy:resource-depleted',
       'economy:warehouse-full',
       'economy:warehouse-updated',
+      'core:state-changed',
     ],
     subscribes: [
       { event: 'core:tick', priority: PRIORITY.SIMULATION },
@@ -158,6 +159,7 @@ export class EconomyModule implements IGameModule {
         hexIndex: payload.hexIndex,
         buildingId: payload.buildingId,
       });
+      this.bus.emit('core:state-changed', state);
     }
   }
 
@@ -176,6 +178,7 @@ export class EconomyModule implements IGameModule {
         hexIndex: payload.hexIndex,
         level: hex.buildingLevel,
       });
+      this.bus.emit('core:state-changed', state);
     }
   }
 
@@ -186,7 +189,10 @@ export class EconomyModule implements IGameModule {
     const planet = this.findPlanet(state, payload.planetId);
     if (!planet) return;
 
-    engineEnqueueProduction(planet, state.productionQueues, payload.recipeId, payload.repeat);
+    const result = engineEnqueueProduction(planet, state.productionQueues, payload.recipeId, payload.repeat);
+    if (result) {
+      this.bus.emit('core:state-changed', state);
+    }
   }
 
   private onColonize(payload: EventPayload<'economy:colonize'>): void {
@@ -211,11 +217,15 @@ export class EconomyModule implements IGameModule {
         planetId: payload.planetId,
         hexIndex: planet.hexes.findIndex(h => h.buildingId === 'colony_hub'),
       });
+      this.bus.emit('core:state-changed', state);
     }
   }
 
-  // ─── Обработка тика экономики ─────────────────────────
-
+  /**
+   * Обработка тика экономики.
+   * Вызывается ModuleRegistry.tickAll() внутри каждого game-loop тика,
+   * а также напрямую из GameMediator.tick() для пошагового режима.
+   */
   private processEconomyTick(): void {
     const state = this.getGameState?.();
     if (!state) return;
@@ -225,6 +235,9 @@ export class EconomyModule implements IGameModule {
       .filter(p => p.owner != null);
 
     processEconomyTick(colonizedPlanets, state.productionQueues, state.galaxy.systemMap);
+
+    // Уведомить store об изменении состояния после тика
+    this.bus.emit('core:state-changed', state);
   }
 
   // ─── Обработчики запросов ─────────────────────────────

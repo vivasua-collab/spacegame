@@ -10,7 +10,7 @@ import { RECIPE_MAP } from '@/data/recipes';
 import { ELEMENT_MAP } from '@/data/elements';
 import { getCurrentLookups, findContainedElements } from '@/data/baked-lookups';
 import { canStoreResource, calculateWarehouseCapacity, calculateWarehouseCapacities, getOrbitBufferCapacity, ensureReservesForResources } from '@/data/warehouse';
-import { gameBus } from '@/core/event-bus';
+import { gameBus } from '@/core/typed-event-bus';
 
 /**
  * Обработка одного тика экономики для всех планет.
@@ -257,7 +257,7 @@ function processProductionQueue(planet: Planet, queues: Map<EntityId, Production
         planet.resources[resourceId] = (planet.resources[resourceId] ?? 0) + amount;
       }
 
-      gameBus.emit('production:complete', { planetId: planet.id, recipeId: recipe.id });
+      gameBus.emit('economy:production-complete', { planetId: planet.id, recipeId: recipe.id });
     }
 
     if (item.repeat) {
@@ -404,7 +404,7 @@ export function buildOnHex(planet: Planet, hexIndex: number, buildingId: string)
   hex.buildingLevel = 1;
 
   recalcEnergyBalance(planet);
-  gameBus.emit('building:constructed', { planetId: planet.id, hexIndex, buildingId });
+  gameBus.emit('economy:building-constructed', { planetId: planet.id, hexIndex, buildingId });
 
   return true;
 }
@@ -441,7 +441,7 @@ export function buildOnAtmosphereSlot(planet: Planet, slotIndex: number, buildin
   slot.buildingLevel = 1;
 
   recalcEnergyBalance(planet);
-  gameBus.emit('building:constructed', { planetId: planet.id, hexIndex: -1 - slotIndex, buildingId });
+  gameBus.emit('economy:building-constructed', { planetId: planet.id, hexIndex: -1 - slotIndex, buildingId });
   return true;
 }
 
@@ -472,7 +472,7 @@ export function buildOnOrbitSlot(planet: Planet, slotIndex: number, buildingId: 
   slot.buildingLevel = 1;
 
   recalcEnergyBalance(planet);
-  gameBus.emit('building:constructed', { planetId: planet.id, hexIndex: -100 - slotIndex, buildingId });
+  gameBus.emit('economy:building-constructed', { planetId: planet.id, hexIndex: -100 - slotIndex, buildingId });
   return true;
 }
 
@@ -499,7 +499,7 @@ export function upgradeBuilding(planet: Planet, hexIndex: number): boolean {
 
   hex.buildingLevel++;
   recalcEnergyBalance(planet);
-  gameBus.emit('building:upgraded', { planetId: planet.id, hexIndex, level: hex.buildingLevel });
+  gameBus.emit('economy:building-upgraded', { planetId: planet.id, hexIndex, level: hex.buildingLevel });
 
   return true;
 }
@@ -598,7 +598,7 @@ export function colonizePlanet(planet: Planet, system?: StarSystem): boolean {
   // Пересчитать энергобаланс
   recalcEnergyBalance(planet, system);
 
-  gameBus.emit('planet:colonized', { planetId: planet.id, hexIndex: bestHex });
+  gameBus.emit('economy:planet-colonized', { planetId: planet.id, hexIndex: bestHex });
 
   return true;
 }

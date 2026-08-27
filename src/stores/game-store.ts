@@ -14,10 +14,7 @@
 import { create } from 'zustand';
 import type { GameState, GameTime, GameSpeed, GamePhase, Galaxy, StarSystem, Planet, EntityId, ProductionQueue, ColonyRole, WarehouseSpecialization } from '@/core/types';
 import { getGameMediator } from '@/core/game-mediator';
-import { gameBus } from '@/core/typed-event-bus';
-import { processEconomyTick, buildOnHex, upgradeBuilding, enqueueProduction, giveStarterResources, colonizePlanet } from '@/economy';
-import { createDefaultWarehouse, applyColonyRole, calculateWarehouseCapacity, calculateWarehouseCapacities, canStoreResource, getOrbitBufferUsed, getOrbitBufferCapacity, ensureReservesForResources } from '@/data/warehouse';
-import { BUILDING_MAP } from '@/data/buildings';
+import { applyColonyRole, calculateWarehouseCapacity, calculateWarehouseCapacities, canStoreResource, getOrbitBufferUsed } from '@/data/warehouse';
 import { bakeGalaxyModel } from '@/data/chemistry-generator';
 import { ELEMENTS } from '@/data/elements';
 import { setCurrentLookups } from '@/data/baked-lookups';
@@ -93,7 +90,12 @@ export interface GameStore {
 /** Флаг: были ли модули уже зарегистрированы */
 let modulesRegistered = false;
 
-/** Получить медиатор с зарегистрированными модулями */
+/**
+ * Получить медиатор с зарегистрированными модулями.
+ * Также подписывается на `core:state-changed` один раз —
+ * это позволяет модулям и медиатору синхронизировать Zustand-store
+ * после любой мутации GameState (patrn 3.6 из Block 06).
+ */
 function getMediatorWithModules() {
   const mediator = getGameMediator();
 
@@ -106,6 +108,14 @@ function getMediatorWithModules() {
     galaxyModule.setGameStateAccessor(() => mediator.getGameState());
 
     mediator.registerAndInit([galaxyModule, economyModule]);
+
+    // Подписка на `core:state-changed` — обновляем Zustand-state
+    // после любой мутации GameState в медиаторе или модулях.
+    // Shallow-clone top-level — чтобы React/Zustand увидели новое reference.
+    mediator.getBus().on('core:state-changed', (newState) => {
+      useGameStore.setState({ gameState: { ...newState } });
+    });
+
     modulesRegistered = true;
   }
 
@@ -207,47 +217,26 @@ export const useGameStore = create<GameStore>((set, get) => {
     },
 
     setSpeed: (speed) => {
+      const mediator = getMediatorWithModules();
       const { gameState } = get();
       if (!gameState) return;
-      gameState.speed = speed;
-      if (speed > 0) {
-        gameState.phase = 'playing';
-      }
-      set({ gameState: { ...gameState } });
+      // Делегируем медиатору: он обновит state + loop + эмитнет state-changed
+      mediator.setSpeed(speed);
     },
 
     togglePause: () => {
+      const mediator = getMediatorWithModules();
       const { gameState } = get();
       if (!gameState) return;
-      if (gameState.phase === 'playing') {
-        gameState.phase = 'paused';
-        gameState.speed = 0;
-      } else {
-        gameState.phase = 'playing';
-        gameState.speed = 1;
-      }
-      set({ gameState: { ...gameState } });
+      // Делегируем медиатору: он переключит phase + loop + эмитнет state-changed
+      mediator.togglePause();
     },
 
     tick: () => {
-      const { gameState } = get();
-      if (!gameState || gameState.phase !== 'playing') return;
-
-      // Обновить время
-      gameState.time.tick += gameState.speed;
-      gameState.time.dayInYear = gameState.time.tick % 365;
-      gameState.time.year = Math.floor(gameState.time.tick / 365) + 1;
-
-      // Экономика: обрабатываем только колонизированные планеты
-      const colonizedPlanets = gameState.galaxy.systems
-        .flatMap(s => s.planets)
-        .filter(p => p.owner != null);
-
-      for (let i = 0; i < gameState.speed; i++) {
-        processEconomyTick(colonizedPlanets, gameState.productionQueues, gameState.galaxy.systemMap);
-      }
-
-      set({ gameState: { ...gameState } });
+      const mediator = getMediatorWithModules();
+      // Делегируем медиатору: он инкрементирует время и вызовет registry.tickAll,
+      // что приведёт к EconomyModule.tick → processEconomyTick → emit state-changed
+      mediator.tick();
     },
 
     setView: (view) => set({ view }),
@@ -263,69 +252,70 @@ export const useGameStore = create<GameStore>((set, get) => {
     },
 
     buildOnHex: (planetId, hexIndex, buildingId) => {
+      const mediator = getMediatorWithModules();
       const { gameState } = get();
       if (!gameState) return false;
       const planet = findPlanet(gameState, planetId);
       if (!planet) return false;
-      const result = buildOnHex(planet, hexIndex, buildingId);
-      if (result) set({ gameState: { ...gameState } });
-      return result;
+      const before = planet.hexes[hexIndex]?.buildingId;
+      // Эмитим событие — EconomyModule.onBuild вызовет engine.buildOnHex
+      // и эмитнет `economy:building-constructed` + `core:state-changed`.
+      // emit синхронный — поэтому после вызова проверяем состояние планеты.
+      mediator.getBus().emit('economy:build', { planetId, hexIndex, buildingId });
+      const success = planet.hexes[hexIndex]?.buildingId === buildingId && before !== buildingId;
+      return success;
     },
 
     upgradeBuildingOnHex: (planetId, hexIndex) => {
+      const mediator = getMediatorWithModules();
       const { gameState } = get();
       if (!gameState) return false;
       const planet = findPlanet(gameState, planetId);
       if (!planet) return false;
-      const result = upgradeBuilding(planet, hexIndex);
-      if (result) set({ gameState: { ...gameState } });
-      return result;
+      const before = planet.hexes[hexIndex]?.buildingLevel ?? 0;
+      mediator.getBus().emit('economy:upgrade', { planetId, hexIndex });
+      const after = planet.hexes[hexIndex]?.buildingLevel ?? 0;
+      return after > before;
     },
 
     enqueueProduction: (planetId, recipeId, repeat = false) => {
+      const mediator = getMediatorWithModules();
       const { gameState } = get();
       if (!gameState) return false;
       const planet = findPlanet(gameState, planetId);
       if (!planet) return false;
-      const result = enqueueProduction(planet, gameState.productionQueues, recipeId, repeat);
-      if (result) set({ gameState: { ...gameState } });
-      return result;
+      const before = gameState.productionQueues.get(planetId)?.items.length ?? 0;
+      mediator.getBus().emit('economy:enqueue', { planetId, recipeId, repeat });
+      const after = gameState.productionQueues.get(planetId)?.items.length ?? 0;
+      return after > before;
     },
 
     colonizePlanet: (planetId) => {
+      const mediator = getMediatorWithModules();
       const { gameState } = get();
       if (!gameState) return false;
       const planet = findPlanet(gameState, planetId);
       if (!planet) return false;
 
-      const system = gameState.galaxy.systemMap.get(planet.systemId);
+      // Эмитим событие — EconomyModule.onColonize вызовет engine.colonizePlanet,
+      // инициализирует склад, эмитнет `economy:planet-colonized` + `core:state-changed`.
+      mediator.getBus().emit('economy:colonize', { planetId });
 
-      const result = colonizePlanet(planet, system);
-      if (result) {
-        if (!planet.warehouse) {
-          planet.warehouse = createDefaultWarehouse();
-          planet.warehouse = applyColonyRole(planet.warehouse, 'industrial');
-          planet.warehouse.capacities = calculateWarehouseCapacities(planet);
-          planet.warehouse.totalCapacity = calculateWarehouseCapacity(planet);
-          planet.warehouse.orbitBuffer.capacity = getOrbitBufferCapacity(planet);
-        }
-
+      const success = planet.owner === 'player';
+      if (success) {
+        // Переключаем фазу в 'playing' — переход к активной игре.
+        // Mediator через setGameState обновит state и эмитнет state-changed.
         gameState.phase = 'playing';
         gameState.speed = 1;
+        mediator.setGameState(gameState);
+
         set({
-          gameState: {
-            ...gameState,
-            galaxy: {
-              ...gameState.galaxy,
-              systems: [...gameState.galaxy.systems],
-            },
-          },
           selectedSystemId: planet.systemId,
           selectedPlanetId: planetId,
           view: 'planet',
         });
       }
-      return result;
+      return success;
     },
 
     // ─── Склад ────────────────────────────────────────────

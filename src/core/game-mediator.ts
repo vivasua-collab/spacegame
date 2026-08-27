@@ -88,6 +88,8 @@ export class GameMediator {
       seed: galaxy.seed,
     });
 
+    this.emitStateChanged();
+
     return this.gameState;
   }
 
@@ -106,6 +108,19 @@ export class GameMediator {
     this.loop.setTime(state.time);
 
     this.bus.emit('core:game-loaded', { saveId: '' });
+    this.emitStateChanged();
+  }
+
+  /** Получить шину событий (для подписки/эмитта из store и UI) */
+  getBus(): TypedEventBus {
+    return this.bus;
+  }
+
+  /** Эмитнуть событие изменения состояния (для синхронизации Zustand-store). */
+  emitStateChanged(): void {
+    if (this.gameState) {
+      this.bus.emit('core:state-changed', this.gameState);
+    }
   }
 
   /** Получить текущее состояние игры */
@@ -116,6 +131,14 @@ export class GameMediator {
   /** Обновить ссылку на gameState (для синхронизации с Zustand) */
   setGameState(state: GameState): void {
     this.gameState = state;
+    // Если состояние загружено/установлено в фазе 'playing' —
+    // убедиться что модули запущены и интервал активен.
+    if (state.phase === 'playing' && state.speed > 0) {
+      this.registry.startAll();
+      this.loop.setSpeed(state.speed);
+      this.loop.start();
+    }
+    this.emitStateChanged();
   }
 
   // ─── Управление временем ──────────────────────────────
@@ -127,7 +150,13 @@ export class GameMediator {
     if (speed > 0) {
       this.gameState.phase = 'playing';
       this.loop.setSpeed(speed);
+      // Запустить интервал, если ещё не запущен (loop.start идемпотентен)
+      this.loop.start();
+    } else {
+      this.gameState.phase = 'paused';
+      this.loop.pause();
     }
+    this.emitStateChanged();
   }
 
   /** Переключить паузу */
@@ -140,11 +169,35 @@ export class GameMediator {
     } else {
       this.gameState.phase = 'playing';
       this.gameState.speed = 1;
+      this.loop.setSpeed(1);
+      this.loop.start();
+    }
+    this.emitStateChanged();
+  }
+
+  /**
+   * Запустить игровой цикл (вызывается из React useEffect на mount).
+   * Идемпотентно: повторные вызовы безопасны.
+   * Запускает модули (registry.startAll) и интервал (loop.start),
+   * если игра уже в фазе 'playing'.
+   */
+  start(): void {
+    if (!this.gameState) return;
+    // Запустить модули (перевести из initialized → started)
+    this.registry.startAll();
+    // Запустить интервал — только если игра уже в 'playing' (например, после загрузки сейва)
+    if (this.gameState.phase === 'playing' && this.gameState.speed > 0) {
+      this.loop.setSpeed(this.gameState.speed);
       this.loop.start();
     }
   }
 
-  /** Обработать тик (вызывается из React useEffect) */
+  /** Остановить игровой цикл (вызывается из React useEffect на unmount). */
+  stop(): void {
+    this.loop.stop();
+  }
+
+  /** Обработать тик (для пошагового режима или ручного вызова) */
   tick(): void {
     if (!this.gameState || this.gameState.phase !== 'playing') return;
 
@@ -153,8 +206,10 @@ export class GameMediator {
     this.gameState.time.dayInYear = this.gameState.time.tick % 365;
     this.gameState.time.year = Math.floor(this.gameState.time.tick / 365) + 1;
 
-    // Тик через реестр модулей
+    // Тик через реестр модулей (EconomyModule.tick, GalaxyModule.tick, ...)
     this.registry.tickAll(this.gameState.time);
+
+    this.emitStateChanged();
   }
 
   // ─── Запросы к данным ─────────────────────────────────

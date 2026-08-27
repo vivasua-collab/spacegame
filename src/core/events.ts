@@ -12,7 +12,7 @@
  * 3. Обновить манифест модуля (emits / subscribes)
  */
 
-import type { EntityId, GameTime, GameSpeed } from './types';
+import type { EntityId, GameTime, GameSpeed, GameState } from './types';
 
 // ─── Core ─────────────────────────────────────────────────
 
@@ -25,6 +25,13 @@ export interface CoreEvents {
   'core:speed-changed': GameSpeed;
   'core:game-created': { galaxyId: EntityId; seed: number };
   'core:game-loaded': { saveId: string };
+  /**
+   * Состояние игры изменилось.
+   * Эмитится медиатором и модулями после любой мутации GameState,
+   * чтобы Zustand-store мог синхронизировать свою реактивную копию.
+   * Payload — ссылка на актуальный GameState (не клон; клон делает store).
+   */
+  'core:state-changed': GameState;
 }
 
 // ─── Galaxy ───────────────────────────────────────────────

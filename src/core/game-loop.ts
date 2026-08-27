@@ -1,19 +1,30 @@
 /**
  * Игровой цикл с управлением временем.
  *
- * Версия 3.0: Интегрирован с ModuleRegistry и TypedEventBus.
- * - Тики распределяются через bus → registry.tickAll()
- * - Отложенные события обрабатываются через bus.flush()
+ * Версия 4.0 (Block 06): setInterval с переменным интервалом по скорости.
+ * - x1 → 1000ms, x5 → 200ms, x15 → ~67ms, x50 → 20ms
+ * - Защита от перегрузки: Math.min(speed, 50) тиков за интервал.
+ * - Тики распределяются через bus.emit('core:tick') → registry.tickAll()
  * - Поддерживает пошаговый режим (step)
  *
  * Подключение:
- * - React: useEffect + setInterval → mediator.tick()
+ * - React: useEffect (mount) → mediator.start() (который вызывает loop.start())
  * - Headless: loop.start() / loop.step()
  */
 
 import type { TypedEventBus } from './typed-event-bus';
 import type { ModuleRegistry } from './module-registry';
 import type { GameTime, GameSpeed, GamePhase } from './types';
+
+/** Максимальное количество тиков за один интервал (защита от перегрузки). */
+const MAX_TICKS_PER_INTERVAL = 50;
+
+/** Интервал (мс) для каждой скорости. */
+function intervalForSpeed(speed: GameSpeed): number {
+  if (speed <= 0) return 1000;
+  // x1 → 1000ms, x5 → 200ms, x15 → ~67ms, x50 → 20ms
+  return Math.max(20, Math.round(1000 / speed));
+}
 
 export class GameLoop {
   private time: GameTime;
@@ -83,11 +94,20 @@ export class GameLoop {
     this.processTick();
   }
 
+  /** Остановить интервал (без изменения фазы) */
+  stop(): void {
+    this.stopInterval();
+    if (this.phase === 'playing') {
+      this.phase = 'paused';
+    }
+  }
+
   private startInterval(): void {
     this.stopInterval();
-    const ms = 200; // 200мс интервал при любой скорости
+    const ms = intervalForSpeed(this.speed);
     this.intervalId = setInterval(() => {
-      for (let i = 0; i < this.speed; i++) {
+      const ticks = Math.min(this.speed, MAX_TICKS_PER_INTERVAL);
+      for (let i = 0; i < ticks; i++) {
         this.processTick();
       }
     }, ms);
@@ -106,7 +126,7 @@ export class GameLoop {
     this.time.dayInYear = this.time.tick % 365;
     this.time.year = Math.floor(this.time.tick / 365) + 1;
 
-    // Отправить событие тика в шину
+    // Отправить событие тика в шину (подписчики: EconomyModule, GalaxyModule, ...)
     this.bus.emit('core:tick', { ...this.time });
 
     // Распределить тик по всем модулям через реестр
