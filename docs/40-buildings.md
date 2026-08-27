@@ -272,6 +272,59 @@ production_rate = ice_availability × harvester_level × temperature_bonus
 >
 > **ВЕРСИЯ 2.0 (историческое)**: специализированные здания (Плавильня, Химический завод, Нефтехимический завод) были объединены в универсальный `processor`. Версия 2.1 возвращает концепцию специализации, но как **апгрейд-путь от универсального**, а не как отдельных зданий.
 
+> 📌 **BLOCK 05 IMPLEMENTATION NOTE** (Etap 2.6, 2026-08-27):
+>
+> Фактическая имплементация Блока 05 (PR1-PR8) использует следующие формулы и категории, которые являются источником истины для кода в `src/economy/engine.ts → calculateProcessorOutputMultiplier`:
+>
+> **Универсальный (universal)**:
+> ```
+> yieldMult = building.baseYield × (1 / sqrt(max(1, activeRecipes.length)))
+>           = 0.75 × (1 / sqrt(activeRecipes))    // для processor
+> purity   = building.basePurity                     // 0.78 для processor (диапазон 0.70–0.85)
+> ```
+>
+> **Специализированный (specialized)**:
+> ```
+> yieldMult = 1.0 × (1 + 0.02 × (specializationLevel - 1))   // 1.0 / 1.02 / 1.04 / 1.06 / 1.08
+> purity   = 0.92 + 0.0175 × (specializationLevel - 1)        // 0.92 / 0.9375 / 0.955 / 0.9725 / 0.99
+> ```
+>
+> Внимание: для specialized ветки `baseYield` фиксирован = 1.0 (по плану §11.3), НЕ `building.baseYield` (который 0.75 для processor). Это даёт специализированному processor L1 выход 7.0 × 1.0 × 1.0 = 7.0 ед. (+33% над universal L1 с 1 рецептом = 5.25 ед.).
+>
+> **7 категорий специализации** (источник: `src/data/processor-categories.ts`):
+>
+> | ID | Имя | minBuildingLevel | basePurity | equivalentTo |
+> |----|------|------------------|------------|--------------|
+> | `metal_smelting` | Плавка металлических руд | 3 | 0.92 | refinery |
+> | `nonmetal_smelting` | Плавка неметаллических руд | 3 | 0.92 | — |
+> | `chemical_decomp` | Химическое разложение | 3 | 0.92 | — |
+> | `ice_melting` | Переработка льда | 3 | 0.93 | — |
+> | `gas_processing` | Газовая переработка | 4 | 0.93 | — |
+> | `deep_ore_smelting` | Плавка глубинных руд | 5 | 0.95 | — |
+> | `alloy_synthesis` | Синтез сплавов и материалов | 3 | 0.95 | synthesizer |
+>
+> **Поля BuildingDef** (см. `src/core/types.ts`):
+> - `isUniversalProcessor?: boolean` — true для processor/refinery/synthesizer.
+> - `defaultProcessorType?: 'universal' | 'specialized'` — universal для processor, specialized для refinery/synthesizer.
+> - `defaultSpecialization?: ProcessorRecipeCategory` — metal_smelting для refinery, alloy_synthesis для synthesizer.
+> - `baseYield?: number` — 0.75 для processor, 1.0 для refinery/synthesizer.
+> - `basePurity?: number` — 0.78 для processor, 0.95 для refinery/synthesizer.
+> - `specializeCost?: Partial<Record<string, number>>` — стоимость universal→specialized.
+> - `upgradeSpecializationCost?: Partial<Record<string, number>>` — стоимость × specializationLevel.
+>
+> **Поля HexCell / AtmosphericSlot / OrbitalSlot** (instance state):
+> - `processorType?: 'universal' | 'specialized'` — тип экземпляра.
+> - `specialization?: ProcessorRecipeCategory` — категория (если specialized).
+> - `specializationLevel?: number` — уровень 0..5 (0 = universal).
+> - `activeRecipes?: string[]` — активные рецепты (для universal — мульти, для specialized — 1..2).
+>
+> **Дополнительно**:
+> - `Planet.resourcePurity?: Record<string, number>` — средневзвешенная чистота ресурсов на складе (PR3-min; полное per-purity-batch решение — в будущем расширении склада).
+> - `RecipeDef.processorCategory?: ProcessorRecipeCategory` — подкатегория для специализации; undefined для не-процессорных рецептов (shipyard).
+> - `RecipeDef.minSpecializationLevel?: number` — мин. уровень специализации здания для рецепта (глубинные руды = 5).
+>
+> **PR3-min vs PR3-full**: в текущей имплементации используется PR3-min — per-planet queue + поиск экземпляра через `findProcessorInstance(planet, buildingId, preferredCategory)`. PR3-full (per-building cycles) отложен в будущий блок; концепции `base_capacity`, `workforce_efficiency`, разделение ёмкости в §3.1 ниже — концептуальный дизайн для PR3-full.
+
 Перерабатывающие здания превращают сырьё (руды, газы, лёд) в чистые элементы и материалы. Каждая линия — цепочка связанных зданий.
 
 ### 3.0 Два типа переработчиков и механизм специализации
