@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import { useGameStore } from '@/stores/game-store';
 import { BUILDINGS, BUILDING_MAP, CATEGORY_NAMES } from '@/data/buildings';
 import { ELEMENT_MAP } from '@/data/elements';
@@ -20,8 +21,11 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
-import { Hammer, Zap, ArrowUp } from 'lucide-react';
+import { Hammer, Zap, ArrowUp, Wrench, RotateCcw, ArrowRight } from 'lucide-react';
 import type { Planet, HexTerrain, BuildingLayer, BuildingDef } from '@/core/types';
+import { calculateProcessorOutputMultiplier } from '@/economy/engine';
+import { PROCESSOR_CATEGORIES } from '@/data/processor-categories';
+import { SpecializeDialog } from './specialize-dialog';
 
 /**
  * Target — what the user clicked to open the dialog.
@@ -251,85 +255,172 @@ function UpgradeMode({
 }) {
   const canAffordUpgrade = canAffordBuildingUpgrade(planet, existingLevel, existingBuilding);
   const isMaxLevel = existingLevel >= existingBuilding.levels;
+  // Block 05 PR6 — specialization state
+  const specializeBuildingOnHex = useGameStore((s) => s.specializeBuildingOnHex);
+  const upgradeSpecializationOnHex = useGameStore((s) => s.upgradeSpecializationOnHex);
+  const [specializeDialogOpen, setSpecializeDialogOpen] = useState(false);
+
+  const hex = planet.hexes[hexIndex];
+  const processorType = hex?.processorType;
+  const specialization = hex?.specialization;
+  const specializationLevel = hex?.specializationLevel ?? 0;
+  const activeRecipes = hex?.activeRecipes ?? [];
+
+  // Показывать блок специализации только для зданий-переработчиков
+  const isProcessorBuilding = existingBuilding.isUniversalProcessor === true;
+  // Если building.defaultProcessorType === 'specialized' (refinery/synthesizer)
+  // — это предельная форма, нельзя специализироваться дальше или откатиться.
+  const isLimitSpecializedForm = existingBuilding.defaultProcessorType === 'specialized';
+  const isUniversalInstance = processorType === 'universal' || processorType === undefined;
+  const isSpecializedInstance = processorType === 'specialized';
+  const canUpgradeSpecialization =
+    isSpecializedInstance && specializationLevel < 5 && !isLimitSpecializedForm;
+
+  // Расчёт текущего коэф. выхода и чистоты через calculateProcessorOutputMultiplier
+  const processorOutput = isProcessorBuilding
+    ? calculateProcessorOutputMultiplier(existingBuilding, {
+        processorType,
+        specialization,
+        specializationLevel,
+        activeRecipes,
+      })
+    : null;
+
+  // Категория для отображения имени (если specialized)
+  const categoryDef = specialization ? PROCESSOR_CATEGORIES.get(specialization) : null;
+
+  // Проверка доступности ресурсов для upgradeSpecialization
+  const upgradeSpecializationCost = existingBuilding.upgradeSpecializationCost ?? {};
+  // Стоимость апгрейда специализации = upgradeSpecializationCost × specializationLevel
+  function checkCanAffordSpecUpgrade(): boolean {
+    if (!isSpecializedInstance) return false;
+    for (const [resourceId, amount] of Object.entries(upgradeSpecializationCost)) {
+      const required = (amount ?? 0) * specializationLevel;
+      if ((planet.resources[resourceId] ?? 0) < required) return false;
+    }
+    return true;
+  }
+  const canUpgradeSpec = checkCanAffordSpecUpgrade();
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="bg-[#0d0d24] border-white/10 text-white max-w-md">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Hammer className="size-4 text-amber-400" />
-            {existingBuilding.name} — Lvl {existingLevel}
-          </DialogTitle>
-          <DialogDescription className="text-slate-400">
-            {existingBuilding.description}
-          </DialogDescription>
-        </DialogHeader>
+    <>
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent className="bg-[#0d0d24] border-white/10 text-white max-w-md max-h-[85vh]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Hammer className="size-4 text-amber-400" />
+              {existingBuilding.name} — Lvl {existingLevel}
+            </DialogTitle>
+            <DialogDescription className="text-slate-400">
+              {existingBuilding.description}
+            </DialogDescription>
+          </DialogHeader>
 
-        <div className="space-y-3">
-          <div className="text-sm text-slate-300">
-            <span className="text-slate-500">Категория:</span>{' '}
-            {CATEGORY_NAMES[existingBuilding.category] ?? existingBuilding.category}
-          </div>
-
-          {existingBuilding.energyConsumption > 0 && (
-            <div className="text-sm text-orange-400 flex items-center gap-1">
-              <Zap className="size-3" />
-              Энергия: -{existingBuilding.energyConsumption}/tick
-            </div>
-          )}
-          {existingBuilding.category === 'energy' && (
-            <div className="text-sm text-green-400 flex items-center gap-1">
-              <Zap className="size-3" />
-              Энергия: +10/tick
-            </div>
-          )}
-
-          {terrain && existingBuilding.terrainBonus[terrain] && (
-            <div className="text-sm text-emerald-400">
-              Бонус местности: x{existingBuilding.terrainBonus[terrain]}
-            </div>
-          )}
-
-          <Separator className="bg-white/10" />
-
-          {isMaxLevel ? (
-            <div className="text-center text-slate-500 text-sm py-2">
-              Достигнут максимальный уровень
-            </div>
-          ) : (
-            <>
-              <div className="text-sm text-slate-300 mb-2">Апгрейд до Lvl {existingLevel + 1}:</div>
-              <div className="space-y-1">
-                {Object.entries(existingBuilding.costPerLevel).map(([resourceId, baseAmount]) => {
-                  const cost = baseAmount * existingLevel;
-                  const current = planet.resources[resourceId] ?? 0;
-                  const enough = current >= cost;
-                  const elDef = ELEMENT_MAP.get(resourceId);
-                  const name = elDef?.symbol ?? resourceId;
-                  return (
-                    <div key={resourceId} className={`flex justify-between text-xs ${enough ? 'text-slate-300' : 'text-red-400'}`}>
-                      <span>{name}</span>
-                      <span className="font-mono">
-                        {cost} / {Math.floor(current)}
-                        {!enough && ' (!)'}
-                      </span>
-                    </div>
-                  );
-                })}
+          <ScrollArea className="max-h-[70vh] pr-2">
+            <div className="space-y-3">
+              <div className="text-sm text-slate-300">
+                <span className="text-slate-500">Категория:</span>{' '}
+                {CATEGORY_NAMES[existingBuilding.category] ?? existingBuilding.category}
               </div>
-              <Button
-                className="w-full mt-2"
-                disabled={!canAffordUpgrade}
-                onClick={onUpgrade}
-              >
-                <ArrowUp className="size-4 mr-1" />
-                Апгрейд
-              </Button>
-            </>
-          )}
-        </div>
-      </DialogContent>
-    </Dialog>
+
+              {existingBuilding.energyConsumption > 0 && (
+                <div className="text-sm text-orange-400 flex items-center gap-1">
+                  <Zap className="size-3" />
+                  Энергия: -{existingBuilding.energyConsumption}/tick
+                </div>
+              )}
+              {existingBuilding.category === 'energy' && (
+                <div className="text-sm text-green-400 flex items-center gap-1">
+                  <Zap className="size-3" />
+                  Энергия: +10/tick
+                </div>
+              )}
+
+              {terrain && existingBuilding.terrainBonus[terrain] && (
+                <div className="text-sm text-emerald-400">
+                  Бонус местности: x{existingBuilding.terrainBonus[terrain]}
+                </div>
+              )}
+
+              {/* ─── Block 05 PR6 — панель специализации переработчика ─── */}
+              {isProcessorBuilding && processorOutput && (
+                <ProcessorSpecializationPanel
+                  isLimitSpecializedForm={isLimitSpecializedForm}
+                  isUniversalInstance={isUniversalInstance}
+                  isSpecializedInstance={isSpecializedInstance}
+                  specialization={specialization}
+                  specializationLevel={specializationLevel}
+                  categoryDefName={categoryDef?.name}
+                  yieldMult={processorOutput.yieldMult}
+                  purity={processorOutput.purity}
+                  activeRecipesCount={activeRecipes.length}
+                  canUpgradeSpecialization={canUpgradeSpecialization}
+                  canUpgradeSpec={canUpgradeSpec}
+                  upgradeSpecializationCost={upgradeSpecializationCost}
+                  upgradeSpecializationLevel={specializationLevel}
+                  planet={planet}
+                  onOpenSpecializeDialog={() => setSpecializeDialogOpen(true)}
+                  onUpgradeSpecialization={() => {
+                    upgradeSpecializationOnHex(planet.id, hexIndex);
+                  }}
+                  onRevertToUniversal={() => {
+                    specializeBuildingOnHex(planet.id, hexIndex, 'universal');
+                  }}
+                />
+              )}
+
+              <Separator className="bg-white/10" />
+
+              {isMaxLevel ? (
+                <div className="text-center text-slate-500 text-sm py-2">
+                  Достигнут максимальный уровень
+                </div>
+              ) : (
+                <>
+                  <div className="text-sm text-slate-300 mb-2">Апгрейд до Lvl {existingLevel + 1}:</div>
+                  <div className="space-y-1">
+                    {Object.entries(existingBuilding.costPerLevel).map(([resourceId, baseAmount]) => {
+                      const cost = baseAmount * existingLevel;
+                      const current = planet.resources[resourceId] ?? 0;
+                      const enough = current >= cost;
+                      const elDef = ELEMENT_MAP.get(resourceId);
+                      const name = elDef?.symbol ?? resourceId;
+                      return (
+                        <div key={resourceId} className={`flex justify-between text-xs ${enough ? 'text-slate-300' : 'text-red-400'}`}>
+                          <span>{name}</span>
+                          <span className="font-mono">
+                            {cost} / {Math.floor(current)}
+                            {!enough && ' (!)'}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <Button
+                    className="w-full mt-2"
+                    disabled={!canAffordUpgrade}
+                    onClick={onUpgrade}
+                  >
+                    <ArrowUp className="size-4 mr-1" />
+                    Апгрейд
+                  </Button>
+                </>
+              )}
+            </div>
+          </ScrollArea>
+        </DialogContent>
+      </Dialog>
+
+      {/* SpecializeDialog — открывается поверх UpgradeMode */}
+      {isProcessorBuilding && specializeDialogOpen && (
+        <SpecializeDialog
+          open={specializeDialogOpen}
+          onOpenChange={setSpecializeDialogOpen}
+          planet={planet}
+          hexIndex={hexIndex}
+        />
+      )}
+    </>
   );
 }
 
@@ -476,4 +567,176 @@ function canAffordBuildingUpgrade(
     if ((planet.resources[resourceId] ?? 0) < cost) return false;
   }
   return true;
+}
+
+// ============ Block 05 PR6 — Processor Specialization Panel ============
+
+interface ProcessorSpecializationPanelProps {
+  isLimitSpecializedForm: boolean;     // refinery/synthesizer (предельная форма)
+  isUniversalInstance: boolean;
+  isSpecializedInstance: boolean;
+  specialization: import('@/core/types').ProcessorRecipeCategory | undefined;
+  specializationLevel: number;
+  categoryDefName?: string;
+  yieldMult: number;
+  purity: number;
+  activeRecipesCount: number;
+  canUpgradeSpecialization: boolean;   // < 5 и не предельная форма
+  canUpgradeSpec: boolean;             // хватает ресурсов
+  upgradeSpecializationCost: Partial<Record<string, number>>;
+  upgradeSpecializationLevel: number;  // текущий уровень (для стоимости × level)
+  planet: Planet;
+  onOpenSpecializeDialog: () => void;
+  onUpgradeSpecialization: () => void;
+  onRevertToUniversal: () => void;
+}
+
+function ProcessorSpecializationPanel({
+  isLimitSpecializedForm,
+  isUniversalInstance,
+  isSpecializedInstance,
+  specialization,
+  specializationLevel,
+  categoryDefName,
+  yieldMult,
+  purity,
+  activeRecipesCount,
+  canUpgradeSpecialization,
+  canUpgradeSpec,
+  upgradeSpecializationCost,
+  upgradeSpecializationLevel,
+  planet,
+  onOpenSpecializeDialog,
+  onUpgradeSpecialization,
+  onRevertToUniversal,
+}: ProcessorSpecializationPanelProps) {
+  return (
+    <div className="rounded-md border border-purple-900/30 bg-purple-950/20 p-3 space-y-2">
+      <div className="flex items-center gap-2 mb-1">
+        <Wrench className="size-3 text-purple-400" />
+        <span className="text-xs text-purple-300 uppercase tracking-wider font-semibold">
+          Переработчик
+        </span>
+      </div>
+
+      {/* Тип переработчика */}
+      <div className="flex justify-between items-center text-xs">
+        <span className="text-slate-500">Тип:</span>
+        {isUniversalInstance ? (
+          <Badge variant="outline" className="text-[10px] h-5 px-2 bg-slate-700/50">
+            Универсальный
+          </Badge>
+        ) : (
+          <Badge variant="outline" className="text-[10px] h-5 px-2 bg-purple-900/40 text-purple-300 border-purple-700">
+            Специализированный {categoryDefName ? `· ${categoryDefName}` : ''} · L{specializationLevel}
+          </Badge>
+        )}
+      </div>
+
+      {/* Коэф. выхода и чистота */}
+      <div className="flex justify-between text-xs">
+        <span className="text-slate-500">Коэф. выхода:</span>
+        <span className="font-mono text-emerald-400">×{yieldMult.toFixed(3)}</span>
+      </div>
+      <div className="flex justify-between text-xs">
+        <span className="text-slate-500">Чистота:</span>
+        <span className="font-mono text-cyan-400">{(purity * 100).toFixed(1)}%</span>
+      </div>
+
+      {/* Для universal — штраф за мульти-рецепт */}
+      {isUniversalInstance && (
+        <div className="flex justify-between text-xs">
+          <span className="text-slate-500">Активных рецептов:</span>
+          <span className="font-mono text-amber-400">
+            {activeRecipesCount} {activeRecipesCount > 1 && `(штраф ×${(1 / Math.sqrt(activeRecipesCount)).toFixed(3)})`}
+          </span>
+        </div>
+      )}
+
+      {/* Кнопки */}
+      <div className="space-y-2 pt-1">
+        {/* Universal → Specialized (только для processor, не refinery/synthesizer) */}
+        {isUniversalInstance && !isLimitSpecializedForm && (
+          <Button
+            size="sm"
+            variant="default"
+            className="w-full bg-purple-700 hover:bg-purple-600"
+            onClick={onOpenSpecializeDialog}
+          >
+            <Wrench className="size-3 mr-1" />
+            Специализировать
+          </Button>
+        )}
+
+        {/* Specialized → Upgrade specialization level (только для processor, не refinery/synthesizer) */}
+        {isSpecializedInstance && canUpgradeSpecialization && !isLimitSpecializedForm && (
+          <>
+            <div className="text-[11px] text-slate-400 mt-1">
+              Апгрейд специализации L{specializationLevel} → L{specializationLevel + 1}:
+            </div>
+            <div className="space-y-0.5">
+              {Object.entries(upgradeSpecializationCost).map(([resourceId, amount]) => {
+                const required = (amount ?? 0) * upgradeSpecializationLevel;
+                const current = planet.resources[resourceId] ?? 0;
+                const enough = current >= required;
+                const elDef = ELEMENT_MAP.get(resourceId);
+                const name = elDef?.symbol ?? resourceId;
+                return (
+                  <div
+                    key={resourceId}
+                    className={`flex justify-between text-xs ${enough ? 'text-slate-400' : 'text-red-400'}`}
+                  >
+                    <span>{name}</span>
+                    <span className="font-mono">
+                      {required} / {Math.floor(current)}
+                      {!enough && ' (!)'}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+            <Button
+              size="sm"
+              className="w-full bg-emerald-700 hover:bg-emerald-600"
+              disabled={!canUpgradeSpec}
+              onClick={onUpgradeSpecialization}
+            >
+              <ArrowUp className="size-3 mr-1" />
+              Повысить спец-уровень (L{specializationLevel} → L{specializationLevel + 1})
+            </Button>
+          </>
+        )}
+
+        {/* Specialized → Revert to universal (только для processor, не refinery/synthesizer) */}
+        {isSpecializedInstance && !isLimitSpecializedForm && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="w-full border-red-800/50 text-red-400 hover:bg-red-900/20"
+            onClick={onRevertToUniversal}
+          >
+            <RotateCcw className="size-3 mr-1" />
+            Вернуть к универсальному (50% возврата)
+          </Button>
+        )}
+
+        {/* Для refinery/synthesizer — пометить как предельную форму */}
+        {isLimitSpecializedForm && (
+          <div className="text-[11px] text-slate-500 italic flex items-start gap-1.5 mt-1">
+            <ArrowRight className="size-3 text-slate-500 mt-0.5 shrink-0" />
+            <span>
+              Предельная специализированная форма. Не подлежит переключению или откату.
+            </span>
+          </div>
+        )}
+
+        {/* Universal processor — подсказка про минимальный уровень */}
+        {isUniversalInstance && !isLimitSpecializedForm && (
+          <div className="text-[11px] text-slate-500 italic">
+            Требуется уровень здания ≥ 3 для специализации. Глубинные руды (Y, Ba, Zr и др.) — ≥ 5.
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
