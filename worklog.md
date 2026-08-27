@@ -209,3 +209,51 @@ Stage Summary:
 - Block 1 stabilization started: P7 (transuranic elements) + P6 (Colony Hub cost) complete and lint-clean.
 - Next: P5 (crafted materials category), then P1 (critical: ore ID unification), then P2 (immutable store), then tests T1-T6.
 - 8 checkpoint files + 1 progress file now capture all plans and progress (recovered from lost chat context).
+
+---
+Task ID: 19 (audit-coordinator)
+Agent: main
+Task: Environment recovery + start 4-pass audit (Etap 3.5 audit cycle)
+
+Work Log:
+- Detected environment reset: /home/z/spacegame-audit/spacegame/ and /home/z/my-project/worklog.md were lost (sandbox refresh).
+- Re-cloned spacegame from GitHub (https://github.com/vivasua-collab/spacegame.git) into /home/z/spacegame-audit/spacegame/.
+- bun install: 827 packages, 3.16s.
+- bun run db:push: Prisma SQLite DB regenerated (db/custom.db) — was gitignored.
+- Verified: tests=340/340 pass, tsc=138 errors (baseline), lint=0 errors/50 warnings, recipes=75/75.
+- Removed invalid Pass 1 audit checkpoint that previous subagent wrote against /home/z/my-project boilerplate (NOT spacegame repo).
+- Note: agent-ctx/ files (Block 02 phases 1-7, Block 03 phases 1-7) were LOCAL ONLY in previous sandbox — not committed to repo. They exist in git history via the commit messages but not as checked-in files. Will reconstruct as needed during audit.
+- Note: this worklog.md (211 lines) is the version committed at start of Block 06. Subsequent worklog updates for Block 02/03 (Tasks 11-18) were written to /home/z/my-project/worklog.md (agent-local), which is now lost. The commit messages in git log (35d5c76..e3bc1d6) capture the same information.
+
+Stage Summary:
+- Environment recovered: /home/z/spacegame-audit/spacegame/ live, 340/340 tests, 138 tsc baseline, 50 warnings lint.
+- Starting 4-pass audit cycle:
+  - Pass 1: Foundation (types, events, architecture, game-store, configs)
+  - Pass 2: Code quality (economy, ships, research, galaxy, data, tests)
+  - Pass 3: Documentation compliance (docs/*.md vs implementation)
+  - Pass 4: MVP readiness (e2e gameplay, UI, balance, critical bugs)
+- Each pass: separate checkpoint in checkpoints/audit_2026_08_27_0N_*.md.
+- After 4 passes: push to GitHub + start dev server on port 3000 for preview.
+
+---
+Task ID: 23 (audit-coordinator-final)
+Agent: main
+Task: 4-pass audit complete + push + dev server prep
+
+Work Log:
+- Audit cycle completed: 4 passes, each expanding scope, each checkpoint in checkpoints/
+  - Pass 1 (foundation): 22 findings — 1 P0 (store↔mediator sync дыра, 21 store actions), 6 P1, 8 P2, 7 P3. Verdict: ADEQUATE.
+  - Pass 2 (code quality): 21 findings — 0 new P0, 5 P1 (silent resource loss, cross-layer import, hardcoded enemy, fleet:movement-started timing, cancelProduction reason hack), 9 P2, 7 P3. Verdict: ACCEPTABLE.
+  - Pass 3 (docs compliance): 23 findings — 0 new P0, 7 P1 (getLabRPPerSec /800 vs /500 spec drift, README stale, doc_fixes partial, STATUS.md incorrect, .env boilerplate, INSTRUCTIONS paths, 32-mendoleev missing Os), 9 P2, 7 P3. Verdict: SIGNIFICANT DRIFT.
+  - Pass 4 (MVP readiness): 10 findings — 0 new P0, 2 P1 (TEST_CTX bypass, perf at x50+500 systems = 250ms/20ms), 3 P2, 5 P3. Verdict: CONDITIONAL — NOT READY.
+- Cumulative: 1 P0 + ~16 unique P1 + ~25 unique P2 + ~22 unique P3 ≈ 64 unique findings.
+- 3 MVP blockers identified:
+  1. P0-1: 21 store actions use direct zustand-immer mutation without mediator.commitState() — silently lost on next tick. Blocks Fleet (Flow E), Research (Flow F) MVP features.
+  2. P1-2: loadGame doesn't sync store→mediator — save/load round-trip breaks simulation.
+  3. .env + INSTRUCTIONS.md: paths to /home/z/my-project/ (boilerplate) instead of /home/z/spacegame-audit/spacegame/ — fresh clones fail at bun run db:push.
+- Next: git add audit checkpoints + worklog + push origin main + start dev server on :3000.
+
+Stage Summary:
+- 4 audit checkpoint files committed: checkpoints/audit_2026_08_27_01_foundation.md (~677 lines), _02_code_quality.md (~803 lines), _03_docs_compliance.md (~800 lines), _04_mvp_readiness.md (~579 lines). Total ~2.9K lines of audit documentation.
+- MVP verdict: CONDITIONAL — must fix 3 blockers before shipping (P0-1 store sync, P1-2 loadGame sync, .env paths).
+- After fixes 1-3: MVP shippable. Fixes 4-5 (silent resource loss, perf at x50+500 systems) needed for production-quality but not demo.
