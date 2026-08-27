@@ -51,6 +51,7 @@ export interface EconomyEvents {
   'economy:building-upgraded': { planetId: EntityId; hexIndex: number; level: number };
   'economy:enqueue': { planetId: EntityId; recipeId: string; repeat: boolean };
   'economy:production-complete': { planetId: EntityId; recipeId: string };
+  'economy:production-cancelled': { planetId: EntityId; recipeId: string; queueItemId: string; reason: 'recipe_not_found' | 'insufficient_inputs' };
   'economy:colonize': { planetId: EntityId };
   'economy:planet-colonized': { planetId: EntityId; hexIndex: number };
   'economy:energy-recalced': { planetId: EntityId; balance: number };

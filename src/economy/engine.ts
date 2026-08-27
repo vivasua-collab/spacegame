@@ -8,8 +8,9 @@ import type { Planet, HexCell, ProductionQueue, ProductionItem, EntityId, StarSy
 import { BUILDING_MAP } from '@/data/buildings';
 import { RECIPE_MAP } from '@/data/recipes';
 import { ELEMENT_MAP } from '@/data/elements';
-import { getCurrentLookups, findContainedElements } from '@/data/baked-lookups';
+import { getCurrentLookups } from '@/data/baked-lookups';
 import { canStoreResource, calculateWarehouseCapacity, calculateWarehouseCapacities, getOrbitBufferCapacity, ensureReservesForResources } from '@/data/warehouse';
+import { DIRECT_GAS_MAP, getAtmosphericGasesForType } from '@/data/atmosphere-gases';
 import { gameBus } from '@/core/typed-event-bus';
 
 /**
@@ -147,26 +148,10 @@ function processExtraction(planet: Planet): void {
   convertDirectAtmosphericElements(planet);
 }
 
-/** Получить доступные газы для типа атмосферы (из processing-chains.ts) */
-function getAtmosphericGasesForType(atmosphereType: string): string[] {
-  const ATMOSPHERE_GAS_MAP: Record<string, string[]> = {
-    none: [],
-    thin: ['N2', 'CO2'],
-    standard: ['Ar', 'N2', 'CO2', 'O2'],
-    dense: ['H2', 'He', 'Ar', 'N2', 'CO2', 'O2'],
-    toxic: ['N2', 'CO2', 'NH3', 'H2S', 'SO2'],
-    inert: ['He', 'Ne', 'Ar', 'N2'],
-    methane: ['H2', 'CH4', 'NH3'],
-    co2: ['N2', 'CO2'],
-  };
-  return ATMOSPHERE_GAS_MAP[atmosphereType] ?? [];
-}
+/** Получить доступные газы для типа атмосферы (gap-3, C3 — вынесено в data/atmosphere-gases.ts) */
 
 /** Конвертация чистых атмосферных газов в элементы (1:1, переработка не нужна) */
 function convertDirectAtmosphericElements(planet: Planet): void {
-  const DIRECT_GAS_MAP: Record<string, string> = {
-    'H2': 'H', 'He': 'He', 'Ne': 'Ne', 'Ar': 'Ar', 'N2': 'N', 'O2': 'O',
-  };
   for (const [gasId, elementId] of Object.entries(DIRECT_GAS_MAP)) {
     const gasAmount = planet.resources[gasId] ?? 0;
     if (gasAmount > 0) {
@@ -196,39 +181,17 @@ function getAtmosphereEfficiency(type: string): number {
 }
 
 /**
- * @deprecated Руды теперь кладутся на склад как сырьё и перерабатываются через
- * рецептурную систему (recipes.ts). Эта функция оставлена как fallback для
- * нестандартных ресурсов, не имеющих рецептов.
+ * (gap-7, C2 — удалено как мёртвый код, audit §2.3)
+ * Прежняя extractOreToElements(planet, oreId, oreAmount) была @deprecated и не имела
+ * вызовов: руды теперь кладутся на склад как сырьё и перерабатываются через рецептурную
+ * систему (recipes.ts). Удалено в Блоке 01 C2.
  */
-function extractOreToElements(planet: Planet, oreId: string, oreAmount: number): void {
-  // Ищем содержащиеся элементы через BakedGalaxyModel
-  const contained = findContainedElements(getCurrentLookups(), oreId);
-
-  if (contained && contained.length > 0) {
-    // Распределяем добытое количество пропорционально yield
-    const totalYield = contained.reduce((s, ce) => s + ce.yield, 0);
-    for (const ce of contained) {
-      const elementAmount = oreAmount * (ce.yield / totalYield);
-      if (elementAmount <= 0) continue;
-      const canStore = canStoreResource(planet, ce.elementId, elementAmount);
-      const actual = Math.min(elementAmount, canStore);
-      if (actual > 0) {
-        planet.resources[ce.elementId] = (planet.resources[ce.elementId] ?? 0) + actual;
-      }
-    }
-  } else {
-    // Fallback: не нашли руду — strip -ore suffix и кладём как элемент
-    const pureId = oreId.replace('-ore', '');
-    const canStore = canStoreResource(planet, pureId, oreAmount);
-    const actual = Math.min(oreAmount, canStore);
-    if (actual > 0) {
-      planet.resources[pureId] = (planet.resources[pureId] ?? 0) + actual;
-    }
-  }
-}
 
 /**
  * Обработка очереди производства планеты.
+ *
+ * (gap-7, C7 — добавлен emit `economy:production-cancelled` при удалении элемента
+ * из очереди. Раньше рецепт «терялся молча» — audit §2.3.)
  */
 function processProductionQueue(planet: Planet, queues: Map<EntityId, ProductionQueue>): void {
   const queue = queues.get(planet.id);
@@ -237,6 +200,13 @@ function processProductionQueue(planet: Planet, queues: Map<EntityId, Production
   const item = queue.items[0];
   const recipe = RECIPE_MAP.get(item.recipeId);
   if (!recipe) {
+    // (gap-7, C7) — эмитить событие об отмене, прежде чем удалить
+    gameBus.emit('economy:production-cancelled', {
+      planetId: planet.id,
+      recipeId: item.recipeId,
+      queueItemId: item.id,
+      reason: 'recipe_not_found',
+    });
     queue.items.shift();
     return;
   }
@@ -274,6 +244,14 @@ function processProductionQueue(planet: Planet, queues: Map<EntityId, Production
       }
 
       gameBus.emit('economy:production-complete', { planetId: planet.id, recipeId: recipe.id });
+    } else {
+      // (gap-7, C7) — недостаточно входных ресурсов; эмитить об отмене
+      gameBus.emit('economy:production-cancelled', {
+        planetId: planet.id,
+        recipeId: recipe.id,
+        queueItemId: item.id,
+        reason: 'insufficient_inputs',
+      });
     }
 
     if (item.repeat) {

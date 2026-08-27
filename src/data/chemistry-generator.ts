@@ -18,6 +18,7 @@ import type {
   ContainedElement,
 } from '@/data/processing-chains';
 import { ELEMENT_MAP } from '@/data/elements';
+import { GAS_ELEMENT_TO_ATMO_ID } from '@/data/atmosphere-gases';
 
 // ============================================================================
 // Baked Model Types (docs/galaxy-bake.md §5)
@@ -1430,10 +1431,10 @@ export function bakeGalaxyModel(seed: number, elements: ElementDef[]): BakedGala
   // ── Step 3: Atmospheric compounds ───────────────────────────────────
   const atmosphericCompounds = generateAtmosphericCompounds(massMap);
 
-  // Map gas elements to their atmospheric compound IDs
-  const gasElementToAtmoId: Record<string, string> = {
-    H: 'H2', He: 'He', Ne: 'Ne', Ar: 'Ar', N: 'N2', O: 'O2',
-  };
+  // Map gas elements to their atmospheric compound IDs.
+  // (gap-3, C3 — вынесено в data/atmosphere-gases.ts как GAS_ELEMENT_TO_ATMO_ID;
+  //  ранее было дублировано в engine.ts и chemistry-generator.ts.)
+  const gasElementToAtmoId = GAS_ELEMENT_TO_ATMO_ID;
 
   // Register atmospheric compounds as primary sources for gas elements
   for (const [elemId, atmoId] of Object.entries(gasElementToAtmoId)) {

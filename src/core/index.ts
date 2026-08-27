@@ -54,7 +54,6 @@ export { GameLoop } from './game-loop';
 export { GameMediator, getGameMediator, resetGameMediator } from './game-mediator';
 
 // Legacy (deprecated)
-export { EventBus, gameBus as legacyGameBus } from './event-bus';
 
 // PRNG
 export { Xoshiro256 } from './prng';
