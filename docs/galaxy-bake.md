@@ -3,7 +3,7 @@
 > **Версия:** 1.0  
 > **Дата создания:** 2026-05-04  
 > **Назначение:** Документ, описывающий процесс создания «запечённой» модели галактики — предрасчёт химии, физики и базовых технологий при генерации новой галактики  
-> **Зависимости:** [33-chemistry.md(./33-chemistry.md), [m[32-mendeleev.md(./32-mendeleev.md), [34-ores.md](./34-ores.md), [modularity.md(./modularity.md)
+> **Зависимости:** [33-chemistry.md](./33-chemistry.md), [32-mendeleev.md](./32-mendeleev.md), [34-ores.md](./34-ores.md), [modularity.md](./modularity.md)
 
 ---
 
@@ -527,4 +527,4 @@ BakedGalaxyModel {
 
 ---
 
-*Документ создан 2026-05-04 (v1.0). Согласовано с [33-chemistry.md(./33-chemistry.md), [modularity.md(./modularity.md), [34-ores.md](./34-ores.md), [m[32-mendeleev.md(./32-mendeleev.md).*
+*Документ создан 2026-05-04 (v1.0). Согласовано с [33-chemistry.md](./33-chemistry.md), [modularity.md](./modularity.md), [34-ores.md](./34-ores.md), [32-mendeleev.md](./32-mendeleev.md).*
