@@ -7,6 +7,7 @@ import { SystemView } from './system-view';
 import { PlanetView } from './planet-view';
 import { TimeControls } from './time-controls';
 import { ShipDesigner } from './ship-designer';
+import { FleetView } from './fleet-view';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import {
@@ -34,6 +35,7 @@ import {
   Flag,
   Globe,
   Wrench,
+  Ship,
 } from 'lucide-react';
 
 export function GameLayout() {
@@ -135,6 +137,18 @@ export function GameLayout() {
           <Wrench className="size-3 mr-1" />
           Дизайнер
         </Button>
+
+        {/* Block 02 (F3): Флот — кнопка в верхнем меню */}
+        <Button
+          variant="ghost"
+          size="sm"
+          className={`h-7 text-xs ${view === 'fleet' ? 'text-cyan-300' : 'text-slate-400 hover:text-white'}`}
+          onClick={() => setView('fleet')}
+          aria-label="Флоты"
+        >
+          <Ship className="size-3 mr-1" />
+          Флоты
+        </Button>
       </header>
 
       {/* Colonization banner */}
@@ -220,6 +234,7 @@ export function GameLayout() {
           {view === 'system' && <SystemView />}
           {view === 'planet' && <PlanetView />}
           {view === 'ship-designer' && <ShipDesigner />}
+          {view === 'fleet' && <FleetView />}
         </main>
       </div>
 

@@ -80,6 +80,8 @@ export class GameMediator {
       // Block 02 (F1, F7): пустые Map для дизайнов кораблей и очередей верфи
       shipDesigns: new Map(),
       shipyardQueues: new Map(),
+      // Block 02 (F3, F7): пустой Map для runtime-кораблей
+      ships: new Map(),
     };
 
     // Установить lookup для baked model

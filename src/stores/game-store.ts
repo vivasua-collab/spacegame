@@ -32,6 +32,14 @@ import { resetProductionItemCounter } from '@/economy/engine';
 import { BUILDING_MAP } from '@/data/buildings'; // Block 05 PR7 — migratePlanet
 import { SerializedGameStateSchema } from '@/lib/schemas/game-state-schema'; // Block 08 gap-9: state validation on deserialize
 import { enqueueShipBuild as enqueueShipBuildFn, cancelShipyardItem as cancelShipyardItemFn } from '@/data/ships/shipyard-queue'; // Block 02 F6
+import {
+  createFleet as createFleetFn,
+  mergeFleets as mergeFleetsFn,
+  splitFleet as splitFleetFn,
+  getFleetById as getFleetByIdFn,
+  getFleetsAt as getFleetsAtFn,
+  getLooseShips as getLooseShipsFn,
+} from '@/ships/fleet-engine'; // Block 02 F3
 
 // ============ Типы стора ============
 
@@ -48,6 +56,13 @@ let shipDesignCounter = 0;
  * Block 02 (F6): детерминированный счётчик ID элементов очереди верфи.
  */
 let shipyardItemCounter = 0;
+
+/**
+ * Block 02 (F3): детерминированный счётчик ID флотов.
+ * Без Math.random — для детерминизма (Block 07 gap-3).
+ * (shipCounter для ID построенных кораблей добавляется в Phase 2.6 — ShipsModule.)
+ */
+let fleetCounter = 0;
 
 export interface SaveInfo {
   id: string;
@@ -130,6 +145,24 @@ export interface GameStore {
   /** Получить очередь постройки планеты. */
   getShipyardQueue: (planetId: string) => import('@/core/types').ShipyardQueue | undefined;
 
+  // ─── Block 02 (F3): Флот-менеджер — create/merge/split ───
+  /** Создать новый флот из выбранных кораблей. Возвращает id нового флота или null. */
+  createFleet: (name: string, shipIds: string[], atSystemId: string) => string | null;
+  /** Объединить несколько флотов в один. Возвращает id нового флота или null. */
+  mergeFleets: (fleetIds: string[]) => string | null;
+  /** Разделить флот на два: оставшийся + извлечённый. Возвращает id извлечённого флота или null. */
+  splitFleet: (sourceFleetId: string, shipIdsToExtract: string[], newName?: string) => string | null;
+  /** Переименовать флот. */
+  renameFleet: (fleetId: string, newName: string) => boolean;
+  /** Получить флот по id (sync lookup). */
+  getFleet: (fleetId: string) => import('@/core/types').Fleet | undefined;
+  /** Получить все флоты в указанной системе. */
+  getFleetsAtSystem: (systemId: string) => import('@/core/types').Fleet[];
+  /** Получить корабль по id. */
+  getShip: (shipId: string) => import('@/core/types').Ship | undefined;
+  /** Получить «свободные» корабли игрока на локации (planetId или systemId). */
+  getLooseShips: (ownerId: string, location?: string) => import('@/core/types').Ship[];
+
   // Утилиты
   getSystem: (id: EntityId) => StarSystem | undefined;
   getPlanet: (id: EntityId) => Planet | undefined;
@@ -192,9 +225,10 @@ export function serializeGameState(state: GameState): string {
     ...state,
     galaxy: galaxyWithoutMap,
     productionQueues: Array.from(state.productionQueues.entries()),
-    // Block 02 (F7): serialize shipDesigns + shipyardQueues as entries arrays
+    // Block 02 (F7): serialize shipDesigns + shipyardQueues + ships as entries arrays
     shipDesigns: Array.from(state.shipDesigns.entries()),
     shipyardQueues: Array.from(state.shipyardQueues.entries()),
+    ships: Array.from(state.ships.entries()),
   };
   return JSON.stringify(serializable);
 }
@@ -286,6 +320,7 @@ export function deserializeGameState(json: string): GameState {
     // Block 02 (F7): defensive parse — empty Map if missing or malformed
     shipDesigns: new Map(raw.shipDesigns ?? []),
     shipyardQueues: new Map(raw.shipyardQueues ?? []),
+    ships: new Map(raw.ships ?? []),
     time: raw.time?.dayInYear !== undefined
       ? raw.time
       : { tick: raw.time?.tick ?? 0, dayInYear: (raw.time?.day ?? 0) % 365, year: raw.time?.year ?? 1 },
@@ -966,6 +1001,120 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
     getShipyardQueue: (planetId) => {
       const { gameState } = get();
       return gameState?.shipyardQueues.get(planetId);
+    },
+
+    // ─── Block 02 (F3): Флот-менеджер ────────────────────────
+    // Pattern: direct immer mutation. Engine functions (createFleet / mergeFleets /
+    // splitFleet from src/ships/fleet-engine.ts) are pure — they return Fleet objects
+    // without ids; store assigns deterministic ids (counter, no Math.random).
+    createFleet: (name, shipIds, atSystemId) => {
+      let newId: string | null = null;
+      set((state) => {
+        if (!state.gameState) return;
+        if (shipIds.length === 0) return;
+        // Validate: all ship IDs must exist in state.ships
+        for (const id of shipIds) {
+          if (!state.gameState.ships.has(id)) return;
+        }
+        const owner = state.gameState.playerFactionId;
+        const draft = createFleetFn(shipIds, atSystemId, owner, name);
+        newId = `fleet_${state.gameState.time.tick}_${fleetCounter++}`;
+        const newFleet: import('@/core/types').Fleet = { ...draft, id: newId };
+        state.gameState.fleets.push(newFleet);
+      });
+      return newId;
+    },
+
+    mergeFleets: (fleetIds) => {
+      let newId: string | null = null;
+      set((state) => {
+        if (!state.gameState) return;
+        if (fleetIds.length < 2) return; // merge of 1 = no-op
+        // Resolve fleets by id
+        const fleetsToMerge: import('@/core/types').Fleet[] = [];
+        for (const id of fleetIds) {
+          const f = getFleetByIdFn(state.gameState.fleets, id);
+          if (!f) return; // invalid id — abort
+          fleetsToMerge.push(f);
+        }
+        // All fleets must be in same location
+        const loc = fleetsToMerge[0]!.location;
+        for (const f of fleetsToMerge) {
+          if (f.location !== loc) return;
+        }
+        const draft = mergeFleetsFn(fleetsToMerge);
+        newId = `fleet_${state.gameState.time.tick}_${fleetCounter++}`;
+        const newFleet: import('@/core/types').Fleet = { ...draft, id: newId };
+        // Remove old fleets, add new one
+        const idSet = new Set(fleetIds);
+        state.gameState.fleets = state.gameState.fleets.filter(f => !idSet.has(f.id));
+        state.gameState.fleets.push(newFleet);
+      });
+      return newId;
+    },
+
+    splitFleet: (sourceFleetId, shipIdsToExtract, newName) => {
+      let newId: string | null = null;
+      set((state) => {
+        if (!state.gameState) return;
+        if (shipIdsToExtract.length === 0) return;
+        const source = getFleetByIdFn(state.gameState.fleets, sourceFleetId);
+        if (!source) return;
+        // Validate: shipIdsToExtract must all be in the source fleet
+        for (const id of shipIdsToExtract) {
+          if (!source.shipIds.includes(id)) return;
+        }
+        // Validate: don't allow extracting all ships (would leave empty fleet)
+        if (shipIdsToExtract.length >= source.shipIds.length) return;
+        const { remaining, extracted } = splitFleetFn(source, shipIdsToExtract);
+        newId = `fleet_${state.gameState.time.tick}_${fleetCounter++}`;
+        const newFleet: import('@/core/types').Fleet = {
+          ...extracted,
+          id: newId,
+          name: newName ?? extracted.name,
+        };
+        // Replace source with remaining (keep id), add extracted
+        const idx = state.gameState.fleets.findIndex(f => f.id === sourceFleetId);
+        if (idx === -1) return;
+        state.gameState.fleets[idx] = remaining;
+        state.gameState.fleets.push(newFleet);
+      });
+      return newId;
+    },
+
+    renameFleet: (fleetId, newName) => {
+      let ok = false;
+      set((state) => {
+        if (!state.gameState) return;
+        const f = getFleetByIdFn(state.gameState.fleets, fleetId);
+        if (!f) return;
+        f.name = newName;
+        ok = true;
+      });
+      return ok;
+    },
+
+    getFleet: (fleetId) => {
+      const { gameState } = get();
+      if (!gameState) return undefined;
+      return getFleetByIdFn(gameState.fleets, fleetId);
+    },
+
+    getFleetsAtSystem: (systemId) => {
+      const { gameState } = get();
+      if (!gameState) return [];
+      return getFleetsAtFn(gameState.fleets, systemId);
+    },
+
+    getShip: (shipId) => {
+      const { gameState } = get();
+      return gameState?.ships.get(shipId);
+    },
+
+    getLooseShips: (ownerId, location) => {
+      const { gameState } = get();
+      if (!gameState) return [];
+      return getLooseShipsFn(gameState.ships, gameState.fleets, ownerId, location);
     },
   };
 }));

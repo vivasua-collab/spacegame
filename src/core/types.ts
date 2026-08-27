@@ -708,4 +708,7 @@ export interface GameState {
   shipDesigns: Map<EntityId, ShipDesign>;
   // Block 02 (F1, F6): очереди постройки кораблей на верфи каждой планеты
   shipyardQueues: Map<EntityId, ShipyardQueue>;
+  // Block 02 (F3, F7): runtime-корабли игрока. Key — ship.id.
+  // Map для O(1) lookup по id (для fleet-view, ship-card UI, ship lookup из fleet.shipIds).
+  ships: Map<EntityId, Ship>;
 }
