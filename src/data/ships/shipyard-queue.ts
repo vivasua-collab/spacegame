@@ -29,8 +29,9 @@ import type {
 } from '@/core/types';
 import { HULL_MAP } from './hulls';
 import { MODULE_MAP } from './modules';
-import { armorMultiplier } from '@/ships/designer';
+import { armorMultiplier, calculateDesignStats } from '@/ships/designer';
 import { emptyFuelStore } from './fuel-map';
+import { gameBus } from '@/core/typed-event-bus';
 
 /**
  * Константа конверсии стоимости постройки в ресурсы (упрощение MVP).
@@ -136,10 +137,10 @@ export function enqueueShipBuild(
  * - создаётся новая Ship-сущность (через shipIdGenerator)
  *   - location = planet.id (корабль появляется на орбите планеты)
  *   - owner = planet.owner
- *   - hp = maxHp = totalHP из дизайнерского расчёта (designer.ts)
+ *   - hp = maxHp = totalHP из дизайнерского расчёта (calculateDesignStats)
  *   - fuel = полный бак (на основе топливных модулей)
  * - item удаляется из очереди
- * - эмитится ships:constructed (через gameBus, если передан)
+ * - эмитится ships:constructed (через gameBus) и ships:construction-progress
  *
  * Если ресурсов недостаточно — флот не строится, item остаётся в очереди
  * (но прогресс НЕ растёт до тех пор, пока ресурсы не появятся).
@@ -148,7 +149,7 @@ export function enqueueShipBuild(
  * @param queue             — текущая очередь
  * @param shipIdGenerator   — функция для генерации ID нового корабля
  * @param design            — дизайн (нужно для получения stats и moduleIds)
- * @returns { ship?: Ship; newQueue: ShipyardQueue }
+ * @returns { ship?: Ship; newQueue: ShipyardQueue; completed: boolean }
  */
 export function processShipyardTick(
   planet: Planet,
@@ -167,10 +168,16 @@ export function processShipyardTick(
   // Прогресс +1 тик
   const newProgress = item.progressTicks + 1;
 
-  // Не завершён — просто инкремент прогресса
+  // Не завершён — просто инкремент прогресса + emit progress event
   if (newProgress < item.totalTicks) {
     const newItems = queue.items.slice();
     newItems[0] = { ...item, progressTicks: newProgress };
+    gameBus.emit('ships:construction-progress', {
+      planetId: planet.id,
+      shipId: item.id,
+      progressTicks: newProgress,
+      totalTicks: item.totalTicks,
+    });
     return {
       newQueue: { ...queue, items: newItems },
       completed: false,
@@ -192,7 +199,6 @@ export function processShipyardTick(
   const microchipAvailable = planet.resources['microchip'] ?? 0;
   if (steelAvailable < cost.steel || microchipAvailable < cost.microchip) {
     // Недостаточно ресурсов — НЕ строим, прогресс НЕ растёт (мягче для игрока).
-    // (Альтернативно: можно сделать флаг 'stalled' и эмитить ships:construction-stalled.)
     return { newQueue: queue, completed: false };
   }
 
@@ -200,16 +206,21 @@ export function processShipyardTick(
   planet.resources['steel'] = steelAvailable - cost.steel;
   planet.resources['microchip'] = microchipAvailable - cost.microchip;
 
+  // Рассчитать итоговый maxHp из дизайна
+  const designStats = calculateDesignStats(design);
+  const maxHp = designStats.totalHP;
+
   // Создать Ship
+  const shipId = shipIdGenerator();
   const ship: Ship = {
-    id: shipIdGenerator(),
+    id: shipId,
     name: item.shipName,
     designId: design.id,
     hullId: design.hullId,
     moduleIds: design.moduleIds.slice(),
     armor: design.armor,
-    hp: 100, // будет пересчитано в store из designer.calculateDesignStats
-    maxHp: 100,
+    hp: maxHp,
+    maxHp,
     fuel: emptyFuelStore(),
     location: planet.id, // на орбите планеты-верфи
     owner: planet.owner ?? 'player',
@@ -218,9 +229,32 @@ export function processShipyardTick(
 
   // Удалить item из очереди
   const newItems = queue.items.slice(1);
+
+  // Эмит ships:constructed
+  gameBus.emit('ships:constructed', {
+    shipId,
+    designId: design.id,
+    owner: ship.owner,
+  });
+
   return {
     ship,
     newQueue: { ...queue, items: newItems },
     completed: true,
+  };
+}
+
+/**
+ * Отменить элемент очереди постройки (по itemId). Возвращает обновлённую очередь.
+ * Ресурсы НЕ возвращаются (они списываются только при завершении, а отмена
+ * до завершения не требует возврата).
+ */
+export function cancelShipyardItem(
+  queue: ShipyardQueue,
+  itemId: EntityId,
+): ShipyardQueue {
+  return {
+    ...queue,
+    items: queue.items.filter(i => i.id !== itemId),
   };
 }

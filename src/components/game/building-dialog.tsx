@@ -26,6 +26,7 @@ import type { Planet, HexTerrain, BuildingLayer, BuildingDef } from '@/core/type
 import { calculateProcessorOutputMultiplier } from '@/economy/engine';
 import { PROCESSOR_CATEGORIES } from '@/data/processor-categories';
 import { SpecializeDialog } from './specialize-dialog';
+import { ShipyardDialog } from './shipyard-dialog';
 
 /**
  * Target — what the user clicked to open the dialog.
@@ -259,6 +260,8 @@ function UpgradeMode({
   const specializeBuildingOnHex = useGameStore((s) => s.specializeBuildingOnHex);
   const upgradeSpecializationOnHex = useGameStore((s) => s.upgradeSpecializationOnHex);
   const [specializeDialogOpen, setSpecializeDialogOpen] = useState(false);
+  // Block 02 F6 — shipyard queue dialog state
+  const [shipyardDialogOpen, setShipyardDialogOpen] = useState(false);
 
   const hex = planet.hexes[hexIndex];
   const processorType = hex?.processorType;
@@ -425,6 +428,14 @@ function UpgradeMode({
                     <Wrench className="size-4 mr-2" />
                     Конструктор кораблей
                   </Button>
+                  <Button
+                    variant="outline"
+                    className="w-full border-amber-400/30 hover:border-amber-400/60 text-amber-300"
+                    onClick={() => setShipyardDialogOpen(true)}
+                  >
+                    <Hammer className="size-4 mr-2" />
+                    Очередь верфи
+                  </Button>
                 </div>
               )}
             </div>
@@ -439,6 +450,15 @@ function UpgradeMode({
           onOpenChange={setSpecializeDialogOpen}
           planet={planet}
           hexIndex={hexIndex}
+        />
+      )}
+
+      {/* Block 02 (F6): ShipyardDialog — открывается из shipyard UpgradeMode */}
+      {existingBuilding.id === 'shipyard' && shipyardDialogOpen && (
+        <ShipyardDialog
+          open={shipyardDialogOpen}
+          onOpenChange={setShipyardDialogOpen}
+          planet={planet}
         />
       )}
     </>

@@ -123,6 +123,15 @@ export interface ShipsEvents {
   'ships:arrived': { shipId: EntityId; systemId: EntityId };
   'ships:damaged': { shipId: EntityId; hp: number; maxHp: number };
   'ships:repaired': { shipId: EntityId; hp: number };
+  // ─── Block 02 (F2, F5, F7): новые события для флота/верфи ──
+  /** Эмитится после validateShip — подтверждает валидность дизайна (для UI тоста). */
+  'ships:design-validated': { designId: EntityId; valid: boolean; errors: string[] };
+  /** Эмитится при постановке дизайна в очередь верфи (F6). */
+  'ships:construction-started': { planetId: EntityId; designId: EntityId; shipId: EntityId; etaTick: number };
+  /** Эмитится на каждом тике постройки (для UI прогресс-бара). */
+  'ships:construction-progress': { planetId: EntityId; shipId: EntityId; progressTicks: number; totalTicks: number };
+  /** Эмитится при списании топлива с флота в пути (F5). */
+  'ships:fuel-consumed': { fleetId: EntityId; fuelType: string; amount: number; remaining: number };
 }
 
 // ─── Fleet ────────────────────────────────────────────────
@@ -133,6 +142,17 @@ export interface FleetEvents {
   'fleet:order-completed': { fleetId: EntityId; orderType: string; targetId: EntityId };
   'fleet:merged': { fleetId: EntityId; fromFleetIds: EntityId[] };
   'fleet:split': { fleetId: EntityId; newFleetId: EntityId };
+  // ─── Block 02 (F4, F5, F7): новые события для движения/приказов ──
+  /** Эмитится при начале движения флота по маршруту (F5). */
+  'fleet:movement-started': { fleetId: EntityId; fromSystemId: EntityId; toSystemId: EntityId; path: EntityId[]; etaTick: number };
+  /** Эмитится при прибытии флота в систему на маршруте (F5). */
+  'fleet:arrived': { fleetId: EntityId; systemId: EntityId };
+  /** Эмитится при отмене приказа (ручная отмена / нет пути / нет топлива). */
+  'fleet:order-cancelled': { fleetId: EntityId; orderType: string; reason: 'manual' | 'impossible' | 'fuel' };
+  /** Эмитится когда топливо флота падает ниже порога для завершения leg. */
+  'fleet:fuel-low': { fleetId: EntityId; remainingFuel: number; requiredFuel: number };
+  /** Эмитится когда флот застрял в системе без топлива (F5). */
+  'fleet:stranded': { fleetId: EntityId; systemId: EntityId };
 }
 
 // ─── Combat ───────────────────────────────────────────────

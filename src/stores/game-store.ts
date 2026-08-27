@@ -31,6 +31,7 @@ import { GalaxyModule } from '@/galaxy/galaxy-module';
 import { resetProductionItemCounter } from '@/economy/engine';
 import { BUILDING_MAP } from '@/data/buildings'; // Block 05 PR7 — migratePlanet
 import { SerializedGameStateSchema } from '@/lib/schemas/game-state-schema'; // Block 08 gap-9: state validation on deserialize
+import { enqueueShipBuild as enqueueShipBuildFn, cancelShipyardItem as cancelShipyardItemFn } from '@/data/ships/shipyard-queue'; // Block 02 F6
 
 // ============ Типы стора ============
 
@@ -42,6 +43,11 @@ export type GameView = 'galaxy' | 'system' | 'planet' | 'ship-designer' | 'fleet
  * для соблюдения детерминизма игры (Block 07 gap-3).
  */
 let shipDesignCounter = 0;
+
+/**
+ * Block 02 (F6): детерминированный счётчик ID элементов очереди верфи.
+ */
+let shipyardItemCounter = 0;
 
 export interface SaveInfo {
   id: string;
@@ -115,6 +121,14 @@ export interface GameStore {
   getShipDesign: (id: string) => import('@/core/types').ShipDesign | undefined;
   /** Список всех дизайнов игрока. */
   listShipDesigns: () => import('@/core/types').ShipDesign[];
+
+  // ─── Block 02 (F6): Верфь — постройка кораблей ──────────
+  /** Поставить дизайн в очередь постройки на верфи планеты. Возвращает itemId или null. */
+  enqueueShipBuild: (planetId: string, designId: string, shipName?: string) => string | null;
+  /** Отменить элемент очереди постройки. */
+  cancelShipyardItem: (planetId: string, itemId: string) => boolean;
+  /** Получить очередь постройки планеты. */
+  getShipyardQueue: (planetId: string) => import('@/core/types').ShipyardQueue | undefined;
 
   // Утилиты
   getSystem: (id: EntityId) => StarSystem | undefined;
@@ -917,6 +931,41 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
       const { gameState } = get();
       if (!gameState) return [];
       return Array.from(gameState.shipDesigns.values());
+    },
+
+    // ─── Block 02 (F6): Верфь — постройка кораблей ──────────────
+    enqueueShipBuild: (planetId, designId, shipName) => {
+      let itemId: string | null = null;
+      set((state) => {
+        if (!state.gameState) return;
+        const design = state.gameState.shipDesigns.get(designId);
+        if (!design) return;
+        const planet = findPlanet(state.gameState, planetId);
+        if (!planet) return;
+        const existingQueue = state.gameState.shipyardQueues.get(planetId);
+        itemId = `ship_${state.gameState.time.tick}_${shipyardItemCounter++}`;
+        const newQueue = enqueueShipBuildFn(planet, existingQueue, design, shipName ?? `${design.name}-${shipyardItemCounter}`, itemId);
+        state.gameState.shipyardQueues.set(planetId, newQueue);
+      });
+      return itemId;
+    },
+
+    cancelShipyardItem: (planetId, itemId) => {
+      let ok = false;
+      set((state) => {
+        if (!state.gameState) return;
+        const queue = state.gameState.shipyardQueues.get(planetId);
+        if (!queue) return;
+        const newQueue = cancelShipyardItemFn(queue, itemId);
+        ok = newQueue.items.length < queue.items.length;
+        state.gameState.shipyardQueues.set(planetId, newQueue);
+      });
+      return ok;
+    },
+
+    getShipyardQueue: (planetId) => {
+      const { gameState } = get();
+      return gameState?.shipyardQueues.get(planetId);
     },
   };
 }));
