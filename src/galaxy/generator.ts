@@ -56,6 +56,14 @@ export interface GalaxyGenConfig {
 
 export const DEFAULT_CONFIG: GalaxyGenConfig = {
   seed: 42,
+  // Audit Pass 4 §7.4 note: at 500 systems the serialized state grows to
+  // ~52 MB (exceeds the 50 MB API limit) and tick processing on x50
+  // speed blocks the main thread for >250 ms per 20 ms interval, freezing
+  // the UI. DEFAULT_CONFIG keeps 500 systems for stress-test / snapshot
+  // stability tests; the UI's `newGame` action overrides this to 200 for
+  // actual gameplay (see src/stores/game-store.ts `newGame` action +
+  // `MVP_SYSTEM_COUNT` const). Operators who want a larger galaxy can
+  // pass `systemCount` explicitly to `newGame({ systemCount })`.
   systemCount: 500,
   radius: 25000,
   arms: 4,

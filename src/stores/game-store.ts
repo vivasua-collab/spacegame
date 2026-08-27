@@ -557,7 +557,17 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
     isLoading: false,
 
     newGame: (config = {}) => {
-      const state = createInitialState(config);
+      // Audit Pass 4 §7.4: cap MVP galaxy at 200 systems. Default
+      // GalaxyGenConfig.systemCount is 500 (used by snapshot tests), but at
+      // 500 systems the serialized state exceeds the 50 MB save-API limit
+      // and x50 tick processing freezes the UI. Override to 200 unless the
+      // caller explicitly asks for more (e.g., stress tests).
+      const MVP_SYSTEM_COUNT = 200;
+      const mergedConfig = {
+        ...config,
+        systemCount: config.systemCount ?? MVP_SYSTEM_COUNT,
+      };
+      const state = createInitialState(mergedConfig);
       // Сброс детерминированного счётчика ProductionItem IDs (gap-6, P9)
       // для согласованности с новым seed.
       resetProductionItemCounter();

@@ -43,6 +43,44 @@ export class GameMediator {
     // Включить replay для ключевых событий (поздние подписчики)
     this.bus.enableReplay('core:tick');
     this.bus.enableReplay('core:game-created');
+
+    // Audit Pass 1 P1-4 (extended): subscribe to `core:tick` event emitted
+    // by GameLoop.processTick() so we can synchronise `mediator.gameState.time`
+    // with the loop's incremented time BEFORE the modules' tick() methods
+    // are called via registry.tickAll().
+    //
+    // Without this subscription, the loop increments its own private
+    // `loop.time.tick` but never updates `mediator.gameState.time` — so the
+    // UI (which reads from `useGameStore.getState().gameState.time.tick`)
+    // would show Tick: 0 forever, even though the simulation was running.
+    // The original architecture relied on `mediator.tick()` being called
+    // manually; the setInterval path went straight to `registry.tickAll`
+    // and bypassed the state-time update.
+    //
+    // Priority is set just BELOW PRIORITY.SIMULATION so this runs before
+    // any module's own `core:tick` subscriber (modules use SIMULATION
+    // priority; we want the time to be updated first so module reads via
+    // getGameState() see the new tick value).
+    this.bus.on(
+      'core:tick',
+      (time) => {
+        if (!this.gameState || this.gameState.phase !== 'playing') return;
+        // Only update if the loop's tick is ahead of the state's tick —
+        // guards against double-processing when mediator.tick() is also
+        // called manually (which already produced+committed a state with
+        // advanced time + called registry.tickAll directly).
+        if (time.tick <= this.gameState.time.tick) return;
+        const newState = produce(this.gameState, (draft) => {
+          draft.time = { ...time };
+        });
+        this.gameState = newState;
+        // Don't emit core:state-changed here — let modules' tick methods
+        // commitState their own produce() outputs, which will emit. This
+        // avoids an extra re-render between the time-update and the
+        // resource-extraction update.
+      },
+      { priority: -1 },
+    );
   }
 
   // ─── Управление модулями ──────────────────────────────
