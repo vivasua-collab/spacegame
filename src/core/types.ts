@@ -201,7 +201,50 @@ export interface BuildingDef {
   terrainBonus: Partial<Record<HexTerrain, number>>; // множитель на определённой местности
   /** Требование атмосферы (для газового экстрактора и др.) */
   requiresAtmosphere: boolean;
+  // ─── Block 05: специализация переработчиков ─────────────────────────
+  /** true для processor/refinery/synthesizer — они поддерживают специализацию */
+  isUniversalProcessor?: boolean;
+  /** 'universal' по умолчанию; 'specialized' для refinery/synthesizer (предельные формы) */
+  defaultProcessorType?: ProcessorType;
+  /** Предельная специализация (для refinery = 'metal_smelting', для synthesizer = 'alloy_synthesis') */
+  defaultSpecialization?: ProcessorRecipeCategory;
+  /** Базовый коэф. выхода: 0.75 для universal, 1.0 для specialized */
+  baseYield?: number;
+  /** Базовая чистота: 0.70–0.85 для universal, 0.92–0.99 для specialized */
+  basePurity?: number;
+  /** Стоимость специализации (добавляется к costPerLevel при specializeBuilding) */
+  specializeCost?: Partial<Record<string, number>>;
+  /** Стоимость повышения уровня специализации (×specializationLevel) */
+  upgradeSpecializationCost?: Partial<Record<string, number>>;
 }
+
+// ============ Переработчики (Block 05) ============
+
+/**
+ * Тип переработчика.
+ * - 'universal'  — processor без специализации: ЛЮБОЙ вход, низкий коэф. (0.75),
+ *                  штраф за мульти-рецепт через sqrt(activeRecipes).
+ * - 'specialized' — процессор, специализированный под одну категорию рецептов:
+ *                  высокий коэф. (1.0) + purityBonus; или refinery/synthesizer
+ *                  (предельные специализированные формы).
+ */
+export type ProcessorType = 'universal' | 'specialized';
+
+/**
+ * Категория специализации переработчика (подкатегория рецептов).
+ * НЕ путать с RecipeCategory (raw_to_material / material_to_component / …) —
+ * это уровень рецепта, а ProcessorRecipeCategory — уровень цепочки переработки.
+ *
+ * Источник: docs/40-buildings.md §3 (после правки 08_27_doc_fixes.md §4).
+ */
+export type ProcessorRecipeCategory =
+  | 'metal_smelting'      // плавка металлических руд (Fe, Ti, Cu, Cr, Ni, Mn, W, Mo, Au, Pt, U и др.)
+  | 'nonmetal_smelting'   // плавка неметаллических руд (Si, C, S, P, Mg, B)
+  | 'chemical_decomp'     // химическое разложение (H2O, CO2, NH3, NaCl, CaCO3 и др.)
+  | 'ice_melting'         // переработка льда (H2O-лед, CO2-лед, NH3-лед, CH4-лед)
+  | 'gas_processing'      // газовая переработка (атмосферные газы)
+  | 'deep_ore_smelting'   // глубинные руды (Y, Ba, Zr, Be, Nb и др.) — требует ур. здания 5+
+  | 'alloy_synthesis';    // сплавы/синтез материалов — для synthesizer
 
 // ============ Рецепты ============
 
@@ -216,6 +259,11 @@ export interface RecipeDef {
   energyCost: number;
   time: number; // тиков
   buildingId: string; // в каком здании производится
+  // ─── Block 05: подкатегория для специализации процессоров ──────────
+  /** Подкатегория для специализации процессоров; undefined для не-процессорных рецептов (напр. shipyard) */
+  processorCategory?: ProcessorRecipeCategory;
+  /** Мин. уровень специализации здания для рецепта (default 1). Глубинные руды = 5. */
+  minSpecializationLevel?: number;
 }
 
 // ============ Корабли ============
@@ -263,6 +311,15 @@ export interface HexCell {
   buildingId: string | null;
   buildingLevel: number;
   deposits: ResourceDeposit[];
+  // ─── Block 05: специализация переработчиков (instance state) ──────────
+  /** Тип переработчика для processor/refinery/synthesizer; undefined для других зданий */
+  processorType?: ProcessorType;
+  /** Категория специализации (если processorType === 'specialized') */
+  specialization?: ProcessorRecipeCategory;
+  /** Уровень специализации 1..5 (влияет на purityBonus); 0 если universal */
+  specializationLevel?: number;
+  /** Активные рецепты на этом экземпляре (для universal — мульти, для specialized — 1..2) */
+  activeRecipes?: string[];
 }
 
 /** Слот атмосферы газового гиганта (P1-01) */
@@ -270,6 +327,11 @@ export interface AtmosphericSlot {
   index: number;
   buildingId: string | null;
   buildingLevel: number;
+  // ─── Block 05: специализация переработчиков ──────────
+  processorType?: ProcessorType;
+  specialization?: ProcessorRecipeCategory;
+  specializationLevel?: number;
+  activeRecipes?: string[];
 }
 
 /** Слот орбитальной станции (P1-01) */
@@ -277,6 +339,11 @@ export interface OrbitalSlot {
   index: number;
   buildingId: string | null;
   buildingLevel: number;
+  // ─── Block 05: специализация переработчиков ──────────
+  processorType?: ProcessorType;
+  specialization?: ProcessorRecipeCategory;
+  specializationLevel?: number;
+  activeRecipes?: string[];
 }
 
 export interface Planet {
@@ -311,6 +378,13 @@ export interface Planet {
   /** Сводная таблица ресурсных залежей планеты (агрегация из гексов + атмосферных) */
   resourceDeposits: PlanetResourceDeposit[];
   resources: Record<string, number>; // elementId → количество на складе
+  /**
+   * Block 05 (PR3-min): средневзвешенная чистота ресурсов на складе.
+   * Ключ — elementId/materialId, значение — число в диапазоне [0..1].
+   * 0.70–0.85 = техническая (universal), 0.92–0.99 = высшая (specialized).
+   * Полное решение (per-purity-batch) — в будущем расширении склада; см. §8 R3 плана Блока 05.
+   */
+  resourcePurity?: Record<string, number>;
   /** Виртуальный склад планеты (ограничивает вместимость ресурсов) */
   warehouse?: PlanetWarehouse;
   energyBalance: number;

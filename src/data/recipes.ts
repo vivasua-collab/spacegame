@@ -13,6 +13,7 @@
  */
 
 import type { RecipeDef } from '@/core/types';
+import { resolveProcessorCategory } from './processor-recipe-categories';
 
 export const RECIPES: RecipeDef[] = [
   // === Уровень 1: Сырьё → Материалы ===
@@ -827,6 +828,20 @@ export const RECIPES: RecipeDef[] = [
 ];
 
 export const RECIPE_MAP = new Map(RECIPES.map(r => [r.id, r]));
+
+// ─── Block 05: применить processorCategory + minSpecializationLevel ──────────
+// Решение R8 плана Блока 05: вместо ручной правки ~70 рецептов применяем
+// детерминированное отображение recipeId → {category, minSpecializationLevel}
+// из processor-recipe-categories.ts (один источник истины для категорий).
+// Мутация безопасна: RECIPES — это константный массив, мутируем содержимое
+// объектов (добавляем опциональные поля). RECIPE_MAP ссылается на те же объекты.
+for (const recipe of RECIPES) {
+  const assignment = resolveProcessorCategory(recipe.id, recipe.buildingId);
+  if (assignment) {
+    recipe.processorCategory = assignment.category;
+    recipe.minSpecializationLevel = assignment.minSpecializationLevel;
+  }
+}
 
 /** Сырьевые руды (добываются шахтой/карьером/буровой установкой) */
 export const RAW_ORES = [
