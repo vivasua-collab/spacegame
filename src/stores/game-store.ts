@@ -19,7 +19,7 @@
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import { produce } from 'immer';
-import type { GameState, GameSpeed, StarSystem, Planet, EntityId, ProductionQueue, ColonyRole, WarehouseSpecialization } from '@/core/types';
+import type { GameState, GameSpeed, StarSystem, Planet, EntityId, ProductionQueue, ColonyRole, WarehouseSpecialization, ResearchState } from '@/core/types';
 import '@/core/immer-setup'; // Block 01 P2: enableMapSet + setAutoFreeze(false)
 import { getGameMediator } from '@/core/game-mediator';
 import { applyColonyRole, calculateWarehouseCapacity, calculateWarehouseCapacities, canStoreResource, getOrbitBufferUsed } from '@/data/warehouse';
@@ -34,6 +34,8 @@ import { SerializedGameStateSchema } from '@/lib/schemas/game-state-schema'; // 
 import { enqueueShipBuild as enqueueShipBuildFn, cancelShipyardItem as cancelShipyardItemFn } from '@/data/ships/shipyard-queue'; // Block 02 F6
 import { ShipsModule, resetShipCounter } from '@/ships/ships-module'; // Block 02 F5
 import { FleetModule } from '@/ships/fleet-module'; // Block 02 F5
+import { ResearchModule } from '@/research/research-module'; // Block 03 R7
+import { createDefaultResearchState as createDefaultResearchStateFn } from '@/research'; // Block 03 R7 — migration
 import {
   createFleet as createFleetFn,
   mergeFleets as mergeFleetsFn,
@@ -50,7 +52,7 @@ import {
   canStartResearch as canStartResearchFn,
   getTechCost as getTechCostFn,
 } from '@/research'; // Block 03 R6/R7 — research engine helpers
-import type { ResearchState } from '@/core/types';
+// Note: ResearchState type is already imported above from '@/core/types' (line 22).
 
 /**
  * Block 03 (R7): детерминированный счётчик ID слотов исследований.
@@ -251,6 +253,11 @@ function getMediatorWithModules() {
     // mutator to commit immutable produced state (Block 01 P2 pattern).
     const shipsModule = new ShipsModule();
     const fleetModule = new FleetModule();
+    // Block 03 (R7): research module — RP accumulation + unlocks.
+    // priority SIMULATION+5 (after economy, before ships — research tick
+    // is independent of ship construction, but goes after economy so
+    // building/lab changes are visible).
+    const researchModule = new ResearchModule();
 
     // Модули нуждаются в доступе к GameState — устанавливаем accessor.
     // Block 01 P2: also set a mutator so modules can commit new immutable state
@@ -263,8 +270,10 @@ function getMediatorWithModules() {
     shipsModule.setGameStateMutator((state) => mediator.commitState(state));
     fleetModule.setGameStateAccessor(() => mediator.getGameState());
     fleetModule.setGameStateMutator((state) => mediator.commitState(state));
+    researchModule.setGameStateAccessor(() => mediator.getGameState());
+    researchModule.setGameStateMutator((state) => mediator.commitState(state));
 
-    mediator.registerAndInit([galaxyModule, economyModule, shipsModule, fleetModule]);
+    mediator.registerAndInit([galaxyModule, economyModule, researchModule, shipsModule, fleetModule]);
 
     // Block 01 P2: subscribe to core:state-changed — modules already produce
     // immutable state via immer.produce(), so we just assign the new reference.
@@ -389,9 +398,44 @@ export function deserializeGameState(json: string): GameState {
     shipDesigns: new Map(raw.shipDesigns ?? []),
     shipyardQueues: new Map(raw.shipyardQueues ?? []),
     ships: new Map(raw.ships ?? []),
+    // Block 03 (R7): migrate researchState — initialize default if missing
+    // (pre-Block-03 saves had no researchState). createDefaultResearchState
+    // gives all fundamentals=0, empty researched/activeSlots, rpGenerated=0.
+    researchState: migrateResearchState(raw.researchState),
     time: raw.time?.dayInYear !== undefined
       ? raw.time
       : { tick: raw.time?.tick ?? 0, dayInYear: (raw.time?.day ?? 0) % 365, year: raw.time?.year ?? 1 },
+  };
+}
+
+/**
+ * Block 03 (R7): миграция ResearchState при загрузке старых сейвов (до Блока 03).
+ *
+ * Если поле `researchState` отсутствует или malformed — создаём дефолтное
+ * (все fundamentals = 0, researched = {}, activeSlots = [], rpGenerated = 0).
+ *
+ * Идемпотентна: если state уже валиден (все 6 fundamentals присутствуют), —
+ * возвращаем как есть (с заполнением отсутствующих fundamentals нулями для
+ * устойчивости).
+ */
+function migrateResearchState(raw: unknown): ResearchState {
+  if (!raw || typeof raw !== 'object') {
+    return createDefaultResearchStateFn();
+  }
+  const r = raw as Partial<ResearchState>;
+  return {
+    fundamentalLevels: {
+      chemistry: r.fundamentalLevels?.chemistry ?? 0,
+      physics: r.fundamentalLevels?.physics ?? 0,
+      engineering: r.fundamentalLevels?.engineering ?? 0,
+      biology_fund: r.fundamentalLevels?.biology_fund ?? 0,
+      military_science: r.fundamentalLevels?.military_science ?? 0,
+      xenoarchaeology: r.fundamentalLevels?.xenoarchaeology ?? 0,
+    },
+    fundamentalRpInvested: r.fundamentalRpInvested ?? {},
+    researched: r.researched ?? {},
+    activeSlots: Array.isArray(r.activeSlots) ? r.activeSlots : [],
+    totalRpGenerated: typeof r.totalRpGenerated === 'number' ? r.totalRpGenerated : 0,
   };
 }
 

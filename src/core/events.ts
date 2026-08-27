@@ -12,7 +12,7 @@
  * 3. Обновить манифест модуля (emits / subscribes)
  */
 
-import type { EntityId, GameTime, GameSpeed, GameState, BuildingLayer, ProcessorRecipeCategory } from './types';
+import type { EntityId, GameTime, GameSpeed, GameState, BuildingLayer, ProcessorRecipeCategory, FundamentalBranchId } from './types';
 
 // ─── Core ─────────────────────────────────────────────────
 
@@ -166,10 +166,40 @@ export interface CombatEvents {
 
 // ─── Tech ─────────────────────────────────────────────────
 
+/**
+ * Block 03 (R7): события исследований.
+ *
+ * Существующие 3 (расширяем payload для тех, которые нужны с детальной информацией):
+ * - tech:research-completed теперь включает `level` и `unlocks` (что разблокировано).
+ *
+ * Новые 6 событий (plan §5):
+ * - tech:research-cancelled — слот отменён игроком (rpRefunded возвращается в банк).
+ * - tech:allocation-changed — изменена аллокация слота (UI).
+ * - tech:fundamental-leveled — фундаментальная ветка повышена.
+ * - tech:prerequisites-met — изменилась доступность tech (после level up).
+ * - tech:tree-validated — дерево провалидировано (start-up / dev-mode).
+ * - tech:research-rejected — startResearch отклонён (с причинами).
+ */
 export interface TechEvents {
-  'tech:research-started': { techId: string; factionId: EntityId; etaTick: number };
-  'tech:research-completed': { techId: string; factionId: EntityId };
+  /** Слот исследования запущен (techId + targetLevel + ETA). */
+  'tech:research-started': { techId: string; factionId: EntityId; targetLevel: number; etaTick: number };
+  /** Уровень технологии завершён — emits и unlocks для UI/модулей. */
+  'tech:research-completed': { techId: string; factionId: EntityId; level: number; unlocks: string[] };
+  /** Разблокировка (recipe/module/building) применена к state. */
   'tech:unlocked': { techId: string; factionId: EntityId; unlocks: string[] };
+  // ─── Block 03 (R7) — новые события ──────────────────────
+  /** Слот отменён игроком. */
+  'tech:research-cancelled': { slotId: string; factionId: EntityId; techId: string; rpRefunded: number };
+  /** Аллокация слотов изменена (для синхронизации UI). */
+  'tech:allocation-changed': { factionId: EntityId; slots: Array<{ slotId: string; percent: number }> };
+  /** Фундаментальная ветка повышена на 1 уровень. */
+  'tech:fundamental-leveled': { branchId: FundamentalBranchId; factionId: EntityId; newLevel: number };
+  /** Доступность технологии изменилась (после level up). */
+  'tech:prerequisites-met': { techId: string; factionId: EntityId; met: boolean; missing: string[] };
+  /** Дерево провалидировано (start-up). */
+  'tech:tree-validated': { ok: boolean; errors: string[] };
+  /** StartResearch отклонён (причины для UI). */
+  'tech:research-rejected': { techId: string; factionId: EntityId; reasons: string[] };
 }
 
 // ─── Diplomacy ────────────────────────────────────────────
