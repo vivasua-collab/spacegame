@@ -225,6 +225,24 @@ export const BUILDINGS: BuildingDef[] = [
     terrainBonus: {},
     requiresAtmosphere: false,
   },
+  {
+    // Block 03 (R2): Лаборатория — источник очков исследований (RP/sec).
+    // docs/40-buildings.md §10.1: категория «Наука», 10 ур., базовый выход
+    // 5 RP/сек × уровень × (1 + habitability/800). Кластерный бонус смежных
+    // лабораторий (×1.10) — отложен в MVP (Etap 4).
+    id: 'laboratory',
+    name: 'Лаборатория',
+    description: 'Производит очки исследований (RP). Базовый выход: 5 RP/сек × уровень × (1 + габитабельность/800). Чем больше лабораторий в империи — тем больше параллельных слотов исследований (1 слот на каждые 10 лаб.).',
+    category: 'research',
+    layer: ['surface'],
+    size: ['small', 'medium', 'large', 'huge'],
+    energyConsumption: 10,
+    baseProductionTime: 0, // RP — потоковый, не занимает цикл производства
+    levels: 10,
+    costPerLevel: { Fe: 30, Si: 20, Cu: 5 }, // из 40-buildings §10.1: 30/20/5
+    terrainBonus: {},
+    requiresAtmosphere: false,
+  },
 ];
 
 export const BUILDING_MAP = new Map(BUILDINGS.map(b => [b.id, b]));

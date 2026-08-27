@@ -21,12 +21,13 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
-import { Hammer, Zap, ArrowUp, Wrench, RotateCcw, ArrowRight } from 'lucide-react';
+import { Hammer, Zap, ArrowUp, Wrench, RotateCcw, ArrowRight, FlaskConical } from 'lucide-react';
 import type { Planet, HexTerrain, BuildingLayer, BuildingDef } from '@/core/types';
 import { calculateProcessorOutputMultiplier } from '@/economy/engine';
 import { PROCESSOR_CATEGORIES } from '@/data/processor-categories';
 import { SpecializeDialog } from './specialize-dialog';
 import { ShipyardDialog } from './shipyard-dialog';
+import { getResearchRate } from '@/research/engine'; // Block 03 R2: RP/sec для laboratory
 
 /**
  * Target — what the user clicked to open the dialog.
@@ -154,6 +155,15 @@ export function BuildingDialog({ open, onOpenChange, planet, target }: BuildingD
                 <div className="text-sm text-green-400 flex items-center gap-1">
                   <Zap className="size-3" />
                   Энергия: +10/tick
+                </div>
+              )}
+              {existingBuilding.id === 'laboratory' && slot && (
+                <div className="text-sm text-cyan-400 flex items-center gap-1">
+                  <FlaskConical className="size-3" />
+                  RP: +{getResearchRate(slot.buildingLevel).toFixed(1)}/сек
+                  <span className="text-slate-500 text-[10px]">
+                    (ур.{slot.buildingLevel} × 5 × 1.0)
+                  </span>
                 </div>
               )}
               <div className="text-[10px] text-slate-600 italic">
@@ -336,6 +346,17 @@ function UpgradeMode({
                 <div className="text-sm text-green-400 flex items-center gap-1">
                   <Zap className="size-3" />
                   Энергия: +10/tick
+                </div>
+              )}
+              {existingBuilding.id === 'laboratory' && (
+                <div className="text-sm text-cyan-400 flex items-center gap-1">
+                  <FlaskConical className="size-3" />
+                  RP: +{getResearchRate(existingLevel).toFixed(1)}/сек
+                  {!isMaxLevel && (
+                    <span className="text-slate-500 text-[10px]">
+                      → +{getResearchRate(existingLevel + 1).toFixed(1)}/сек (на ур.{existingLevel + 1})
+                    </span>
+                  )}
                 </div>
               )}
 
@@ -564,6 +585,12 @@ function BuildList({
                     +10
                   </span>
                 ) : null}
+                {building.id === 'laboratory' && (
+                  <span className="text-cyan-400 flex items-center gap-1">
+                    <FlaskConical className="size-3" />
+                    +{getResearchRate(1).toFixed(0)} RP/сек × ур.
+                  </span>
+                )}
                 <span className="text-slate-500">Макс. уровень: {building.levels}</span>
               </div>
 
