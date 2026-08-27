@@ -9,8 +9,8 @@
  * - module-registry.ts — реестр модулей
  * - game-loop.ts      — игровой цикл
  * - game-mediator.ts  — центральный оркестратор
- * - event-bus.ts      — legacy-адаптер (deprecated)
  * - prng.ts           — детерминированный ГПСЧ
+ * - find-planet.ts    — shared helper для поиска планеты по ID
  */
 
 // Типы
@@ -61,6 +61,10 @@ export { GameMediator, getGameMediator, resetGameMediator } from './game-mediato
 
 // PRNG
 export { Xoshiro256 } from './prng';
+
+// Audit Pass 2 P3-3: shared find-planet helper (replaces 3 duplicated
+// copies in economy-module.ts, ships-module.ts, game-store.ts).
+export { findPlanet } from './find-planet';
 
 // Block 01 P2: immer configuration side-effect import. Configures the
 // global immer state (enableMapSet for GameState Maps, setAutoFreeze(false)

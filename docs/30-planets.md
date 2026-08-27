@@ -1780,10 +1780,13 @@ function generatePlanet(
   const radius = rng.range(RADIUS_RANGE[type].min, RADIUS_RANGE[type].max);
   
   // 3. Вычислить плотность и гравитацию
+  //    Каноническая формула (per §1.3): linear в радиусе — (radius / earthRadius) × (density / earthDensity).
+  //    NOT quadratic Math.pow(radius / earthRadius, 2) — это была ошибка в более ранних черновиках.
+  //    Code reference: src/economy/engine.ts:472 uses the linear form.
   const density = rng.range(DENSITY_RANGE[type].min, DENSITY_RANGE[type].max);
   const earthRadius = 6371;
   const earthDensity = 5.51;
-  const gravity = Math.pow(radius / earthRadius, 2) * (density / earthDensity);
+  const gravity = (radius / earthRadius) * (density / earthDensity);
   
   // 4. Вычислить температуру
   const baseTempK = calculateEquilibriumTemperature(starType, orbitalDistanceAU);

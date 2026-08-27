@@ -271,6 +271,8 @@ fuel_per_tick = Σ(engine.thrust × engine.fuelPerThrust × speed_factor)
 
 Где `speed_factor` = текущая скорость / максимальная скорость (0.0–1.0).
 
+> **Приоритет списания топлива (per audit Pass 3 §P3-5):** когда во флоте доступно несколько типов топлива, расход идёт в порядке `xenon → hydrogen → chemical` (антиматерия — Etap 4 stub, не используется). Это упрощение для MVP: один бак 'H' на планете обслуживает и chemical, и hydrogen, упрощая логистику. Код-реализация: `src/ships/fleet-engine.ts:402` содержит inline `fuelPriority: Array<'xenon' | 'hydrogen' | 'chemical'> = ['xenon', 'hydrogen', 'chemical']` (Pass 2 рекомендация — вынести в `src/data/ships/fuel-map.ts` как `FUEL_PRIORITY` const).
+
 ### 3.2 Типы двигателей
 
 #### 3.2.1 Химический двигатель
@@ -1438,7 +1440,7 @@ function validateShip(design: ShipDesign): ValidationResult {
 
 ### MVP — Минимальный набор
 
-1. **3 корпуса**: Скаут, Истребитель, Фрегат
+1. **4 корпуса**: Скаут, Истребитель, Фрегат, Транспорт (тяжёлые корпуса — Etap 4)
 2. **2 двигателя**: Химический, Ионный (только Mk.I)
 3. **1 ЦПУ**: ЦПУ-Микро и ЦПУ-Лёгкий
 4. **2 оружия**: Лазер, Ракетная установка (Mk.I)

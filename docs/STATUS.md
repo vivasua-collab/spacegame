@@ -22,19 +22,20 @@
 
 | Параметр | Значение |
 |----------|----------|
-| Этап по ROADMAP | Этап 2 (Базовый UI + ресурсы) — ~90% завершён |
-| Следующий этап | 2.5 — Стабилизация (закрытие тех. долга P1-P7) |
-| Работает ли MVP | ✅ Да (генерация, колонизация, добыча, крафт, сохранение) |
-| Критические баги | 3 (P1: ID руд, P2: мутации store, P3: UI атмосферы) |
-| Спецификации без реализации | 3 крупные системы (флот, исследования, AI) |
-| Lint-ошибок | 0 ✅ |
-| Тестов | 0 ❌ (критично для ИИ-агентов) |
+| Этап по ROADMAP | Etap 2 / 2.5 / 2.6 / 3.0 — ✅ Завершены |
+| Следующий этап | 3.5 — AI-фракции (5 базовых, по spec 70-ai.md) |
+| Работает ли MVP | ✅ Да (генерация, колонизация, добыча, крафт, флот, исследования, сохранение) |
+| Критические баги | 1 (P0-1: Store→mediator sync — 21 прямое действие) |
+| Спецификации без реализации | 1 (AI-фракции; флот+исследования завершены как MVP) |
+| Lint-ошибок | 0 ✅ (50 warnings) |
+| Тестов | 340 / 340 ✅ (0 failing) |
+| Рецепты | 75 / 75 ✅ (validate:recipes) |
 
 ---
 
 ## 2. Что реализовано
 
-### 2.1 Ядро движка (`src/core/`, 10 файлов)
+### 2.1 Ядро движка (`src/core/`, 9 файлов)
 
 | Компонент | Спецификация | Реализация | Статус |
 |-----------|--------------|------------|--------|
@@ -45,7 +46,7 @@
 | GameLoop | 00-ARCHITECTURE.md §3.1 | `game-loop.ts` (пауза, x1/x5/x15/x50) | ✅ |
 | Типы | docs/01-07 | `types.ts` (462 строки) | ✅ |
 
-### 2.2 Галактика (`src/galaxy/`, 11 файлов)
+### 2.2 Галактика (`src/galaxy/`, 10 файлов)
 
 | Компонент | Спецификация | Реализация | Статус |
 |-----------|--------------|------------|--------|
@@ -64,9 +65,9 @@
 
 | Компонент | Спецификация | Реализация | Статус |
 |-----------|--------------|------------|--------|
-| 57 элементов | 32-mendeleev.md, 33-chemistry.md | `elements.ts` (chemicalCharacter, rarity) | ✅ |
-| ~50 руд (автогенерация) | 34-ores.md, 33-chemistry.md | `chemistry-generator.ts` (1704 строки) | ✅ |
-| BakedGalaxyModel | galaxy-bake.md | `chemistry-generator.ts` + `baked-lookups.ts` | ✅ |
+| 60 элементов (57 base + 3 transuranic Np/Pu/Am) | 32-mendeleev.md, 33-chemistry.md | `elements.ts` (chemicalCharacter, rarity) | ✅ |
+| ~56 руд (автогенерация) | 34-ores.md, 33-chemistry.md | `chemistry/ore-specs.ts` + `ore-generator.ts` (~1700 строк в `src/data/chemistry/`) | ✅ |
+| BakedGalaxyModel | galaxy-bake.md | `chemistry-generator.ts` (шим-реэкспорт) + `baked-lookups.ts` | ✅ |
 | Атмосферные соединения | 33-chemistry.md §9 | `processing-chains.ts` (11 газов) | ✅ |
 | Ледяные соединения | 33-chemistry.md §9 | `processing-chains.ts` (5 льдов) | ✅ |
 | Самородные элементы | 33-chemistry.md §8 | `processing-chains.ts` (6 самородков) | ✅ |
@@ -76,16 +77,19 @@
 | Компонент | Спецификация | Реализация | Статус |
 |-----------|--------------|------------|--------|
 | Добыча руд | 40-buildings.md §2 | `engine.ts:processExtraction` | ✅ |
-| Крафт (4 уровня) | 40-buildings.md §3, §6 | `engine.ts:processProductionQueue` | 🟡 P1 (ID руд) |
+| Крафт (4 уровня) | 40-buildings.md §3, §6 | `engine.ts:processProductionQueue` | ✅ (Block 01 P1 — ID руд унифицированы) |
 | Энергия (поток) | 40-buildings.md §8 | `engine.ts:recalcEnergyBalance` | ✅ |
 | Солнечная станция | 40-buildings.md §8.1 | 10 × L / D × levelMult | ✅ |
 | Ядерный реактор | 40-buildings.md §8.2 | 25 × levelMult (было 10) | ✅ |
-| Очередь производства | 40-buildings.md §1.3 | `enqueueProduction` + repeat | 🟡 P4 (нет UI) |
+| Специализация зданий | 40-buildings.md §11 | `specializeBuilding` + `upgradeSpecialization` | ✅ (Block 05) |
+| Очередь производства | 40-buildings.md §1.3 | `enqueueProduction` + repeat | ✅ (Block 01 P4 — UI готов) |
 | Колонизация | (нет отдельной spec) | `colonizePlanet` + colony_hub | ✅ |
+| Флот + приказы | 50-ships.md | `src/ships/fleet-engine.ts` + `orders.ts` | ✅ (Block 02) |
+| Исследования | 60-research.md | `src/research/engine.ts` + `research-module.ts` | ✅ (Block 03) |
 
 ### 2.5 Здания (`src/data/buildings.ts`)
 
-**Реализовано 12 из 27 зданий** спецификации 40-buildings.md:
+**Реализовано 15 из 27 зданий** спецификации 40-buildings.md §10.1 (26 + colony_hub):
 
 | # | ID | Спецификация | Реализация |
 |---|-----|--------------|------------|
@@ -97,23 +101,31 @@
 | 6 | `synthesizer` | 40-buildings.md §3 (универсальный) | ✅ |
 | 7 | `refinery` | 40-buildings.md §3.4 | ✅ |
 | 8 | `solar_plant` | 40-buildings.md §8.1 | ✅ |
-| 9 | `nuclear_plant` | 40-buildings.md §8.2 (ID: `nuclear_reactor`) | 🟡 Расхождение ID |
+| 9 | `nuclear_reactor` | 40-buildings.md §8.2 | ✅ (Block 01 C8 — расхождение ID закрыто) |
 | 10 | `shipyard` | 40-buildings.md §7 | ✅ |
 | 11 | `warehouse` | 40-buildings.md §4.3 | ✅ |
-| 12 | `spaceport` | 40-buildings.md §4.4 | ✅ |
+| 12 | `open_warehouse` | 40-buildings.md §4 | ✅ |
+| 13 | `high_tech_storage` | 40-buildings.md §4 | ✅ |
+| 14 | `spaceport` | 40-buildings.md §4.4 | ✅ |
+| 15 | `laboratory` | 40-buildings.md (impl. в Block 03) | ✅ |
 
-**Не реализовано 15 зданий** (см. §3.2).
+**Не реализовано 12-14 зданий** (см. §3.2 для списка post-MVP).
 
-### 2.6 UI (`src/components/game/`, 7 файлов)
+### 2.6 UI (`src/components/game/`, 17 файлов)
 
 | Компонент | Спецификация | Реализация | Статус |
 |-----------|--------------|------------|--------|
 | Карта галактики (SVG, зум 80x) | 10-galaxy.md | `galaxy-map.tsx` (538 строк) | ✅ |
 | Экран системы | 20-stars.md | `system-view.tsx` | ✅ |
-| Экран планеты (гекс-сетка) | 30-planets.md | `planet-view.tsx` (846 строк) | 🟡 P3 (нет UI атмосферы/орбиты) |
-| Диалог строительства | 40-buildings.md | `building-dialog.tsx` | 🟡 P3 (только surface) |
+| Экран планеты (гекс-сетка) | 30-planets.md | `planet-view.tsx` (846 строк) | ✅ (атмосфера/орбита готова, Block 01 P3 закрыт) |
+| Диалог строительства | 40-buildings.md | `building-dialog.tsx` | ✅ (Block 01 P3 закрыт) |
 | Управление временем | 00-ARCHITECTURE.md | `time-controls.tsx` | ✅ |
-| Панель ресурсов | — | `resource-panel.tsx` | 🟡 P5 (нет крафтовых материалов) |
+| Панель ресурсов | — | `resource-panel.tsx` | ✅ (Block 01 P5 — крафтовые материалы в категории) |
+| Диалог специализации | 40-buildings.md §11.4 | `specialize-dialog.tsx` | ✅ (Block 05) |
+| Очередь производства | 40-buildings.md §1.3 | `production-queue.tsx` + `production-queue-panel.tsx` | ✅ (Block 01 P4 закрыт) |
+| Верфь + конструктор кораблей | 50-ships.md | `shipyard-dialog.tsx`, `ship-designer.tsx`, `ship-card.tsx` | ✅ (Block 02) |
+| Флот + приказы + маршрут | 50-ships.md | `fleet-view.tsx`, `fleet-orders-panel.tsx`, `fleet-route-overlay.tsx` | ✅ (Block 02) |
+| Экран исследований | 60-research.md | `research-view.tsx` | ✅ (Block 03) |
 | Склад (Sheet) | — | в `planet-view.tsx` | ✅ |
 
 ### 2.7 Сохранение/загрузка
@@ -130,26 +142,28 @@
 
 ## 3. Что не реализовано
 
-### 3.1 Крупные системы (0% реализации)
+### 3.1 Крупные системы
 
-| Система | Спецификация | Строк spec | Этап |
-|---------|--------------|-----------|------|
-| **Флот и корабли** | `docs/50-ships.md` | 1 464 | Etap 3.0 |
-| **Исследования** | `docs/60-research.md` | 1 348 | Etap 3.0 |
-| **AI-фракции** | `docs/70-ai.md` | 2 350 | Etap 3.5 |
-| **Боевая система** | (часть 70-ai.md) | — | Etap 4 |
-| **Дипломатия** | (часть 70-ai.md) | — | Etap 4 |
-| **Макрообъекты галактики** | 10-galaxy.md §5 | — | Etap 4 |
+| Система | Спецификация | Строк spec | Этап | Статус |
+|---------|--------------|-----------|------|--------|
+| **Флот и корабли** | `docs/50-ships.md` | 1 464 | Etap 3.0 | ✅ Реализовано (Block 02, MVP) |
+| **Исследования** | `docs/60-research.md` | 1 348 | Etap 3.0 | ✅ Реализовано (Block 03, MVP) |
+| **AI-фракции** | `docs/70-ai.md` | 2 350 | Etap 3.5 | ❌ 0% (не реализовано) |
+| **Боевая система** | (часть 70-ai.md) | — | Etap 4 | ❌ Не реализовано |
+| **Дипломатия** | (часть 70-ai.md) | — | Etap 4 | ❌ Не реализовано |
+| **Терраформирование** | 60-research.md | — | Etap 4 | ❌ Не реализовано |
+| **Макрообъекты галактики** | 10-galaxy.md §5 | — | Etap 4 | ❌ Не реализовано |
 
-> Спецификации готовы — ИИ-агенты смогут реализовывать по ним.
+> Спецификации AI/бой/дипломатия готовы — ИИ-агенты смогут реализовывать по ним.
 
-### 3.2 Здания (15 из 27 не реализованы)
+### 3.2 Здания (12 из 27 не реализованы)
+
+> По упрощённому счёту: 27 (spec §10.1) - 15 (code) = 12. По фактической проверке кода — 14 не реализованы (вкл. `antimatter_gen`), см. audit Pass 3 §P2-3.
 
 | ID | Название | Спецификация | Приоритет |
 |----|----------|--------------|-----------|
 | `drilling_rig` | Бурильная установка | 40-buildings.md §2.4 | Post-MVP |
 | `ice_harvester` | Ледодобывающая станция | 40-buildings.md §2.5 | Post-MVP |
-| `petrochem_plant` | Нефтехимзавод | 40-buildings.md §3 | Post-MVP |
 | `electronics_plant` | Завод электроники | 40-buildings.md §6 | MVP-дополнение |
 | `engine_plant` | Завод двигателей | 40-buildings.md §7 | Post-MVP |
 | `weapon_plant` | Завод оружия | 40-buildings.md §7 | Post-MVP |
@@ -159,9 +173,11 @@
 | `fusion_reactor` | Термоядерный реактор | 40-buildings.md §8 | Post-MVP |
 | `geothermal_plant` | Геотермальная станция | 40-buildings.md §8 | Post-MVP |
 | `antimatter_reactor` | Антиматериальный реактор | 40-buildings.md §8 | Post-MVP |
+| `antimatter_gen` | Антиматериальный генератор | 40-buildings.md §10.1 | Post-MVP |
 | `conveyor` | Конвейерная лента | 40-buildings.md §4 | Спринт 1 |
 | `auto_transport` | Автотранспорт | 40-buildings.md §4 | Post-MVP |
-| `laboratory` | Лаборатория | 40-buildings.md (impl.) | Etap 3 (исследования) |
+
+> ✅ Реализованы (15): colony_hub, mine, quarry, gas_extractor, processor, synthesizer, refinery, solar_plant, nuclear_reactor, shipyard, warehouse, open_warehouse, high_tech_storage, spaceport, laboratory.
 
 ### 3.3 Прочее
 
@@ -180,28 +196,32 @@
 
 ### 4.1 Критические 🔴
 
+> Все исторические критические расхождения (P1, P3, ID-N1) закрыты: Block 01 P1 (ID руд), Block 01 P3 (UI атмосферы/орбиты), Block 01 C8 (nuclear_reactor ID). См. `checkpoints/audit_2026_08_27_0{1,2,3,4}_*.md`.
+
 | ID | Расхождение | Спецификация | Код | Влияние |
 |----|-------------|---------------|-----|---------|
-| **P1** | ID руд в рецептах | chemistry-generator: `hematite`, `ilmenite` (формула минерала) | recipes.ts: `Fe-ore`, `Ti-ore` (хардкод) | Крафт не находит ресурсы |
-| **P3** | UI для атмосферы/орбиты | 40-buildings.md §2 (газовый экстрактор на atmosphere layer) | `building-dialog.tsx`: только surface | Газовые гиганты нельзя застраивать |
+| ~~P1~~ | ~~ID руд в рецептах~~ | chemistry-generator: `hematite`, `ilmenite` (формула минерала) | recipes.ts: `Fe-ore`, `Ti-ore` (хардкод) | ✅ Закрыто (Block 01 P1 — `baked-lookups.ts`) |
+| ~~P3~~ | ~~UI для атмосферы/орбиты~~ | 40-buildings.md §2 (газовый экстрактор на atmosphere layer) | `building-dialog.tsx`: только surface | ✅ Закрыто (Block 01 P3 — atmosphere/orbit layers) |
+| **P0-1** | Store→mediator sync | (architecture/modular-bus.md) | `game-store.ts` — 21 прямое действие без sync | 🔴 Открыто (Pass 1) |
 
 ### 4.2 Значительные 🟡
 
 | ID | Расхождение | Спецификация | Код | Влияние |
 |----|-------------|---------------|-----|---------|
-| **ID-N1** | ID ядерного реактора | 40-buildings.md §10.1: `nuclear_reactor` | buildings.ts: `nuclear_plant` | Несогласованность (код работает, но ID расходится) |
+| ~~ID-N1~~ | ID ядерного реактора | 40-buildings.md §10.1: `nuclear_reactor` | buildings.ts: `nuclear_reactor` | ✅ Закрыто (Block 01 C8) |
 | **P5** | Крафтовые материалы в UI | (нет spec) | ResourcePanel: steel, microchip в «Прочих» | UX проблема |
 | **P6** | Colony Hub стоимость | (нет spec, но логически) | `costPerLevel: {}` — бесплатный апгрейд | Эксплойт |
-| **P7** | Тип `transuranic` | 33-chemistry.md §10 (трансурановые) | ElementCategory: есть, элементов: нет | Мёртвый тип |
+| **P7** | Тип `transuranic` | 33-chemistry.md §10 (трансурановые) | ElementCategory: есть, элементов: нет | Мёртвый тип (Block 01 P7 добавил 3 transuranic — частично закрыто) |
 
 ### 4.3 Незавершённость 🟢
 
 | ID | Описание | Влияние |
 |----|----------|---------|
-| **P4** | Нет UI очереди производства | Игрок не может крафтить через интерфейс |
-| **P2** | Прямые мутации в game-store.ts | Поверхностный клон, риск stale-ссылок |
-| **DEP-1** | `event-bus.ts` (@deprecated) используется в engine.ts | Две шины параллельно |
-| **DEAD-1** | `extractOreToElements` в engine.ts (@deprecated) | Мёртвый код |
+| ~~P4~~ | ~~Нет UI очереди производства~~ | ✅ Закрыто (`production-queue-panel.tsx`) |
+| ~~P2~~ | ~~Прямые мутации в game-store.ts~~ | ✅ Закрыто (Block 01 P2 — immer middleware) |
+| ~~DEP-1~~ | ~~`event-bus.ts` (@deprecated) используется в engine.ts~~ | ✅ Закрыто (Block 01 C1 — файл удалён) |
+| ~~DEAD-1~~ | ~~`extractOreToElements` в engine.ts (@deprecated)~~ | ✅ Закрыто |
+| **P0-1** | Store→mediator sync (21 прямое действие) | Pass 1 — открыт |
 | **DUP-1** | Дублирование блоков в `recalcEnergyBalance` (3 цикла) | DRY нарушение |
 | **HARDCODE-1** | `ATMOSPHERE_GAS_MAP`, `DIRECT_GAS_MAP` в engine.ts | Данные в логике |
 
@@ -211,24 +231,34 @@
 
 ### 5.1 Качество кода
 
-| Проблема | Файл | Оценка времени |
-|----------|------|----------------|
-| Прямые мутации состояния (P2) | `game-store.ts`, `engine.ts` | 6 ч (immer) |
-| Дублирование recalcEnergyBalance | `engine.ts:284-350` | 2 ч |
-| Хардкод атмосферных газов | `engine.ts:136-153` | 1 ч |
-| @deprecated функции и шины | `engine.ts:13`, `event-bus.ts` | 1 ч |
-| Крупные файлы (>500 строк) | chemistry-generator (1704), planet-view (846), recipes (771) | 4 ч (разбить) |
+> Большинство пунктов ниже закрыты (Block 01-08). Открытые пункты помечены 🔴. См. `checkpoints/audit_2026_08_27_0{1,2,3,4}_*.md` для деталей.
 
-### 5.2 Тесты (критично для ИИ-агентов)
+| Проблема | Файл | Оценка времени | Статус |
+|----------|------|----------------|--------|
+| ~~Прямые мутации состояния (P2)~~ | `game-store.ts`, `engine.ts` | ~~6 ч (immer)~~ | ✅ Закрыто (Block 01 P2 — immer middleware) |
+| ~~Дублирование recalcEnergyBalance~~ | `engine.ts:284-350` | ~~2 ч~~ | ✅ Закрыто (Block 01 P2 cleanup) |
+| ~~Хардкод атмосферных газов~~ | `engine.ts:136-153` | ~~1 ч~~ | ✅ Закрыто (`atmosphere-gases.ts`) |
+| ~~@deprecated функции и шины~~ | ~~`engine.ts:13`, `event-bus.ts`~~ | ~~1 ч~~ | ✅ Закрыто (Block 01 C1 — `event-bus.ts` удалён) |
+| ~~Крупные файлы (>500 строк)~~ | chemistry-generator (1704), planet-view (846), recipes (771) | ~~4 ч (разбить)~~ | ✅ Частично: chemistry-generator разбит в `src/data/chemistry/` (Block 01 C5) |
+| 🔴 Store→mediator sync (P0-1) | `game-store.ts` (21 прямое действие) | ~6 ч | 🔴 Открыто (Pass 1) |
 
-| Что нужно | Покрытие | Время |
-|-----------|----------|-------|
-| PRNG детерминизм | `prng.ts` | 1 ч |
-| Snapshot генерации галактики | `galaxy/*` | 2 ч |
-| Экономика (добыча → крафт) | `economy/engine.ts` | 2 ч |
-| Chemistry-generator (молярные массы) | `chemistry-generator.ts` | 2 ч |
-| Сериализация (save → load → equals) | `game-store.ts` | 1 ч |
-| **Итого тестов** | — | **~8 ч** |
+### 5.2 Тесты (✅ закрыто в Block 01-08)
+
+> Покрытие тестами завершено (340/340 ✅ passing, 0 failing). См. `tests/` для актуального списка тестов.
+
+| Что нужно | Покрытие | Время | Статус |
+|-----------|----------|-------|--------|
+| PRNG детерминизм | `prng.ts` + `prng-statistical.test.ts` | ~~1 ч~~ | ✅ Закрыто |
+| Snapshot генерации галактики | `galaxy-snapshot.test.ts` | ~~2 ч~~ | ✅ Закрыто |
+| Экономика (добыча → крафт) | `economy.test.ts` + `processors.test.ts` | ~~2 ч~~ | ✅ Закрыто |
+| Chemistry-generator (молярные массы) | `chemistry.test.ts` | ~~2 ч~~ | ✅ Закрыто |
+| Сериализация (save → load → equals) | `serialization.test.ts` + `api-save.test.ts` | ~~1 ч~~ | ✅ Закрыто |
+| Immutability (immutable store) | `immutability.test.ts` | — | ✅ Закрыто (Block 01 P2) |
+| Modular integration | `modular-integration.test.ts` | — | ✅ Закрыто (Block 06) |
+| Game loop | `game-loop.test.ts` | — | ✅ Закрыто |
+| Ships (Block 02) | `tests/ships/*` (90 tests: fleet-engine, orders, designer, shipyard) | — | ✅ Закрыто |
+| Research (Block 03) | `tests/research/*` (164 tests: process-tick, tree-data, cost-formulas, lab-rp, focus-bonus, branch-ceilings, prerequisites) | — | ✅ Закрыто |
+| **Итого тестов** | — | ~~8 ч~~ | ✅ **340 / 340 passing** |
 
 ### 5.3 Загрязнение репозитория (ИСПРАВЛЕНО ✅)
 
@@ -248,16 +278,18 @@
 
 | Метрика | Значение |
 |---------|----------|
-| Строк игрового кода (src/, без shadcn) | ~13 239 |
+| Строк игрового кода (src/, без shadcn) | ~31 040 |
 | Строк shadcn/ui | ~5 397 |
-| Файлов в src/ | 105 |
-| Элементов (в коде / по spec) | 57 / 57 ✅ |
-| Руд (в коде) | 51 |
-| Зданий (в коде / по spec) | 12 / 27 (44%) |
-| Рецептов (в коде) | ~70 |
+| Файлов в src/ | 141 |
+| Элементов (в коде / по spec) | 60 / 60 ✅ (57 base + 3 transuranic) |
+| Руд (в коде) | 56 |
+| Зданий (в коде / по spec) | 15 / 27 (56%) |
+| Рецептов (в коде) | 75 ✅ (validate:recipes 75/75) |
 | Типов звёзд | 12 / 12 ✅ |
 | Типов планет | 7 / 7 ✅ |
-| Компонентов UI (game/) | 7 |
+| Компонентов UI (game/) | 17 |
+| Тестов | 340 / 340 ✅ (0 failing) |
+| Lint-ошибок | 0 ✅ (50 warnings) |
 
 ### 6.2 Документация
 
@@ -265,19 +297,17 @@
 |---------|----------|
 | Файлов в docs/ | 19 |
 | Строк в docs/ | ~17 500 |
-| Файлов в checkpoints/ | 13 (исторические) |
-| Спецификации с 0% реализации | 3 (ships, research, AI) |
+| Файлов в checkpoints/ | 30 (вкл. Pass 1/2/3/4 аудиты 2026-08-27) |
+| Спецификации с 0% реализации | 1 (AI-factions; ships+research завершены как MVP в Block 02/03) |
 
 ### 6.3 Разработка
 
 | Метрика | Значение |
 |---------|----------|
-| Git-коммитов | 67 |
-| Активных дней разработки | 5 (2026-05-03, 04, 12, 13, 22) |
-| Затраченное время | ~22 часа |
-| Скорость разработки | ~600 строк/час |
-| Lint-ошибок | 0 ✅ |
-| Тестов | 0 ❌ |
+| Git-коммитов | 7+ (history rewritten per audit Pass 1) |
+| Активных дней разработки | 8+ (2026-05-03, 04, 12, 13, 22, 06-26, 08-27 + Block 01-08) |
+| Lint-ошибок | 0 ✅ (50 warnings) |
+| Тестов | 340 / 340 ✅ (0 failing) |
 
 ---
 
@@ -287,41 +317,45 @@
 
 **Документация в `docs/` — источник истины.** Код должен быть приведён в соответствие со спецификациями, не наоборот.
 
-### 7.2 Приоритеты следующего этапа (Etap 2.5 — Стабилизация)
+### 7.2 Приоритеты следующего этапа (Etap 3.5 — AI-фракции)
+
+> Etap 2.5 (стабилизация P1-P7), Etap 2.6 (engineering quality Block 07), Etap 3.0 (Block 02 флот + Block 03 исследования) — ✅ Завершены. См. `checkpoints/audit_2026_08_27_0{1,2,3,4}_*.md`.
 
 | Приоритет | Задача | Время | Тип |
 |-----------|--------|-------|------|
-| 🔴 P1 | Унификация ID руд (recipes.ts → baked-lookups) | 4 ч | Баг |
-| 🔴 P2 | Immutable store (zustand-immer) | 6 ч | Рефакторинг |
-| 🔴 P3 | UI для атмосферы/орбиты (BuildingDialog) | 4 ч | Незавершённость |
-| 🟡 P4 | UI очереди производства | 6 ч | Незавершённость |
-| 🟡 P5 | ResourcePanel: крафтовые материалы | 2 ч | UX |
-| 🟡 P6 | Colony Hub стоимость апгрейда | 1 ч | Баланс |
-| 🟢 P7 | Убрать мёртвый тип `transuranic` или добавить элементы | 0.5 ч | Чистота |
-| 🔴 TESTS | Покрытие тестами (PRNG, economy, serialization) | 8 ч | Фундамент |
+| 🔴 NEXT | AI-фракции (5 базовых фракций, `src/ai/`) | ~3 нед | Etap 3.5 |
+| 🔴 P0-1 | Store→mediator sync (21 прямое действие, see Pass 1) | ~6 ч | Арх. долг |
+| 🟡 Pass 2 P1-2 | Cross-layer import в fleet-engine (clean architecture) | ~1 ч | Рефакторинг |
+| 🟡 Pass 2 P3-5 | `FUEL_PRIORITY` вынести в `fuel-map.ts` | ~0.5 ч | Чистота |
+| 🟡 Pass 2 P3-6 | `prng.ts` название «xoshiro256**» → уточнить (32-bit) | ~0.5 ч | Документация |
+| 🟡 Etap 4 stubs | resolveCombat, canColonizePlanet, antimatter fuel, terraforming | ~6 нед | Будущее |
 
 ### 7.3 Расхождения ID (решение за владельцем)
 
 | Расхождение | Вариант A (править код) | Вариант B (править spec) |
 |-------------|-------------------------|--------------------------|
-| `nuclear_plant` vs `nuclear_reactor` | Переименовать в коде | Переименовать в 40-buildings.md |
-| `Fe-ore` vs `hematite` | Перейти на динамический lookup | Указать в spec, что ID = `Fe-ore` |
+| ~~`nuclear_plant` vs `nuclear_reactor`~~ | ✅ Закрыто (Block 01 C8): код использует `nuclear_reactor` | n/a |
+| ~~`Fe-ore` vs `hematite`~~ | ✅ Закрыто (Block 01 P1): `recipes.ts` → `baked-lookups.ts` | n/a |
+| ~~`smelter`/`chemical_plant`/`petrochem_plant`~~ | ✅ Закрыто (Block 05): переименованы в `processor`/`synthesizer`/`refinery` | n/a |
 
-> Рекомендация: для ID руд — править код (динамический lookup), для `nuclear_plant` — править код (переименовать в `nuclear_reactor`).
+> Рекомендация: для всех будущих расхождений ID — править код (в плане иммерсивного рефакторинга, см. Pass 1 P0-1). Все исторические расхождения (`nuclear_plant`, `Fe-ore`, `smelter/chemical_plant/petrochem_plant`) — ✅ закрыты (Block 01 C8/P1, Block 05).
 
 ### 7.4 Дальнейшие этапы (по ROADMAP)
 
-| Этап | Срок | Содержание |
-|------|------|------------|
-| 2.5 Стабилизация | ~1 неделя | P1-P7 + тесты |
-| 3.0 Флот + исследования | 3-4 недели | По specs 50-ships.md, 60-research.md |
-| 3.5 AI-фракция | 3 недели | По spec 70-ai.md |
-| 4 Глубокие системы | 6 недель | Бой, дипломатия, макрообъекты |
-| 5 Полировка | 6 недель | Баланс, контент, оптимизация |
+| Этап | Срок | Содержание | Статус |
+|------|------|------------|--------|
+| 2.5 Стабилизация | ~1 неделя | P1-P7 + тесты | ✅ Завершён (Block 01, 08-27) |
+| 2.6 Engineering quality | ~1 неделя | TS strict, ESLint, PRNG fix | ✅ Завершён (Block 07, 08-27) |
+| 3.0 Флот + исследования | 3-4 недели | По specs 50-ships.md, 60-research.md | ✅ Завершён (Block 02/03, 08-27) |
+| 3.5 AI-фракция | 3 недели | По spec 70-ai.md (5 базовых) | ❌ Pending |
+| 4 Глубокие системы | 6 недель | Бой, дипломатия, макрообъекты | ❌ Etap 4 |
+| 5 Полировка | 6 недель | Баланс, контент, оптимизация | ❌ Etap 5 |
 
 ### 7.5 Подход к разработке через ИИ-агентов
 
-**Критично перед Etap 3:** закрыть P2 (immutable store) и добавить тесты. Без этого ИИ-агенты не смогут верифицировать изменения при добавлении флота/исследований/AI.
+**Etap 2.5/2.6/3.0 завершён:** P2 (immutable store), тесты (340/340), флот (Block 02), исследования (Block 03) — всё готово.
+
+**Перед Etap 3.5:** закрыть Pass 1 P0-1 (store→mediator sync для 21 прямого действия) — это позволит ИИ-агентам уверенно добавлять AI-фракции без рассинхронизации с движком.
 
 ---
 
@@ -329,6 +363,8 @@
 
 | Дата | Автор | Изменение |
 |------|-------|-----------|
+| 2026-08-27 | docs-sync (Task ID 25) | Синхронизация STATUS.md с кодом per audit Pass 3 findings |
+| 2026-08-27 | audit Pass 1/2/3/4 | `checkpoints/audit_2026_08_27_0{1,2,3,4}_*.md` — full audit |
 | 2026-06 | Аудит (после очистки) | Создан как отчёт реализации vs спецификация |
 | 2026-05-12 | dev_plan | План P1-P7 в `checkpoints/05_12_dev_plan.md` |
 | 2026-05-03 | audit_final | 69 расхождений, 14 P0 закрыто (см. `docs/audit-history.md`) |

@@ -20,6 +20,7 @@ import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import { produce } from 'immer';
 import type { GameState, GameSpeed, StarSystem, Planet, EntityId, ProductionQueue, ColonyRole, WarehouseSpecialization, ResearchState } from '@/core/types';
+import { findPlanet } from '@/core/find-planet';
 import '@/core/immer-setup'; // Block 01 P2: enableMapSet + setAutoFreeze(false)
 import { getGameMediator } from '@/core/game-mediator';
 import { applyColonyRole, calculateWarehouseCapacity, calculateWarehouseCapacities, canStoreResource, getOrbitBufferUsed } from '@/data/warehouse';
@@ -286,6 +287,33 @@ function getMediatorWithModules() {
   }
 
   return mediator;
+}
+
+/**
+ * Audit Pass 1 P0-1 (fix): sync Zustand-store state back to the GameMediator.
+ *
+ * The store subscription `core:state-changed → useGameStore.setState` is
+ * one-directional (mediator → store). Actions that mutate `gameState`
+ * directly through the immer middleware (`set((state) => { state.gameState... })`)
+ * create a NEW state reference inside the store, but `mediator.gameState`
+ * still points at the OLD reference. On the next `mediator.tick()` the
+ * mediator reads its stale ref, processes it through `produce()` and
+ * `commitState()` — silently overwriting the user's recent edits.
+ *
+ * Call this helper at the end of every direct-mutation store action to
+ * propagate the new state reference back to the mediator.
+ *
+ * NOTE: This helper is defined OUTSIDE the zustand `create((set, get) => ...)`
+ * closure, so it CANNOT use the closure's `get()` — that would throw
+ * `ReferenceError: get is not defined` at runtime. Instead, it calls
+ * `useGameStore.getState()` (the static accessor on the resulting hook).
+ * This is the idiomatic way to read store state from outside an action.
+ */
+function syncMediatorState(): void {
+  const newState = useGameStore.getState().gameState;
+  if (newState) {
+    getMediatorWithModules().commitState(newState);
+  }
 }
 
 // ============ Сериализация ============
@@ -686,6 +714,9 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
       // Pattern: directly mutate the queue via immer draft (same as
       // setReserveMinimum / setColonyRole — no need to round-trip
       // through the mediator for a simple deletion).
+      // Audit Pass 1 P0-1: call syncMediatorState() afterwards to propagate
+      // the new state reference back to the mediator (otherwise the next
+      // tick would silently re-add the cancelled item from the stale ref).
       let ok = false;
       set((state) => {
         if (!state.gameState) return;
@@ -698,6 +729,7 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
         queue.items.splice(idx, 1);
         ok = true;
       });
+      syncMediatorState();
       return ok;
     },
 
@@ -799,6 +831,7 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
         if (!planet || !planet.warehouse) return;
         planet.warehouse = applyColonyRole(planet.warehouse, role);
       });
+      syncMediatorState(); // Audit Pass 1 P0-1
     },
 
     setReserveMinimum: (planetId, resourceId, minimum) => {
@@ -812,6 +845,7 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
           planet.warehouse.reserves[resourceId] = { resourceId, minimum, priority: 5 };
         }
       });
+      syncMediatorState(); // Audit Pass 1 P0-1
     },
 
     setWarehouseSpecialization: (planetId, spec) => {
@@ -823,6 +857,7 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
         planet.warehouse.capacities = calculateWarehouseCapacities(planet);
         planet.warehouse.totalCapacity = calculateWarehouseCapacity(planet);
       });
+      syncMediatorState(); // Audit Pass 1 P0-1
     },
 
     moveToOrbit: (planetId, resourceId, amount) => {
@@ -844,6 +879,7 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
         planet.warehouse.orbitBuffer.resources[resourceId] = (planet.warehouse.orbitBuffer.resources[resourceId] ?? 0) + moveAmount;
         ok = true;
       });
+      syncMediatorState(); // Audit Pass 1 P0-1
       return ok;
     },
 
@@ -866,6 +902,7 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
         planet.resources[resourceId] = (planet.resources[resourceId] ?? 0) + actualMove;
         ok = true;
       });
+      syncMediatorState(); // Audit Pass 1 P0-1
       return ok;
     },
 
@@ -886,6 +923,9 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
           state.gameState.phase = 'paused';
           state.gameState.speed = 0;
         });
+        // Audit Pass 1 P0-1: sync mediator so loop.pause() actually takes
+        // effect on the current state ref and no tick fires during save.
+        syncMediatorState();
       }
 
       set({ isSaving: true, saveError: null });
@@ -951,6 +991,9 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
             state.gameState.phase = savedPhase === 'colonization' ? 'colonization' : 'playing';
             state.gameState.speed = savedSpeed || 1;
           });
+          // Audit Pass 1 P0-1: sync mediator so the GameLoop sees the
+          // restored phase/speed and resumes ticking on the new state ref.
+          syncMediatorState();
         }
         set({ isSaving: false });
       }
@@ -970,6 +1013,16 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
         resetProductionItemCounter();
         // Block 02 (F5): reset ship ID counter — newly built ships get fresh IDs.
         resetShipCounter();
+
+        // Audit Pass 1 P1-2: sync mediator with the loaded state. Without this
+        // call, `mediator.gameState` stays on the OLD (or null) reference and
+        // subsequent `mediator.tick()` calls either return early (phase check)
+        // or process the OLD state — silently overwriting the loaded state on
+        // the very next tick. `setLoadedState` updates `mediator.gameState`,
+        // resets the GameLoop time, and emits `core:state-changed` (which our
+        // store subscription then forwards back to Zustand).
+        const mediator = getMediatorWithModules();
+        mediator.setLoadedState(loadedState);
 
         set({
           gameState: loadedState,
@@ -1046,6 +1099,8 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
 
     // ─── Block 02 (F2): Конструктор кораблей ─────────────────────
     // Direct immer mutation (no mediator round-trip needed — simple Map addition).
+    // Audit Pass 1 P0-1: but syncMediatorState() is still required so the
+    // next tick (e.g. shipyard processing) sees the new design Map.
     saveShipDesign: (design) => {
       let newId: string | null = null;
       set((state) => {
@@ -1064,6 +1119,7 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
         };
         state.gameState.shipDesigns.set(id, designRecord);
       });
+      syncMediatorState();
       return newId;
     },
 
@@ -1073,6 +1129,7 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
         if (!state.gameState) return;
         ok = state.gameState.shipDesigns.delete(id);
       });
+      syncMediatorState();
       return ok;
     },
 
@@ -1088,6 +1145,8 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
     },
 
     // ─── Block 02 (F6): Верфь — постройка кораблей ──────────────
+    // Audit Pass 1 P0-1: direct immer mutation + syncMediatorState() so
+    // ShipsModule.tick sees the new shipyard queue item on the next tick.
     enqueueShipBuild: (planetId, designId, shipName) => {
       let itemId: string | null = null;
       set((state) => {
@@ -1101,6 +1160,7 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
         const newQueue = enqueueShipBuildFn(planet, existingQueue, design, shipName ?? `${design.name}-${shipyardItemCounter}`, itemId);
         state.gameState.shipyardQueues.set(planetId, newQueue);
       });
+      syncMediatorState();
       return itemId;
     },
 
@@ -1114,6 +1174,7 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
         ok = newQueue.items.length < queue.items.length;
         state.gameState.shipyardQueues.set(planetId, newQueue);
       });
+      syncMediatorState();
       return ok;
     },
 
@@ -1126,6 +1187,8 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
     // Pattern: direct immer mutation. Engine functions (createFleet / mergeFleets /
     // splitFleet from src/ships/fleet-engine.ts) are pure — they return Fleet objects
     // without ids; store assigns deterministic ids (counter, no Math.random).
+    // Audit Pass 1 P0-1: syncMediatorState() after each so FleetModule.tick sees
+    // the new fleet / merge / split on the next tick.
     createFleet: (name, shipIds, atSystemId) => {
       let newId: string | null = null;
       set((state) => {
@@ -1141,6 +1204,7 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
         const newFleet: import('@/core/types').Fleet = { ...draft, id: newId };
         state.gameState.fleets.push(newFleet);
       });
+      syncMediatorState();
       return newId;
     },
 
@@ -1169,6 +1233,7 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
         state.gameState.fleets = state.gameState.fleets.filter(f => !idSet.has(f.id));
         state.gameState.fleets.push(newFleet);
       });
+      syncMediatorState();
       return newId;
     },
 
@@ -1198,6 +1263,7 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
         state.gameState.fleets[idx] = remaining;
         state.gameState.fleets.push(newFleet);
       });
+      syncMediatorState();
       return newId;
     },
 
@@ -1210,6 +1276,7 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
         f.name = newName;
         ok = true;
       });
+      syncMediatorState();
       return ok;
     },
 
@@ -1240,6 +1307,8 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
     // Pattern: pure engine function executeOrder returns { updatedFleet, ok } —
     // store applies via immer draft. Failure (no route / no jump drive) returns false;
     // UI shows toast error per failure reason.
+    // Audit Pass 1 P0-1: syncMediatorState() afterwards so FleetModule.tick sees
+    // the new order and starts processing the route on the next tick.
     issueFleetOrder: (fleetId, type, targetId) => {
       let ok = false;
       set((state) => {
@@ -1262,6 +1331,7 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
         state.gameState.fleets[idx] = result.updatedFleet;
         ok = true;
       });
+      syncMediatorState();
       return ok;
     },
 
@@ -1275,6 +1345,7 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
         fleet.orders = fleet.orders.slice(1);
         ok = true;
       });
+      syncMediatorState();
       return ok;
     },
 
@@ -1290,6 +1361,8 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
     // простые mutations на game-state не требуют mediator round-trip).
     // Tick processing (RP accumulation) — в Phase 3.7 ResearchModule через
     // mediator + immer.produce (как EconomyModule).
+    // Audit Pass 1 P0-1: syncMediatorState() afterwards so ResearchModule.tick
+    // sees the new active slot / allocation / fundamental level.
     startResearch: (techId, targetLevel) => {
       let slotId: string | null = null;
       set((state) => {
@@ -1333,6 +1406,7 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
         }
         rs.activeSlots.push(newSlot);
       });
+      syncMediatorState();
       return slotId;
     },
 
@@ -1353,6 +1427,7 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
         }
         ok = true;
       });
+      syncMediatorState();
       return ok;
     },
 
@@ -1367,6 +1442,7 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
         slot.allocationPercent = Math.max(5, Math.min(100, percent));
         ok = true;
       });
+      syncMediatorState();
       return ok;
     },
 
@@ -1390,6 +1466,7 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
         rs.fundamentalRpInvested[branchId] = (rs.fundamentalRpInvested[branchId] ?? 0) + cost;
         ok = true;
       });
+      syncMediatorState();
       return ok;
     },
 
@@ -1408,6 +1485,7 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
         const sumSoFar = equal * rs.activeSlots.length;
         rs.activeSlots[rs.activeSlots.length - 1]!.allocationPercent += 100 - sumSoFar;
       });
+      syncMediatorState();
     },
 
     getResearchState: () => {
@@ -1417,10 +1495,7 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
   };
 }));
 
-function findPlanet(state: GameState, planetId: EntityId): Planet | undefined {
-  for (const system of state.galaxy.systems) {
-    const planet = system.planets.find(p => p.id === planetId);
-    if (planet) return planet;
-  }
-  return undefined;
-}
+// Audit Pass 2 P3-3: previously had a local `findPlanet` helper here
+// (lines 1491-1497 in pre-audit version), duplicating the same O(S×P)
+// loop as in economy-module.ts and ships-module.ts. Removed — all call
+// sites above now use the shared helper imported from `@/core/find-planet`.

@@ -1,0 +1,4 @@
+# This file ensures the db/ directory is tracked in git so a fresh
+# checkout has a place for the SQLite database file. The actual .db
+# files are gitignored (see .gitignore lines 64-65) — regenerate with
+# `bun run db:push` after cloning.

@@ -23,7 +23,7 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
 import { TYPE_NAMES } from '@/data/planet-types';
-import type { GameState, EntityId } from '@/core/types';
+import type { GameState, EntityId, Planet } from '@/core/types';
 import { toast } from '@/hooks/use-toast';
 import {
   Map,
@@ -54,15 +54,47 @@ export function GameLayout() {
 
   const time = gameState.time;
 
-  // Get current system/planet for display
+  // Get current system/planet for display (and planet reference for
+  // shipyard-level computation below).
   const selectedSystem = selectedSystemId
     ? gameState.galaxy.systemMap.get(selectedSystemId)
     : undefined;
 
   let selectedPlanetName: string | undefined;
+  let selectedPlanet: Planet | undefined;
   if (selectedPlanetId && selectedSystem) {
     const p = selectedSystem.planets.find((pl) => pl.id === selectedPlanetId);
+    selectedPlanet = p;
     selectedPlanetName = p?.name;
+  }
+
+  // Audit Pass 4 P1-1: вычислить фактический уровень верфи на выбранной
+  // планете игрока (макс. buildingLevel среди всех инстансов 'shipyard'
+  // на surface/atmosphere/orbit слоях). 0 — если планета не выбрана или
+  // на ней нет верфи. Передаётся в ShipDesigner как prop.
+  //
+  // Inline computation (no useMemo): planet slots are immer-frozen refs
+  // of gameState, so this re-runs only when state changes; the loop is
+  // bounded by building slot count per planet (small). Using a hook here
+  // would require lifting above the `if (!gameState) return null` early
+  // return — not worth the indirection.
+  let shipyardLevel = 0;
+  if (selectedPlanet) {
+    for (const h of selectedPlanet.hexes) {
+      if (h.buildingId === 'shipyard' && h.buildingLevel > shipyardLevel) {
+        shipyardLevel = h.buildingLevel;
+      }
+    }
+    for (const s of selectedPlanet.atmosphericSlots) {
+      if (s.buildingId === 'shipyard' && s.buildingLevel > shipyardLevel) {
+        shipyardLevel = s.buildingLevel;
+      }
+    }
+    for (const s of selectedPlanet.orbitSlots) {
+      if (s.buildingId === 'shipyard' && s.buildingLevel > shipyardLevel) {
+        shipyardLevel = s.buildingLevel;
+      }
+    }
   }
 
   return (
@@ -247,7 +279,7 @@ export function GameLayout() {
           </div>
           {view === 'system' && <SystemView />}
           {view === 'planet' && <PlanetView />}
-          {view === 'ship-designer' && <ShipDesigner />}
+          {view === 'ship-designer' && <ShipDesigner shipyardLevel={shipyardLevel} />}
           {view === 'fleet' && <FleetView />}
           {view === 'research' && <ResearchView />}
         </main>

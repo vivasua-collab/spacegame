@@ -4,7 +4,9 @@
 > **Дата:** 2026-03-05
 > **Статус:** Проект (Design Document)
 > **Зависимости:** [00-ARCHITECTURE.md](../00-ARCHITECTURE.md), [modularity.md](../modularity.md)
-> **Затрагиваемые файлы:** `src/core/event-bus.ts`, `src/core/game-loop.ts`, `src/core/types.ts`, `src/stores/game-store.ts`, `src/economy/engine.ts`
+> **Затрагиваемые файлы:** `src/core/typed-event-bus.ts`, `src/core/game-loop.ts`, `src/core/types.ts`, `src/stores/game-store.ts`, `src/economy/engine.ts`
+>
+> ⚠️ **Историческое примечание (Block 01 C1):** устаревший `src/core/event-bus.ts` удалён; используйте типизированный `typed-event-bus.ts`.
 
 ---
 

@@ -99,13 +99,15 @@ describe('Block 06: modular-bus integration', () => {
     state.speed = 1;
     mediator.setGameState(state);
 
-    const tickBefore = state.time.tick;
+    // Audit Pass 1 P1-4: after setGameState + tick(), the mediator holds a
+    // NEW immutable state ref (produce() creates one). Re-fetch before reads.
+    const tickBefore = mediator.getGameState()!.time.tick;
 
     // Act
     mediator.tick();
 
     // Assert — время сдвинулось, state-changed эмитнут (после processEconomyTick в EconomyModule)
-    expect(state.time.tick).toBe(tickBefore + 1);
+    expect(mediator.getGameState()!.time.tick).toBe(tickBefore + 1);
     expect(stateChangedCount).toBeGreaterThanOrEqual(1);
   });
 
@@ -270,8 +272,12 @@ describe('Block 06: modular-bus integration', () => {
 
     mediator.setSpeed(5);
 
-    expect(state.speed).toBe(5);
-    expect(state.phase).toBe('playing');
+    // Audit Pass 1 P1-5: setSpeed now uses immer.produce() — the mediator
+    // holds a NEW state ref. The local `state` var captured before
+    // setSpeed is stale; re-fetch from the mediator.
+    const newState = mediator.getGameState()!;
+    expect(newState.speed).toBe(5);
+    expect(newState.phase).toBe('playing');
     expect(speedChangedTo).not.toBeNull();
     // После not.toBeNull, TS всё ещё думает что это null; кастуем через unknown.
     expect(speedChangedTo as unknown as number).toBe(5);
@@ -279,20 +285,22 @@ describe('Block 06: modular-bus integration', () => {
 
   test('togglePause flips phase between playing and paused', () => {
     // Start: phase='colonization'
-    expect(state.phase).toBe('colonization');
+    expect(mediator.getGameState()!.phase).toBe('colonization');
 
     // First togglePause: colonization → playing (unpause branch)
+    // Audit Pass 1 P1-5: togglePause now uses immer.produce() — re-fetch
+    // state from the mediator after each call (local `state` var is stale).
     mediator.togglePause();
-    expect(state.phase).toBe('playing');
-    expect(state.speed).toBe(1);
+    expect(mediator.getGameState()!.phase).toBe('playing');
+    expect(mediator.getGameState()!.speed).toBe(1);
 
     // Second togglePause: playing → paused
     mediator.togglePause();
-    expect(state.phase).toBe('paused');
-    expect(state.speed).toBe(0);
+    expect(mediator.getGameState()!.phase).toBe('paused');
+    expect(mediator.getGameState()!.speed).toBe(0);
 
     // Third togglePause: paused → playing
     mediator.togglePause();
-    expect(state.phase).toBe('playing');
+    expect(mediator.getGameState()!.phase).toBe('playing');
   });
 });

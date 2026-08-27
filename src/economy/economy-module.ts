@@ -20,8 +20,9 @@
 import type { IGameModule, ModuleManifest, ModulePhase } from '@/core/module-types';
 import type { TypedEventBus } from '@/core/typed-event-bus';
 import type { ModuleRegistry } from '@/core/module-registry';
-import type { GameTime, EntityId, Planet, ProductionQueue, GameState } from '@/core/types';
+import type { GameTime, EntityId, ProductionQueue, GameState } from '@/core/types';
 import type { EventPayload } from '@/core/events';
+import { findPlanet } from '@/core/find-planet';
 import { PRIORITY } from '@/core/module-types';
 import { produce } from 'immer';
 
@@ -198,7 +199,7 @@ export class EconomyModule implements IGameModule {
     let success = false;
     let reportedHexIndex = payload.hexIndex ?? -1;
     const newState = produce(currentState, (draft) => {
-      const planet = this.findPlanet(draft, payload.planetId);
+      const planet = findPlanet(draft, payload.planetId);
       if (!planet) return;
       if (layer === 'atmosphere') {
         const slotIndex = payload.slotIndex ?? 0;
@@ -237,7 +238,7 @@ export class EconomyModule implements IGameModule {
     let success = false;
     let newLevel = 0;
     const newState = produce(currentState, (draft) => {
-      const planet = this.findPlanet(draft, payload.planetId);
+      const planet = findPlanet(draft, payload.planetId);
       if (!planet) return;
       success = engineUpgradeBuilding(planet, payload.hexIndex);
       if (success) {
@@ -261,7 +262,7 @@ export class EconomyModule implements IGameModule {
 
     let success = false;
     const newState = produce(currentState, (draft) => {
-      const planet = this.findPlanet(draft, payload.planetId);
+      const planet = findPlanet(draft, payload.planetId);
       if (!planet) return;
       success = engineEnqueueProduction(planet, draft.productionQueues, payload.recipeId, payload.repeat);
     });
@@ -278,7 +279,7 @@ export class EconomyModule implements IGameModule {
     let success = false;
     let colonyHubHexIndex = -1;
     const newState = produce(currentState, (draft) => {
-      const planet = this.findPlanet(draft, payload.planetId);
+      const planet = findPlanet(draft, payload.planetId);
       if (!planet) return;
 
       const system = draft.galaxy.systemMap.get(planet.systemId);
@@ -320,7 +321,7 @@ export class EconomyModule implements IGameModule {
 
     let success = false;
     const newState = produce(currentState, (draft) => {
-      const planet = this.findPlanet(draft, payload.planetId);
+      const planet = findPlanet(draft, payload.planetId);
       if (!planet) return;
       const result = engineSpecializeBuilding(planet, payload.hexIndex, payload.category);
       success = result.success;
@@ -343,7 +344,7 @@ export class EconomyModule implements IGameModule {
 
     let success = false;
     const newState = produce(currentState, (draft) => {
-      const planet = this.findPlanet(draft, payload.planetId);
+      const planet = findPlanet(draft, payload.planetId);
       if (!planet) return;
       const result = engineUpgradeSpecialization(planet, payload.hexIndex);
       success = result.success;
@@ -385,14 +386,14 @@ export class EconomyModule implements IGameModule {
   private queryPlanetResources(planetId: EntityId): Record<string, number> | null {
     const state = this.getGameState?.();
     if (!state) return null;
-    const planet = this.findPlanet(state, planetId);
+    const planet = findPlanet(state, planetId);
     return planet ? { ...planet.resources } : null;
   }
 
   private queryPlanetEnergy(planetId: EntityId): { balance: number } | null {
     const state = this.getGameState?.();
     if (!state) return null;
-    const planet = this.findPlanet(state, planetId);
+    const planet = findPlanet(state, planetId);
     return planet ? { balance: planet.energyBalance } : null;
   }
 
@@ -404,11 +405,7 @@ export class EconomyModule implements IGameModule {
 
   // ─── Утилиты ──────────────────────────────────────────
 
-  private findPlanet(state: import('@/core/types').GameState, planetId: EntityId): Planet | undefined {
-    for (const system of state.galaxy.systems) {
-      const planet = system.planets.find(p => p.id === planetId);
-      if (planet) return planet;
-    }
-    return undefined;
-  }
+  // Audit Pass 2 P3-3: private findPlanet removed — uses the shared
+  // helper from `@/core/find-planet` (imported at top of file).
+  // All internal call sites use the imported `findPlanet` directly.
 }

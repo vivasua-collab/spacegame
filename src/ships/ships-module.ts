@@ -21,6 +21,7 @@ import type { IGameModule, ModuleManifest, ModulePhase } from '@/core/module-typ
 import type { TypedEventBus } from '@/core/typed-event-bus';
 import type { ModuleRegistry } from '@/core/module-registry';
 import type { GameTime, EntityId, GameState, Ship } from '@/core/types';
+import { findPlanet } from '@/core/find-planet';
 import { PRIORITY } from '@/core/module-types';
 import { produce } from 'immer';
 import { processShipyardTick } from '@/data/ships/shipyard-queue';
@@ -145,7 +146,7 @@ export class ShipsModule implements IGameModule {
       for (const [planetId, queue] of draft.shipyardQueues) {
         if (queue.items.length === 0) continue;
         // Найти планету в galaxy
-        const planet = this.findPlanet(draft, planetId);
+        const planet = findPlanet(draft, planetId);
         if (!planet) continue;
         // Get design — use first queue item's designId
         const item = queue.items[0];
@@ -172,11 +173,6 @@ export class ShipsModule implements IGameModule {
 
   // ─── Utils ───────────────────────────────────────────────────────
 
-  private findPlanet(state: GameState, planetId: EntityId) {
-    for (const system of state.galaxy.systems) {
-      const planet = system.planets.find(p => p.id === planetId);
-      if (planet) return planet;
-    }
-    return undefined;
-  }
+  // Audit Pass 2 P3-3: private findPlanet removed — uses the shared
+  // helper from `@/core/find-planet` (imported at top of file).
 }

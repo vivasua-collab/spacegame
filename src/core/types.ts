@@ -649,6 +649,14 @@ export interface FleetOrder {
   currentLegIndex: number;
   etaTick: number;
   repeat?: boolean;
+  /**
+   * Audit Pass 2 P1-4 (fix): whether the `fleet:movement-started` event
+   * has already been emitted for the current leg of this order. Used to
+   * guarantee the event fires exactly once per leg, regardless of pause/
+   * resume timing. Old saves that pre-date this field treat `undefined`
+   * as `false` (the event will fire on the next observed tick).
+   */
+  movementStarted?: boolean;
 }
 
 /**

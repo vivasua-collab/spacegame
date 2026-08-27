@@ -80,16 +80,20 @@ function processExtraction(planet: Planet): void {
         // 1 тик = 1 день. Базовая скорость: ~1 единица/день при availability=0.5
         const baseRate = 1.0 * deposit.availability;
         const amount = baseRate * levelMult * terrainMult;
-        const extracted = Math.min(amount, deposit.quantity);
+        const requested = Math.min(amount, deposit.quantity);
 
-        deposit.quantity -= extracted;
-        if (extracted > 0) {
+        // Audit Pass 2 P1-1 (fix): only debit the deposit for the portion
+        // we can actually store. Previously we debited `requested` (full
+        // amount) BEFORE the canStoreResource check — if the warehouse was
+        // full the extracted units silently evaporated (deposit decremented,
+        // nothing added to planet.resources). Now the leftover stays in the
+        // deposit for the next tick.
+        const canStore = canStoreResource(planet, deposit.elementId, requested);
+        const actual = Math.min(requested, canStore);
+        if (actual > 0) {
+          deposit.quantity -= actual;
           // Кладём руду на склад как сырьё (переработка через рецепты)
-          const canStore = canStoreResource(planet, deposit.elementId, extracted);
-          const actual = Math.min(extracted, canStore);
-          if (actual > 0) {
-            planet.resources[deposit.elementId] = (planet.resources[deposit.elementId] ?? 0) + actual;
-          }
+          planet.resources[deposit.elementId] = (planet.resources[deposit.elementId] ?? 0) + actual;
         }
       }
     }
@@ -103,15 +107,15 @@ function processExtraction(planet: Planet): void {
         // 50% от скорости шахты (1 тик = 1 день)
         const baseRate = 0.5 * deposit.availability;
         const amount = baseRate * levelMult;
-        const extracted = Math.min(amount, deposit.quantity);
+        const requested = Math.min(amount, deposit.quantity);
 
-        deposit.quantity -= extracted;
-        if (extracted > 0) {
-          const canStore = canStoreResource(planet, deposit.elementId, extracted);
-          const actual = Math.min(extracted, canStore);
-          if (actual > 0) {
-            planet.resources[deposit.elementId] = (planet.resources[deposit.elementId] ?? 0) + actual;
-          }
+        // Audit Pass 2 P2-1 (fix, same bug as P1-1 above): only debit what
+        // can actually be stored, leaving the remainder in the deposit.
+        const canStore = canStoreResource(planet, deposit.elementId, requested);
+        const actual = Math.min(requested, canStore);
+        if (actual > 0) {
+          deposit.quantity -= actual;
+          planet.resources[deposit.elementId] = (planet.resources[deposit.elementId] ?? 0) + actual;
         }
       }
     }
@@ -953,9 +957,14 @@ export function upgradeSpecialization(
  * Сканирует очередь планеты и удаляет элемент с совпадающим `id`.
  * Возвращает true, если элемент найден и удалён; false — если очередь
  * или элемент не существуют. Эмитит `economy:production-cancelled`
- * с причиной `insufficient_inputs` (ближайшая доступная причина из
- * `EconomyEvents['economy:production-cancelled']['reason']` для ручной
- * отмены; будущая итерация может добавить `'manual'` в union type).
+ * с причиной `'manual'` — это ручная отмена со стороны игрока.
+ *
+ * Audit Pass 2 P1-5: раньше reason был `'insufficient_inputs'` (ближайшая
+ * доступная причина из union type), что не позволяло UI/аналитике отличить
+ * ручную отмену от системной авто-отмены из-за нехватки входных ресурсов.
+ * Теперь в union type добавлен `'manual'` (events.ts) и используется здесь.
+ * Авто-отмена из `processProductionQueue` (recipe_not_found,
+ * insufficient_inputs в repeat-loop) оставлена как есть.
  */
 export function cancelProduction(
   planet: Planet,
@@ -973,7 +982,7 @@ export function cancelProduction(
     planetId: planet.id,
     recipeId: removed.recipeId,
     queueItemId: removed.id,
-    reason: 'insufficient_inputs',
+    reason: 'manual',
   });
   return true;
 }

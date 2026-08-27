@@ -304,10 +304,15 @@ export function processFleetTick(
   // For move/patrol/colonize/attack: movement logic
   // If currentTick < etaTick → still in transit on current leg
   if (currentTick < order.etaTick) {
-    // Emit movement-started once per order (when on first leg AND just after issue)
-    // For tests: emit on the first tick after issue (currentTick === issuedTick + 1)
-    // AND currentLegIndex === 0.
-    if (order.currentLegIndex === 0 && currentTick === order.issuedTick + 1) {
+    // Audit Pass 2 P1-4 (fix): emit movement-started on the FIRST tick we
+    // observe the fleet in transit on this leg, regardless of whether
+    // currentTick === issuedTick + 1. Previously, if the player paused the
+    // simulation immediately after issuing an order (or any other timing
+    // quirk that caused the first tick to be > issuedTick + 1), the event
+    // was never emitted — FleetRouteOverlay wouldn't draw the route
+    // animation. The `FleetOrder.movementStarted` flag (added in this fix)
+    // tracks whether we've already emitted for the current leg.
+    if (!order.movementStarted) {
       const toSystemId = order.path.length > 1 ? order.path[1]! : order.targetId;
       gameBus.emit('fleet:movement-started', {
         fleetId: fleet.id,
@@ -316,6 +321,12 @@ export function processFleetTick(
         path: order.path,
         etaTick: order.etaTick,
       });
+      // Mark as emitted so we don't fire again on subsequent ticks. We
+      // return a new fleet ref with the flag set so immer.produce picks
+      // up the change and persists it to the next tick's state.
+      const newOrders = fleet.orders.slice();
+      newOrders[0] = { ...order, movementStarted: true };
+      return { updatedFleet: { ...fleet, orders: newOrders }, completed: false };
     }
     return { updatedFleet: fleet, completed: false };
   }
@@ -457,6 +468,9 @@ export function completeOrder(
         currentLegIndex: 0,
         issuedTick: currentTick,
         etaTick: currentTick + travelDuration,
+        // Audit Pass 2 P1-4: reset movementStarted so the new leg's
+        // movement-started event fires on its first observed tick.
+        movementStarted: false,
       };
       updatedFleet = { ...fleet, orders: [newOrder, ...fleet.orders.slice(1)] };
       break;

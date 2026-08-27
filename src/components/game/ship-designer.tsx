@@ -20,6 +20,7 @@
 import { useState, useMemo, useCallback } from 'react';
 import { useGameStore } from '@/stores/game-store';
 import { calculateDesignStats, validateShip, armorMultiplier } from '@/ships/designer';
+import type { DesignValidationCtx } from '@/ships/designer';
 import { HULLS, getHull } from '@/data/ships/hulls';
 import { MODULE_MAP, listModulesByCategory } from '@/data/ships/modules';
 import { Card, CardContent } from '@/components/ui/card';
@@ -82,13 +83,17 @@ const CATEGORY_ICONS: Record<ModuleCategory, React.ReactNode> = {
   auxiliary: <Plus className="size-3" />,
 };
 
-const TEST_CTX = {
-  shipyardLevel: 99,
-  engineeringLevel: 99,
-  researchedTechs: ['all'],
-};
+export interface ShipDesignerProps {
+  /**
+   * Audit Pass 4 P1-1: реальный уровень верфи на выбранной планете игрока.
+   * `0` = на планете нет верфи (тогда дизайны с requiredShipyardLevel > 0
+   * не пройдут валидацию — UI показывает ошибку ещё до сохранения).
+   * Если планета не выбрана — game-layout.tsx передаёт 0.
+   */
+  shipyardLevel: number;
+}
 
-export function ShipDesigner() {
+export function ShipDesigner({ shipyardLevel }: ShipDesignerProps) {
   const gameState = useGameStore((s) => s.gameState);
   const saveShipDesign = useGameStore((s) => s.saveShipDesign);
   const setView = useGameStore((s) => s.setView);
@@ -112,8 +117,19 @@ export function ShipDesigner() {
     createdAtTick: tick,
   }), [designName, hullId, armor, moduleIds, owner, tick]);
 
-  const stats = useMemo(() => calculateDesignStats(design), [design]);
-  const validation = useMemo(() => validateShip(design, TEST_CTX), [design]);
+  // Audit Pass 4 P1-1: validation ctx теперь берёт реальный shipyardLevel
+  // с выбранной планеты игрока (передаётся через prop). engineeringLevel и
+  // researchedTechs остаются разрешающими — отдельных задач по engineering
+  // gate / requiredTechs в MVP scope нет (requiredTechs = [] для всех
+  // модулей/корпусов в MVP, см. риск R3 плана).
+  const validationCtx: DesignValidationCtx = useMemo(() => ({
+    shipyardLevel,
+    engineeringLevel: 99,
+    researchedTechs: ['all'],
+  }), [shipyardLevel]);
+
+  const stats = useMemo(() => calculateDesignStats(design, validationCtx), [design, validationCtx]);
+  const validation = useMemo(() => validateShip(design, validationCtx), [design, validationCtx]);
 
   const handleAddModule = useCallback((moduleId: string) => {
     setModuleIds(prev => [...prev, moduleId]);

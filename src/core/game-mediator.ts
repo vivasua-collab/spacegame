@@ -26,6 +26,7 @@ import { bakeGalaxyModel } from '@/data/chemistry-generator';
 import { ELEMENTS } from '@/data/elements';
 import { setCurrentLookups } from '@/data/baked-lookups';
 import { createDefaultResearchState } from '@/research/engine';
+import { produce } from 'immer';
 
 export class GameMediator {
   readonly bus: TypedEventBus;
@@ -167,14 +168,20 @@ export class GameMediator {
   /** Установить скорость */
   setSpeed(speed: GameSpeed): void {
     if (!this.gameState) return;
-    this.gameState.speed = speed;
+    // Audit Pass 1 P1-5: use immer.produce() to create a new state reference
+    // so that zustand-immer middleware can detect the change and re-render
+    // subscribers. In-place mutation of this.gameState caused UI buttons
+    // (pause/speed) to "stick" in their previous visual state.
+    const newState = produce(this.gameState, (draft) => {
+      draft.speed = speed;
+      draft.phase = speed > 0 ? 'playing' : 'paused';
+    });
+    this.gameState = newState;
     if (speed > 0) {
-      this.gameState.phase = 'playing';
       this.loop.setSpeed(speed);
       // Запустить интервал, если ещё не запущен (loop.start идемпотентен)
       this.loop.start();
     } else {
-      this.gameState.phase = 'paused';
       this.loop.pause();
     }
     this.emitStateChanged();
@@ -183,13 +190,21 @@ export class GameMediator {
   /** Переключить паузу */
   togglePause(): void {
     if (!this.gameState) return;
-    if (this.gameState.phase === 'playing') {
-      this.gameState.phase = 'paused';
-      this.gameState.speed = 0;
+    // Audit Pass 1 P1-5: use immer.produce() (see setSpeed for rationale).
+    const isPlaying = this.gameState.phase === 'playing';
+    const newState = produce(this.gameState, (draft) => {
+      if (isPlaying) {
+        draft.phase = 'paused';
+        draft.speed = 0;
+      } else {
+        draft.phase = 'playing';
+        draft.speed = 1;
+      }
+    });
+    this.gameState = newState;
+    if (isPlaying) {
       this.loop.pause();
     } else {
-      this.gameState.phase = 'playing';
-      this.gameState.speed = 1;
       this.loop.setSpeed(1);
       this.loop.start();
     }
@@ -222,13 +237,20 @@ export class GameMediator {
   tick(): void {
     if (!this.gameState || this.gameState.phase !== 'playing') return;
 
-    const speed = this.gameState.speed;
-    this.gameState.time.tick += speed;
-    this.gameState.time.dayInYear = this.gameState.time.tick % 365;
-    this.gameState.time.year = Math.floor(this.gameState.time.tick / 365) + 1;
+    // Audit Pass 1 P1-4: use immer.produce() to create a new state reference
+    // when mutating time. In-place mutation of this.gameState.time did not
+    // create a new reference, so zustand-immer middleware's Object.is check
+    // saw the same ref and did not notify subscribers — UI time display
+    // lagged behind on fast speeds.
+    const newState = produce(this.gameState, (draft) => {
+      draft.time.tick += draft.speed;
+      draft.time.dayInYear = draft.time.tick % 365;
+      draft.time.year = Math.floor(draft.time.tick / 365) + 1;
+    });
+    this.gameState = newState;
 
     // Тик через реестр модулей (EconomyModule.tick, GalaxyModule.tick, ...)
-    this.registry.tickAll(this.gameState.time);
+    this.registry.tickAll(newState.time);
 
     this.emitStateChanged();
   }

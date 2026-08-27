@@ -24,17 +24,20 @@ Double-fork — классический UNIX-паттерн для демоно
 ### Запуск
 
 ```bash
-cd /home/z/my-project && \
-  ( node node_modules/.bin/next dev -p 3000 > /home/z/my-project/dev2.log 2>&1 & echo $! > /tmp/next-dev.pid ) &
+PROJECT_DIR=$(pwd) && \
+  cd "$PROJECT_DIR" && \
+  ( node node_modules/.bin/next dev -p 3000 > "$PROJECT_DIR/dev2.log" 2>&1 & echo $! > /tmp/next-dev.pid ) &
 ```
 
 Ключевые моменты:
 1. `( ... & ) &` — double-fork: внешний `&` запускает подгруппу в фоне, внутренний `&`
    запускает node в фоне внутри подгруппы. Подгруппа завершается, node остаётся жив.
 2. `echo $! > /tmp/next-dev.pid` — сохраняем PID для последующей проверки/убийства.
-3. Лог пишется в `/home/z/my-project/dev2.log` (не dev.log — он может использоваться
+3. Лог пишется в `"$PROJECT_DIR/dev2.log"` (не dev.log — он может использоваться
    командой `tee` из package.json).
 4. Порт строго 3000.
+5. `PROJECT_DIR=$(pwd)` — инструкции работают из любой директории репозитория,
+   не зависят от абсолютного пути клонирования.
 
 ### Проверка, что сервер работает
 
@@ -65,8 +68,9 @@ pkill -f "next dev -p 3000" 2>/dev/null
 sleep 2
 
 # 2. Запустить с double-fork
-cd /home/z/my-project && \
-  ( node node_modules/.bin/next dev -p 3000 > /home/z/my-project/dev2.log 2>&1 & echo $! > /tmp/next-dev.pid ) &
+PROJECT_DIR=$(pwd) && \
+  cd "$PROJECT_DIR" && \
+  ( node node_modules/.bin/next dev -p 3000 > "$PROJECT_DIR/dev2.log" 2>&1 & echo $! > /tmp/next-dev.pid ) &
 
 # 3. Подождать и проверить
 sleep 6

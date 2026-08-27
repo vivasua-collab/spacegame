@@ -161,13 +161,50 @@ function countSlots(modules: ShipModule[]): {
 }
 
 /**
+ * Контекст валидации дизайна.
+ * - shipyardLevel — уровень верфи на выбранной планете игрока (UI передаёт
+ *   реальный; unit-тесты могут не указывать — по умолчанию 99 = «без гейта»).
+ * - engineeringLevel — уровень фундаментальной ветки engineering.
+ * - researchedTechs — список исследованных технологий; ['all'] отключает
+ *   проверку requiredTechs (для тестов).
+ */
+export interface DesignValidationCtx {
+  shipyardLevel: number;
+  engineeringLevel: number;
+  researchedTechs: string[];
+}
+
+/**
+ * «Разрешающий всё» контекст по умолчанию — все гейты tech/level
+ * дезактивированы. Удобен для unit-тестов и для расчёта характеристик
+ * (calculateDesignStats), где валидность — производная, а не фильтр.
+ *
+ * Audit Pass 4 P1-1: раньше это была константа TEST_CTX в
+ * `ship-designer.tsx`, и UI валидировал дизайны как валидные всегда.
+ * Теперь UI передаёт реальный shipyardLevel с выбранной планеты;
+ * engineeringLevel/res researchedTechs остаются разрешающими (нет
+ * отдельной задачи «полировать engineering gate» в MVP scope).
+ */
+export const PERMISSIVE_CTX: DesignValidationCtx = {
+  shipyardLevel: 99,
+  engineeringLevel: 99,
+  researchedTechs: ['all'],
+};
+
+/**
  * Рассчитать полные характеристики дизайна — docs/50-ships.md §1.6.
  *
  * Не требует ctx (только данные дизайна + каталог hulls/modules).
  * Возвращает DesignStats с заполненными полями; isValid/errors
  * проставляются из validateShip с дефолтным ctx (нет tech/level гейтов).
+ *
+ * @param ctx необязательный контекст валидации. По умолчанию PERMISSIVE_CTX
+ *             (гейты отключены) — backward-compat с unit-тестами.
  */
-export function calculateDesignStats(design: ShipDesign): DesignStats {
+export function calculateDesignStats(
+  design: ShipDesign,
+  ctx: DesignValidationCtx = PERMISSIVE_CTX,
+): DesignStats {
   const hull = getHull(design.hullId);
   const stats = emptyStats();
   if (!hull) {
@@ -259,12 +296,8 @@ export function calculateDesignStats(design: ShipDesign): DesignStats {
     .map(m => m.capacity as number);
   stats.scanRange = scanRanges.length > 0 ? Math.max(...scanRanges) : 0;
 
-  // Валидность — вызывает validateShip с дефолтным ctx (без tech/level гейтов)
-  const validation = validateShip(design, {
-    shipyardLevel: 99,
-    engineeringLevel: 99,
-    researchedTechs: ['all'],
-  });
+  // Валидность — вызывает validateShip с ctx (по умолчанию PERMISSIVE_CTX).
+  const validation = validateShip(design, ctx);
   stats.isValid = validation.valid;
   stats.errors = validation.errors;
 
@@ -295,7 +328,7 @@ export function calculateDesignStats(design: ShipDesign): DesignStats {
  */
 export function validateShip(
   design: ShipDesign,
-  ctx: { shipyardLevel: number; engineeringLevel: number; researchedTechs: string[] },
+  ctx: DesignValidationCtx,
 ): { valid: boolean; errors: string[] } {
   const errors: string[] = [];
 
