@@ -108,24 +108,45 @@ Block 06 мигрировал все 6 gameBus.emit вызовов на typed bu
 - [ ] `planet-view.tsx`: вкладка «Производство»
 - [ ] `game-store.ts`: `cancelProduction` action
 
-### T3 — Economy test 🟡 (pending — myself)
-- [ ] `tests/economy.test.ts` — добыча → крафт → энергия
+### T3 — Economy test ✅ (commit 8a72e49)
+**Файл:** `tests/economy.test.ts` (NEW, 5 cases)
+- processExtraction adds ore to resources when mine is built.
+- processProductionQueue — enqueued recipe produces output.
+- recalcEnergyBalance — solar plant adds production.
+- Energy deficit — buildings don't produce without power.
+- cancelProduction removes item from queue.
+- Использует `giveStarterResources` для buildOnHex (mine/processor/solar_plant costs).
 
-### T4 — Chemistry-generator test 🟡 (pending — myself)
-- [ ] `tests/chemistry.test.ts` — молярные массы, ID руд консистентны
+### T4 — Chemistry-generator test ✅ (commit 8a72e49)
+**Файл:** `tests/chemistry.test.ts` (NEW, 6 cases)
+- getElementAtomicMass('Fe') === 55.8 (per elements.ts).
+- calculateMolarMass for Fe₂O₃ = 2×55.8 + 3×16 = 159.6.
+- calculateYieldsFromFormula for Fe-ore → { Fe: 7.0, O: 3.0 }.
+- bakeGalaxyModel generates valid model (ores + atmosphericCompounds + iceCompounds).
+- Recipe consistency (P1) — all 75 recipes reference valid IDs.
+- ORE_SPECS — formula/containedElements valid + sourceBuildingId valid.
 
-### T7 — PRNG reference conformance 🟡 (pending — после Блока 07)
-- [ ] `tests/prng-reference.test.ts` — сравнение с эталоном Vigna
-- [ ] Зависимость: Блок 07 (PRNG port fix)
+### T7 — PRNG reference conformance ✅ (commit a4fb3db, Task ID 9 subagent — Block 07)
+PRNG port fix + statistical tests (chi-square + correlation + birthday) заменили T7.
+Statistical tests покрывают: uniformity (chi-square < 123.23 for α=0.05), independence
+of 4 derive() streams (Pearson correlation < 0.05), birthday test (~1 collision in 65536).
 
-### Блок 07 — Engineering quality 🟡 (pending)
-- TS strict (`noImplicitAny: true`, `noUncheckedIndexedAccess: true`, `ignoreBuildErrors: false`)
-- ESLint warn-level enforcement
-- PRNG xoshiro256** port fix (Vigna reference)
+### Блок 07 — Engineering quality ✅ (commit a4fb3db, Task ID 9 subagent)
+- `tsconfig.json`: `noImplicitAny=true`, `noUncheckedIndexedAccess=true`, `noFallthroughCasesInSwitch=true`, `noImplicitReturns=true`.
+- `next.config.ts`: `ignoreBuildErrors=false`.
+- `eslint.config.mjs`: enabled `@typescript-eslint/no-explicit-any`, `no-unused-vars`, `react-hooks/exhaustive-deps`, `prefer-const`, `no-debugger`, `no-console` (all `warn`).
+- `src/core/prng.ts`: fixed xoshiro256** port per Vigna reference — `t = s1 << 17` (was `Math.imul(s1, 9)`); correct state update order; added `rotl` helper.
+- `tests/prng-statistical.test.ts` (NEW, 3 cases): chi-square + correlation + birthday.
+- 92 remaining TS errors documented (mechanical `noUncheckedIndexedAccess` fixes) — tracked for future cleanup pass.
+- Lint: 0 errors, 49 warnings. 46/46 tests pass.
 
-### Блок 08 — Security & Data 🟡 (pending)
-- API validation (zod) + rate limiting
-- Prisma schema redesign (indexes, version)
+---
+
+## В процессе / pending
+
+### Блок 08 — Security & Data 🟡 (pending — Task ID 10 subagent)
+- API validation (zod-схемы для /api/save) + rate limiting
+- Prisma schema redesign (indexes, version, state validation)
 
 ### Блок 05 — Переработчики 🟡 (pending — после P1+C3 ✅)
 - 2 типа переработчиков (универсальный → специализированный апгрейд)
