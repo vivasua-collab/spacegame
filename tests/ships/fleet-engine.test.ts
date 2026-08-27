@@ -213,6 +213,17 @@ function makeMockGameState(galaxy: Galaxy = makeMockGalaxy()): GameState {
     shipDesigns: makeMockDesignsMap(),
     shipyardQueues: new Map(),
     ships: makeMockShipsMap(),
+    // Block 03 (R7): researchState required by GameState type — default empty.
+    researchState: {
+      fundamentalLevels: {
+        chemistry: 0, physics: 0, engineering: 0,
+        biology_fund: 0, military_science: 0, xenoarchaeology: 0,
+      },
+      fundamentalRpInvested: {},
+      researched: {},
+      activeSlots: [],
+      totalRpGenerated: 0,
+    },
   };
 }
 

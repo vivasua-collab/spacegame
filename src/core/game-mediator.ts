@@ -25,6 +25,7 @@ import { generateGalaxy, type GalaxyGenConfig } from '@/galaxy';
 import { bakeGalaxyModel } from '@/data/chemistry-generator';
 import { ELEMENTS } from '@/data/elements';
 import { setCurrentLookups } from '@/data/baked-lookups';
+import { createDefaultResearchState } from '@/research/engine';
 
 export class GameMediator {
   readonly bus: TypedEventBus;
@@ -82,6 +83,8 @@ export class GameMediator {
       shipyardQueues: new Map(),
       // Block 02 (F3, F7): пустой Map для runtime-кораблей
       ships: new Map(),
+      // Block 03 (R7): дефолтное состояние исследований (все ветки 0)
+      researchState: createDefaultResearchState(),
     };
 
     // Установить lookup для baked model

@@ -718,4 +718,115 @@ export interface GameState {
   // Block 02 (F3, F7): runtime-корабли игрока. Key — ship.id.
   // Map для O(1) lookup по id (для fleet-view, ship-card UI, ship lookup из fleet.shipIds).
   ships: Map<EntityId, Ship>;
+  // Block 03 (R7): состояние исследований — фундаментальные ветки,
+  // специализированные techs, активные слоты очереди, монотонный счётчик RP.
+  researchState: ResearchState;
+}
+
+// ============ Block 03 (R1): Исследования ============
+
+/** Специализированная ветка исследований (6 веток по 12 техн — в MVP 5/6). */
+export type SpecializedBranchId =
+  | 'power'
+  | 'materials'
+  | 'weapons'
+  | 'computing'
+  | 'biology'
+  | 'xenoarch';
+
+/** Фундаментальная ветка исследований (5 в MVP; 6-я xenoarchaeology — Etap 4). */
+export type FundamentalBranchId =
+  | 'chemistry'
+  | 'physics'
+  | 'engineering'
+  | 'biology_fund'
+  | 'military_science'
+  | 'xenoarchaeology';
+
+/** Тип связи фундаментал ↔ специализированная ветка (research-unification.md §7). */
+export type BranchLinkType = 'primary' | 'secondary' | 'partial';
+
+/** Тип улучшения технологии за уровень (60-research.md §4). */
+export type TechImprovementType = 'linear' | 'progressive' | 'threshold' | 'diminishing';
+
+/** Связь фундаментальной ветки со специализированной (research-unification.md §7). */
+export interface BranchLink {
+  fundamentalId: FundamentalBranchId;
+  specializedId: SpecializedBranchId;
+  linkType: BranchLinkType;
+}
+
+/** Фундаментальная ветка исследований (docs/00-ARCHITECTURE.md §3.2.1). */
+export interface FundamentalBranch {
+  id: FundamentalBranchId;
+  name: string;
+  nameEn: string;
+  description: string;
+  baseCost: number;
+  maxLevel: number;
+}
+
+/** Преквизит технологии: другая технология должна быть изучена до minLevel. */
+export interface Prerequisite {
+  techId: string;
+  minLevel: number;
+}
+
+/** Эффект технологии на другую систему (60-research.md §9.1). */
+export interface TechEffect {
+  target: string;
+  operation: 'multiply' | 'add' | 'unlock';
+  value: number;
+  perLevel: boolean;
+  thresholdLevel?: number;
+}
+
+/** Специализированная технология (15 в MVP, всего 72 в Etap 4). */
+export interface Technology {
+  id: string;
+  name: string;
+  nameEn: string;
+  branch: SpecializedBranchId;
+  baseCost: number;
+  maxLevel: number;
+  improvementType: TechImprovementType;
+  improvementPerLevel: number;
+  prerequisites: Prerequisite[];
+  effects: TechEffect[];
+  description: string;
+  icon: string;
+  sortOrder: number;
+}
+
+/**
+ * Активный слот исследования: одна технология в очереди с аллокацией RP.
+ * rpInvested — сколько RP уже вложено в текущий targetLevel.
+ */
+export interface ResearchSlot {
+  slotId: string;
+  techId: string;
+  targetLevel: number;
+  allocationPercent: number;
+  rpInvested: number;
+}
+
+/**
+ * Block 03 (R7): состояние исследований.
+ *
+ * - fundamentalLevels — уровень каждой фундаментальной ветки (0..10).
+ * - fundamentalRpInvested — сколько RP уже вложено в каждую ветку.
+ * - researched — карта techId → текущий уровень (0 = не изучена).
+ * - activeSlots — активные слоты очереди (не более getMaxResearchSlots).
+ * - totalRpGenerated — монотонный счётчик для отладки.
+ *
+ * Используем Record/Partial вместо Map для нативной JSON-сериализации
+ * (без Array.from(entries)). T-R8 (serialization round-trip) работает
+ * «из коробки» — нет нужды конвертировать в массив пар.
+ */
+export interface ResearchState {
+  fundamentalLevels: Record<FundamentalBranchId, number>;
+  fundamentalRpInvested: Partial<Record<FundamentalBranchId, number>>;
+  researched: Record<string, number>;
+  activeSlots: ResearchSlot[];
+  totalRpGenerated: number;
 }
