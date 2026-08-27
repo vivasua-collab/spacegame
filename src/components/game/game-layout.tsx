@@ -8,6 +8,7 @@ import { PlanetView } from './planet-view';
 import { TimeControls } from './time-controls';
 import { ShipDesigner } from './ship-designer';
 import { FleetView } from './fleet-view';
+import { ResearchView } from './research-view'; // Block 03 R6
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import {
@@ -36,6 +37,7 @@ import {
   Globe,
   Wrench,
   Ship,
+  FlaskConical,
 } from 'lucide-react';
 
 export function GameLayout() {
@@ -149,6 +151,18 @@ export function GameLayout() {
           <Ship className="size-3 mr-1" />
           Флоты
         </Button>
+
+        {/* Block 03 (R6): Исследования — кнопка в верхнем меню */}
+        <Button
+          variant="ghost"
+          size="sm"
+          className={`h-7 text-xs ${view === 'research' ? 'text-cyan-300' : 'text-slate-400 hover:text-white'}`}
+          onClick={() => setView('research')}
+          aria-label="Исследования"
+        >
+          <FlaskConical className="size-3 mr-1" />
+          Исследования
+        </Button>
       </header>
 
       {/* Colonization banner */}
@@ -235,6 +249,7 @@ export function GameLayout() {
           {view === 'planet' && <PlanetView />}
           {view === 'ship-designer' && <ShipDesigner />}
           {view === 'fleet' && <FleetView />}
+          {view === 'research' && <ResearchView />}
         </main>
       </div>
 

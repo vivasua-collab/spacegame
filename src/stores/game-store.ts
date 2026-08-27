@@ -19,7 +19,7 @@
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import { produce } from 'immer';
-import type { GameState, GameTime, GameSpeed, GamePhase, Galaxy, StarSystem, Planet, EntityId, ProductionQueue, ColonyRole, WarehouseSpecialization } from '@/core/types';
+import type { GameState, GameSpeed, StarSystem, Planet, EntityId, ProductionQueue, ColonyRole, WarehouseSpecialization } from '@/core/types';
 import '@/core/immer-setup'; // Block 01 P2: enableMapSet + setAutoFreeze(false)
 import { getGameMediator } from '@/core/game-mediator';
 import { applyColonyRole, calculateWarehouseCapacity, calculateWarehouseCapacities, canStoreResource, getOrbitBufferUsed } from '@/data/warehouse';
@@ -43,10 +43,36 @@ import {
   getLooseShips as getLooseShipsFn,
 } from '@/ships/fleet-engine'; // Block 02 F3
 import { executeOrder as executeOrderFn } from '@/ships/orders'; // Block 02 F4
+import {
+  TECH_MAP as TECH_MAP_FN,
+  FUNDAMENTAL_BRANCH_MAP as FUNDAMENTAL_BRANCH_MAP_FN,
+  createResearchSlot as createResearchSlotFn,
+  canStartResearch as canStartResearchFn,
+  getTechCost as getTechCostFn,
+} from '@/research'; // Block 03 R6/R7 — research engine helpers
+import type { ResearchState } from '@/core/types';
+
+/**
+ * Block 03 (R7): детерминированный счётчик ID слотов исследований.
+ * Аналог shipyardItemCounter из Phase 2.3 — без Math.random.
+ */
+let researchSlotCounter = 0;
+
+/**
+ * Block 03 (R7): helper — сумма RP, вложенных во все фундаментальные ветки.
+ * Используется в levelUpFundamental для подсчёта доступного банка RP.
+ */
+function sumFundamentalRpInvested(rs: ResearchState): number {
+  let sum = 0;
+  for (const v of Object.values(rs.fundamentalRpInvested)) {
+    sum += v ?? 0;
+  }
+  return sum;
+}
 
 // ============ Типы стора ============
 
-export type GameView = 'galaxy' | 'system' | 'planet' | 'ship-designer' | 'fleet';
+export type GameView = 'galaxy' | 'system' | 'planet' | 'ship-designer' | 'fleet' | 'research';
 
 /**
  * Block 02 (F2): детерминированный счётчик ID дизайнов кораблей.
@@ -180,6 +206,20 @@ export interface GameStore {
   cancelFleetOrder: (fleetId: string) => boolean;
   /** Block 02 (F7): выбрать флот (для контекстного меню galaxy-map). */
   selectFleet: (fleetId: EntityId | null) => void;
+
+  // ─── Block 03 (R6/R7): Исследования ─────────────────────
+  /** Поставить технологию в очередь исследований. Возвращает slotId или null. */
+  startResearch: (techId: string, targetLevel: number) => string | null;
+  /** Отменить слот исследований (списать rpInvested). */
+  cancelResearch: (slotId: string) => boolean;
+  /** Изменить аллокацию слота (5..100). */
+  setAllocation: (slotId: string, percent: number) => boolean;
+  /** Поднять фундаментальную ветку (если хватает RP в invested-пуле). */
+  levelUpFundamental: (branchId: import('@/core/types').FundamentalBranchId) => boolean;
+  /** Распределить аллокации поровну между всеми активными слотами. */
+  autoAllocateSlots: () => void;
+  /** Получить текущее ResearchState (sync lookup). */
+  getResearchState: () => import('@/core/types').ResearchState | null;
 
   // Утилиты
   getSystem: (id: EntityId) => StarSystem | undefined;
@@ -1199,6 +1239,136 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
     // отдать приказ перемещения при right-click на систему.
     selectFleet: (fleetId) => {
       set({ selectedFleetId: fleetId });
+    },
+
+    // ─── Block 03 (R6/R7): Исследования ─────────────────────────────
+    // Pattern: direct immer mutation (как cancelProduction в Phase 2.4 —
+    // простые mutations на game-state не требуют mediator round-trip).
+    // Tick processing (RP accumulation) — в Phase 3.7 ResearchModule через
+    // mediator + immer.produce (как EconomyModule).
+    startResearch: (techId, targetLevel) => {
+      let slotId: string | null = null;
+      set((state) => {
+        if (!state.gameState) return;
+        const rs = state.gameState.researchState;
+        // Validation через canStartResearch:
+        // 1. Подсчитать totalLabCount по всем колонизированным планетам.
+        //    Для упрощения MVP — считаем все планеты с owner != null.
+        //    (Phase 3.7 ResearchModule будет кэшировать totalRPPerSec.)
+        const planets = state.gameState.galaxy.systems
+          .flatMap((s) => s.planets)
+          .filter((p) => p.owner != null);
+        const labCount = planets.reduce((acc, p) => {
+          let n = 0;
+          for (const h of p.hexes) if (h.buildingId === 'laboratory') n++;
+          for (const s of p.atmosphericSlots) if (s.buildingId === 'laboratory') n++;
+          for (const s of p.orbitSlots) if (s.buildingId === 'laboratory') n++;
+          return acc + n;
+        }, 0);
+        // 2. Найти технологию в TECH_MAP.
+        const tech = TECH_MAP_FN.get(techId);
+        if (!tech) return;
+        // 3. canStartResearch — composite check.
+        const check = canStartResearchFn(tech, targetLevel, rs, labCount);
+        if (!check.ok) return;
+        // 4. Создать слот.
+        slotId = `slot_${state.gameState.time.tick}_${researchSlotCounter++}`;
+        const newSlot = createResearchSlotFn(slotId, techId, targetLevel, 100);
+        // 5. Auto-allocate поровну если добавили второй+ слот.
+        if (rs.activeSlots.length === 0) {
+          newSlot.allocationPercent = 100; // first slot gets 100%
+        } else {
+          // Split equally — divide 100% across all (existing + new) slots.
+          const totalSlots = rs.activeSlots.length + 1;
+          const equal = Math.max(5, Math.floor(100 / totalSlots));
+          for (const s of rs.activeSlots) {
+            s.allocationPercent = equal;
+          }
+          newSlot.allocationPercent = 100 - equal * rs.activeSlots.length;
+          if (newSlot.allocationPercent < 5) newSlot.allocationPercent = 5;
+        }
+        rs.activeSlots.push(newSlot);
+      });
+      return slotId;
+    },
+
+    cancelResearch: (slotId) => {
+      let ok = false;
+      set((state) => {
+        if (!state.gameState) return;
+        const rs = state.gameState.researchState;
+        const idx = rs.activeSlots.findIndex((s) => s.slotId === slotId);
+        if (idx === -1) return;
+        rs.activeSlots.splice(idx, 1);
+        // Re-balance allocation of remaining slots (split 100% across all).
+        if (rs.activeSlots.length === 1) {
+          rs.activeSlots[0]!.allocationPercent = 100;
+        } else if (rs.activeSlots.length > 1) {
+          const equal = Math.max(5, Math.floor(100 / rs.activeSlots.length));
+          for (const s of rs.activeSlots) s.allocationPercent = equal;
+        }
+        ok = true;
+      });
+      return ok;
+    },
+
+    setAllocation: (slotId, percent) => {
+      let ok = false;
+      set((state) => {
+        if (!state.gameState) return;
+        const rs = state.gameState.researchState;
+        const slot = rs.activeSlots.find((s) => s.slotId === slotId);
+        if (!slot) return;
+        // Clamp to [5, 100]
+        slot.allocationPercent = Math.max(5, Math.min(100, percent));
+        ok = true;
+      });
+      return ok;
+    },
+
+    levelUpFundamental: (branchId) => {
+      let ok = false;
+      set((state) => {
+        if (!state.gameState) return;
+        const rs = state.gameState.researchState;
+        const currentLevel = rs.fundamentalLevels[branchId] ?? 0;
+        const branchDef = FUNDAMENTAL_BRANCH_MAP_FN.get(branchId);
+        if (!branchDef) return;
+        if (currentLevel >= branchDef.maxLevel) return;
+        // Cost = floor(baseCost × 1.5^currentLevel) — same formula as techs.
+        const cost = getTechCostFn(branchDef.baseCost, currentLevel + 1);
+        // Check available RP: use totalRpGenerated as the "bank".
+        // (MVP simplification — Phase 3.7 ResearchModule will handle RP accrual
+        //  into a separate "available RP" field, with proper accounting.)
+        const available = rs.totalRpGenerated - sumFundamentalRpInvested(rs);
+        if (available < cost) return;
+        rs.fundamentalLevels[branchId] = currentLevel + 1;
+        rs.fundamentalRpInvested[branchId] = (rs.fundamentalRpInvested[branchId] ?? 0) + cost;
+        ok = true;
+      });
+      return ok;
+    },
+
+    autoAllocateSlots: () => {
+      set((state) => {
+        if (!state.gameState) return;
+        const rs = state.gameState.researchState;
+        if (rs.activeSlots.length === 0) return;
+        if (rs.activeSlots.length === 1) {
+          rs.activeSlots[0]!.allocationPercent = 100;
+          return;
+        }
+        const equal = Math.max(5, Math.floor(100 / rs.activeSlots.length));
+        for (const s of rs.activeSlots) s.allocationPercent = equal;
+        // Give the remainder to the last slot
+        const sumSoFar = equal * rs.activeSlots.length;
+        rs.activeSlots[rs.activeSlots.length - 1]!.allocationPercent += 100 - sumSoFar;
+      });
+    },
+
+    getResearchState: () => {
+      const { gameState } = get();
+      return gameState?.researchState ?? null;
     },
   };
 }));
