@@ -99,8 +99,8 @@ describe('Block 01 T3: Economy — extraction → production → energy', () => 
     // Build a mine on the hex (it has Fe-ore deposit).
     const built = buildOnHex(planet, 0, 'mine');
     expect(built).toBe(true);
-    expect(planet.hexes[0].buildingId).toBe('mine');
-    expect(planet.hexes[0].buildingLevel).toBe(1);
+    expect(planet.hexes[0]!.buildingId).toBe('mine');
+    expect(planet.hexes[0]!.buildingLevel).toBe(1);
 
     // Run 100 ticks — extraction accumulates.
     for (let i = 0; i < 100; i++) {
@@ -218,7 +218,7 @@ describe('Block 01 T3: Economy — extraction → production → energy', () => 
     expect(queue).toBeDefined();
     expect(queue!.items.length).toBe(1);
 
-    const itemId = queue!.items[0].id;
+    const itemId = queue!.items[0]!.id;
     // Cancel it.
     const cancelled = cancelProduction(planet, queues, itemId);
     expect(cancelled).toBe(true);

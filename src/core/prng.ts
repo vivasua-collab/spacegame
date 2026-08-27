@@ -26,17 +26,36 @@ export class Xoshiro256 {
 
   nextU32(): number {
     const [s0, s1, s2, s3] = this.state;
-    const result = Math.imul(s1, 5);
-    const rot = (result << 7) | (result >>> 25);
-    const t = Math.imul(s1, 9);
 
-    this.state = [
-      s0 ^ s3 ^ t,
-      s0 ^ t,
-      s2 ^ s0,
-      s3 ^ s2,
-    ];
-    return (rot * 9) >>> 0;
+    // Output scrambling (Vigna xoshiro256** output function):
+    //   result = rotl(s1 * 5, 7) * 9
+    const result = Math.imul(this.rotl(Math.imul(s1, 5), 7), 9);
+
+    // State update (Vigna reference, Blackman & Vigna 2018, ACM TOMS):
+    //   const uint64_t t = s[1] << 17;
+    //   s[2] ^= s[0];
+    //   s[3] ^= s[1];
+    //   s[1] ^= s[2];
+    //   s[0] ^= s[3];
+    //   s[2] ^= t;
+    //   s[3] = rotl(s[3], 45);
+    const t = s1 << 17;
+
+    // In-place order matters — each step uses the result of the previous.
+    const ns2 = (s2 ^ s0) >>> 0;          // s[2] ^= s[0]
+    const ns3 = (s3 ^ s1) >>> 0;          // s[3] ^= s[1]   (uses original s1)
+    const ns1 = (s1 ^ ns2) >>> 0;         // s[1] ^= s[2]   (uses new s2)
+    const ns0 = (s0 ^ ns3) >>> 0;         // s[0] ^= s[3]   (uses new s3)
+    const finalS2 = (ns2 ^ t) >>> 0;     // s[2] ^= t      (uses new s2 ^ t)
+    const finalS3 = this.rotl(ns3, 45);   // s[3] = rotl(s[3], 45)
+
+    this.state = [ns0, ns1, finalS2, finalS3];
+    return result >>> 0;  // unsigned
+  }
+
+  /** 32-bit left-rotation: (x << k) | (x >>> (32 - k)) */
+  private rotl(x: number, k: number): number {
+    return ((x << k) | (x >>> (32 - k))) >>> 0;
   }
 
   nextFloat(): number {
@@ -48,7 +67,16 @@ export class Xoshiro256 {
   }
 
   nextChoice<T>(arr: readonly T[]): T {
-    return arr[Math.floor(this.nextFloat() * arr.length)];
+    if (arr.length === 0) {
+      throw new Error('nextChoice: array must not be empty');
+    }
+    const idx = Math.floor(this.nextFloat() * arr.length);
+    // noUncheckedIndexedAccess — guard against undefined.
+    const v = arr[idx];
+    if (v === undefined) {
+      throw new Error(`nextChoice: index ${idx} out of range [0, ${arr.length})`);
+    }
+    return v;
   }
 
   nextBool(probability = 0.5): boolean {
@@ -125,13 +153,26 @@ export class Xoshiro256 {
   }
 
   weightedChoice<T>(items: readonly T[], weights: readonly number[]): T {
+    if (items.length === 0) {
+      throw new Error('weightedChoice: items array must not be empty');
+    }
     const total = weights.reduce((a, b) => a + b, 0);
     let r = this.nextFloat() * total;
     for (let i = 0; i < items.length; i++) {
-      r -= weights[i];
-      if (r <= 0) return items[i];
+      const w = weights[i];
+      if (w !== undefined) r -= w;
+      // Guard against the (rare) case where r <= 0 after subtracting weight i.
+      if (r <= 0) {
+        const v = items[i];
+        if (v !== undefined) return v;
+      }
     }
-    return items[items.length - 1];
+    // Fallback to last item — guarded against undefined (length checked above).
+    const last = items[items.length - 1];
+    if (last === undefined) {
+      throw new Error('weightedChoice: last item undefined (empty array?)');
+    }
+    return last;
   }
 
   /** Gauss distribution (Box-Muller) */

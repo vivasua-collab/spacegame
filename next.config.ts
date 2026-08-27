@@ -4,7 +4,9 @@ const nextConfig: NextConfig = {
   output: "standalone",
   /* config options here */
   typescript: {
-    ignoreBuildErrors: true,
+    // Block 07: enforce TS strict mode at build time — surface type errors
+    // instead of silently letting them through to production runtime.
+    ignoreBuildErrors: false,
   },
   reactStrictMode: false,
   allowedDevOrigins: [

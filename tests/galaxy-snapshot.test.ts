@@ -32,12 +32,16 @@ import type { Galaxy, StarSystem, EntityId } from '@/core/types';
 
 /**
  * Snapshot: sorted unique star types observed for seed=42, DEFAULT_CONFIG
- * (systemCount=500). Snapshot taken 2026-08-27 against the current
- * xoshiro256** port; see file-header NOTE for breakage policy.
+ * (systemCount=500). Re-recorded 2026-08-27 against the corrected
+ * xoshiro256** port (Block 07 fix); see file-header NOTE for breakage
+ * policy. The set now includes STAR_BH (black hole) — the corrected PRNG
+ * state-update sequence shifts the seed=42 galaxy just enough that one
+ * star lands on the BH branch of the star-type table.
  */
 const EXPECTED_STAR_TYPES = [
   'STAR_A',
   'STAR_B',
+  'STAR_BH',
   'STAR_F',
   'STAR_G',
   'STAR_K',
@@ -97,7 +101,11 @@ describe('Block 01 T2: Galaxy snapshot', () => {
 
     // Assert 2: all systems reachable from systems[0] via BFS through JPs.
     expect(g.systems.length).toBeGreaterThan(0);
-    const reachable = bfsReachable(g.systems, g.systems[0].id);
+    // noUncheckedIndexedAccess: systems[0] is StarSystem | undefined; we
+    // asserted length > 0 above so the runtime guard is enough — but TS
+    // can't see through the assertion. Use a non-null assertion.
+    const firstSystem = g.systems[0]!;
+    const reachable = bfsReachable(g.systems, firstSystem.id);
     expect(reachable.size).toBe(g.systems.length);
 
     // Assert 3: inline snapshot — star type set matches the expected list.
@@ -132,13 +140,17 @@ describe('Block 01 T2: Galaxy snapshot', () => {
     // Test connectivity from systems[0] (the seed system). Per
     // `ensureConnectivity` (src/galaxy/generate-jump-points.ts), every
     // system must be reachable from systems[0] after generation.
-    const reachable0 = bfsReachable(g.systems, g.systems[0].id);
+    // noUncheckedIndexedAccess: array indexing returns T | undefined;
+    // length=50 guarantees systems[0] exists at runtime. Use non-null
+    // assertions after the length checks.
+    const startSystem = g.systems[0]!;
+    const reachable0 = bfsReachable(g.systems, startSystem.id);
     expect(reachable0.size).toBe(g.systems.length);
 
     // Stronger: pick a mid-graph system and verify it also reaches all
     // others (the graph is undirected — JPs are bidirectional — so any
     // starting node should see the full component).
-    const mid = g.systems[Math.floor(g.systems.length / 2)];
+    const mid = g.systems[Math.floor(g.systems.length / 2)]!;
     const reachableMid = bfsReachable(g.systems, mid.id);
     expect(reachableMid.size).toBe(g.systems.length);
   });

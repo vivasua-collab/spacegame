@@ -53,7 +53,14 @@ function selectCompanionStar(primaryDef: typeof STAR_TYPES[0], rng: Xoshiro256):
       return rng.weightedChoice(MAIN_SEQUENCE_STAR_TYPES, MAIN_SEQUENCE_STAR_WEIGHTS);
     }
     const companionIdx = Math.max(0, Math.min(MAIN_SEQUENCE_STAR_TYPES.length - 1, currentIdx + rng.nextInt(0, 1)));
-    return MAIN_SEQUENCE_STAR_TYPES[companionIdx];
+    // noUncheckedIndexedAccess — guard against undefined (Math.max/min above
+    // guarantee idx is in [0, length-1], so this is always defined, but TS
+    // can't see it through the arithmetic).
+    const companion = MAIN_SEQUENCE_STAR_TYPES[companionIdx];
+    if (companion !== undefined) return companion;
+    // Unreachable: companionIdx is clamped to [0, length-1]. Fall back to the
+    // primary def to keep the type happy (this branch is dead code).
+    return primaryDef;
   }
   return rng.weightedChoice(MAIN_SEQUENCE_STAR_TYPES, MAIN_SEQUENCE_STAR_WEIGHTS);
 }

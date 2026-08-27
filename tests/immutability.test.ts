@@ -28,7 +28,11 @@ import type { EntityId, GameState, Planet } from '@/core/types';
 
 /**
  * Создать свежий медиатор с зарегистрированными модулями (P2-wired) и новой игрой.
- * Минимальная галактика (1 система) для ускорения тестов.
+ * Минимальная галактика (5 систем) для ускорения тестов.
+ *
+ * Block 07 PRNG port fix note: systemCount=1 with seed=42 now produces a
+ * system with no planets — see `tests/modular-integration.test.ts` for the
+ * same rationale. systemCount=5 yields ≥1 suitable planet for the test.
  */
 function freshMediatorWithGame(): { mediator: GameMediator; state: GameState } {
   const mediator = getGameMediator();
@@ -41,7 +45,7 @@ function freshMediatorWithGame(): { mediator: GameMediator; state: GameState } {
   galaxyModule.setGameStateAccessor(() => mediator.getGameState());
   galaxyModule.setGameStateMutator((s) => mediator.commitState(s));
   mediator.registerAndInit([galaxyModule, economyModule]);
-  const state = mediator.newGame({ seed: 42, systemCount: 1 });
+  const state = mediator.newGame({ seed: 42, systemCount: 5 });
   return { mediator, state };
 }
 
@@ -115,11 +119,11 @@ describe('Block 01 P2: Immutability (T6)', () => {
     // because one of its hexes was mutated).
     const planetAfter = findPlanetById(newState, planetId)!;
     expect(planetAfter).not.toBe(planetBefore);
-    expect(planetAfter.hexes[hexIndex].buildingId).toBe('mine');
+    expect(planetAfter.hexes[hexIndex]!.buildingId).toBe('mine');
 
     // The OLD planet reference is unchanged — proves immutability (the
     // mutation went through the immer draft, not the original object).
-    expect(planetBefore.hexes[hexIndex].buildingId).toBeNull();
+    expect(planetBefore.hexes[hexIndex]!.buildingId).toBeNull();
   });
 
   test('After mediator.tick(), galaxy.systems array reference changes', () => {
@@ -147,8 +151,8 @@ describe('Block 01 P2: Immutability (T6)', () => {
         (h) => !h.buildingId && h.terrain !== 'ocean'
       );
       if (freeHex >= 0) {
-        draftPlanet.hexes[freeHex].buildingId = 'colony_hub';
-        draftPlanet.hexes[freeHex].buildingLevel = 1;
+        draftPlanet.hexes[freeHex]!.buildingId = 'colony_hub';
+        draftPlanet.hexes[freeHex]!.buildingLevel = 1;
       }
       // Initialize warehouse (mimics EconomyModule.onColonize post-processing).
       draftPlanet.warehouse = {
@@ -192,8 +196,10 @@ describe('Block 01 P2: Immutability (T6)', () => {
     const planetsAfter = stateAfter.galaxy.systems.flatMap((s) => s.planets);
     for (let i = 0; i < planetsBefore.length; i++) {
       // At least one planet reference must have changed (the colonized one).
-      if (planetsBefore[i].id === planetId) {
-        expect(planetsAfter[i]).not.toBe(planetsBefore[i]);
+      const beforePlanet = planetsBefore[i]!;
+      const afterPlanet = planetsAfter[i]!;
+      if (beforePlanet.id === planetId) {
+        expect(afterPlanet).not.toBe(beforePlanet);
       }
     }
   });
@@ -227,8 +233,8 @@ describe('Block 01 P2: Immutability (T6)', () => {
         (h) => !h.buildingId && h.terrain !== 'ocean'
       );
       if (freeHex >= 0) {
-        draftPlanet.hexes[freeHex].buildingId = 'colony_hub';
-        draftPlanet.hexes[freeHex].buildingLevel = 1;
+        draftPlanet.hexes[freeHex]!.buildingId = 'colony_hub';
+        draftPlanet.hexes[freeHex]!.buildingLevel = 1;
       }
       draftPlanet.warehouse = {
         totalCapacity: 1000,
@@ -288,8 +294,8 @@ describe('Block 01 P2: Immutability (T6)', () => {
     // The captured tick values are monotonically non-decreasing — proves
     // the snapshots are real different states (not the same object with
     // a mutated field).
-    const firstTick = emittedTicks[0];
-    const lastTick = emittedTicks[emittedTicks.length - 1];
+    const firstTick = emittedTicks[0]!;
+    const lastTick = emittedTicks[emittedTicks.length - 1]!;
     expect(lastTick).toBeGreaterThan(firstTick);
   });
 });

@@ -99,7 +99,9 @@ export function generateGalaxy(config: Partial<GalaxyGenConfig> = {}): Galaxy {
 
   // 3. Генерация систем
   for (let i = 0; i < positions.length; i++) {
+    // noUncheckedIndexedAccess: positions[i] possibly undefined; length check above.
     const pos = positions[i];
+    if (!pos) continue;
     const systemRng = mainRng.derive(`system_${i}`);
     const system = generateSystem(pos, i, systemRng, cfg);
     systems.push(system);
@@ -114,7 +116,9 @@ export function generateGalaxy(config: Partial<GalaxyGenConfig> = {}): Galaxy {
 
   // 6. Стартовая система открыта
   if (systems.length > 0) {
-    systems[0].discovered = true;
+    // noUncheckedIndexedAccess: length-checked above, but TS can't see it.
+    const startSystem = systems[0];
+    if (startSystem) startSystem.discovered = true;
   }
 
   return {

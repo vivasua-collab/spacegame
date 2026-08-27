@@ -60,8 +60,10 @@ console.log('══════════════════════�
 const n = firstFloats.length - 1;
 let sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0, sumY2 = 0;
 for (let i = 0; i < n; i++) {
-  const x = firstFloats[i];
-  const y = firstFloats[i + 1];
+  // noUncheckedIndexedAccess: array indexing returns T | undefined.
+  // Length-checked by loop bound; non-null assertions safe here.
+  const x = firstFloats[i]!;
+  const y = firstFloats[i + 1]!;
   sumX += x;
   sumY += y;
   sumXY += x * y;
@@ -98,7 +100,10 @@ let minBitDiff = 32;
 let maxBitDiff = 0;
 let totalBitDiff = 0;
 for (let i = 0; i < N - 1; i++) {
-  const xor = seeds[i] ^ seeds[i + 1];
+  // noUncheckedIndexedAccess: loop bound guarantees indexes valid.
+  const a = seeds[i]!;
+  const b = seeds[i + 1]!;
+  const xor = a ^ b;
   const bitDiff = popcount(xor);
   minBitDiff = Math.min(minBitDiff, bitDiff);
   maxBitDiff = Math.max(maxBitDiff, bitDiff);
@@ -139,14 +144,19 @@ let namePairsOk = true;
 const nameEntries = [...nameOutputs.entries()];
 for (let i = 0; i < nameEntries.length; i++) {
   for (let j = i + 1; j < nameEntries.length; j++) {
-    const [name1, val1] = nameEntries[i];
-    const [name2, val2] = nameEntries[j];
+    // noUncheckedIndexedAccess: nameEntries[i]/[j] possibly undefined.
+    const entry1 = nameEntries[i]!;
+    const entry2 = nameEntries[j]!;
+    const [name1, val1] = entry1;
+    const [name2, val2] = entry2;
     if (val1 === val2) {
       console.log(`  ❌ COLLISION: ${name1} and ${name2} produce same output!`);
       namePairsOk = false;
     }
   }
-  console.log(`  ${nameEntries[i][0].padEnd(15)} → ${nameEntries[i][1] >>> 0}`);
+  // noUncheckedIndexedAccess: nameEntries[i] possibly undefined.
+  const entry = nameEntries[i]!;
+  console.log(`  ${entry[0].padEnd(15)} → ${entry[1] >>> 0}`);
 }
 console.log(`\n  Name independence: ${namePairsOk ? '✅ PASS' : '❌ FAIL — name collisions detected'}`);
 
@@ -173,7 +183,8 @@ const sampleSize = allFloats.length;
 let ksStat = 0;
 for (let i = 0; i < sampleSize; i++) {
   const empirical = (i + 1) / sampleSize;
-  const uniform = allFloats[i];
+  // noUncheckedIndexedAccess: allFloats[i] possibly undefined.
+  const uniform = allFloats[i]!;
   const diff = Math.abs(empirical - uniform);
   ksStat = Math.max(ksStat, diff);
 }

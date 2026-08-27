@@ -1155,7 +1155,15 @@ function buildElementSourcesMap(): Map<string, ElementSource> {
 
   // Собираем ElementSource для каждого элемента
   for (const [elementId, entries] of sourceEntries) {
+    // noUncheckedIndexedAccess: entries[0] possibly undefined when entries is empty.
+    // entries.find(...) returns T | undefined; the `?? entries[0]` fallback is only
+    // reached if no entry has isPrimary=true, but if entries is empty both will be
+    // undefined. Assume non-empty (caller guarantee) and use a non-null assertion.
     const primary = entries.find(e => e.isPrimary) ?? entries[0];
+    if (!primary) {
+      // Empty entries — skip; not a real recovery scenario (callers always pass ≥1).
+      continue;
+    }
     const alternatives = entries.filter(e => e !== primary);
 
     map.set(elementId, {

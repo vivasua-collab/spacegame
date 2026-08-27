@@ -322,8 +322,10 @@ export function bakeGalaxyModel(seed: number, elements: ElementDef[]): BakedGala
     }
 
     // Add element-specific alt ores
-    if (elementToAltOres[element.id]) {
-      for (const altId of elementToAltOres[element.id]) {
+    // noUncheckedIndexedAccess: elementToAltOres[element.id] possibly undefined.
+    const altOreIds = elementToAltOres[element.id];
+    if (altOreIds) {
+      for (const altId of altOreIds) {
         if (!alternativeOreIds.includes(altId)) {
           alternativeOreIds.push(altId);
         }

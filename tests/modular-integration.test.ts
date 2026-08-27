@@ -31,10 +31,15 @@ import type { EntityId, GameState, Planet } from '@/core/types';
 
 /**
  * Создать свежий медиатор с зарегистрированными модулями и новой игрой.
- * Минимальная галактика (1 система) для ускорения тестов.
+ * Минимальная галактика (5 систем) для ускорения тестов.
  *
  * Block 01 P2: also wires up setGameStateMutator — without it, EconomyModule's
  * produce()-based mutations wouldn't be committed back to the mediator.
+ *
+ * Block 07 PRNG port fix note: systemCount=1 with seed=42 now produces a
+ * system with no planets (the corrected xoshiro256** state-update shifts
+ * the per-system planet count roll below 1). systemCount=5 yields ≥1
+ * suitable planet on the seed-42 galaxy — verified by `findFirstPlanet`.
  */
 function freshMediatorWithGame(): { mediator: GameMediator; state: GameState } {
   const mediator = getGameMediator();
@@ -45,7 +50,7 @@ function freshMediatorWithGame(): { mediator: GameMediator; state: GameState } {
   galaxyModule.setGameStateAccessor(() => mediator.getGameState());
   galaxyModule.setGameStateMutator((s) => mediator.commitState(s));
   mediator.registerAndInit([galaxyModule, economyModule]);
-  const state = mediator.newGame({ seed: 42, systemCount: 1 });
+  const state = mediator.newGame({ seed: 42, systemCount: 5 });
   return { mediator, state };
 }
 
@@ -141,10 +146,10 @@ describe('Block 06: modular-bus integration', () => {
     const newState = mediator.getGameState()!;
     const newPlanet = findPlanetById(newState, planet.id)!;
     expect(newPlanet).not.toBe(planet); // reference changed — immer produced a new planet
-    expect(newPlanet.hexes[hexIndex].buildingId).toBe('mine');
-    expect(newPlanet.hexes[hexIndex].buildingLevel).toBe(1);
+    expect(newPlanet.hexes[hexIndex]!.buildingId).toBe('mine');
+    expect(newPlanet.hexes[hexIndex]!.buildingLevel).toBe(1);
     // Old planet (stale ref) is unchanged — proves immutability.
-    expect(planet.hexes[hexIndex].buildingId).toBeNull();
+    expect(planet.hexes[hexIndex]!.buildingId).toBeNull();
   });
 
   test('emit economy:build emits economy:building-constructed + core:state-changed on success', () => {
@@ -182,8 +187,8 @@ describe('Block 06: modular-bus integration', () => {
     const hexIndex = planet.hexes.findIndex(h => !h.buildingId && h.terrain !== 'ocean');
     expect(hexIndex).toBeGreaterThanOrEqual(0);
     engineBuildOnHex(planet, hexIndex, 'mine');
-    expect(planet.hexes[hexIndex].buildingId).toBe('mine');
-    expect(planet.hexes[hexIndex].buildingLevel).toBe(1);
+    expect(planet.hexes[hexIndex]!.buildingId).toBe('mine');
+    expect(planet.hexes[hexIndex]!.buildingLevel).toBe(1);
 
     // Sync the mediator's state reference so EconomyModule.produce() picks up
     // the latest mutation (otherwise it would produce from the pre-build state).
@@ -199,7 +204,7 @@ describe('Block 06: modular-bus integration', () => {
     // immer.produce() — re-fetch the planet from the committed new state.
     const newState = mediator.getGameState()!;
     const newPlanet = findPlanetById(newState, planet.id)!;
-    expect(newPlanet.hexes[hexIndex].buildingLevel).toBe(2);
+    expect(newPlanet.hexes[hexIndex]!.buildingLevel).toBe(2);
   });
 
   test('emit economy:enqueue → EconomyModule.onEnqueue → engine.enqueueProduction', () => {

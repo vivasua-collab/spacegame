@@ -137,15 +137,22 @@ export function getResourceCategory(resourceId: string): string | undefined {
   // Атмосферное соединение?
   const atmo = lookups.atmosphericMap.get(resourceId);
   if (atmo && atmo.containedElements.length > 0) {
-    const firstEl = lookups.elementMap.get(atmo.containedElements[0].elementId);
-    return firstEl?.category;
+    // noUncheckedIndexedAccess: containedElements[0] possibly undefined.
+    const firstContained = atmo.containedElements[0];
+    if (firstContained) {
+      const firstEl = lookups.elementMap.get(firstContained.elementId);
+      return firstEl?.category;
+    }
   }
 
   // Ледяное соединение?
   const ice = lookups.iceMap.get(resourceId);
   if (ice && ice.containedElements.length > 0) {
-    const firstEl = lookups.elementMap.get(ice.containedElements[0].elementId);
-    return firstEl?.category;
+    const firstContained = ice.containedElements[0];
+    if (firstContained) {
+      const firstEl = lookups.elementMap.get(firstContained.elementId);
+      return firstEl?.category;
+    }
   }
 
   // Fallback: strip -ore suffix

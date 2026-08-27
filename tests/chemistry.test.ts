@@ -65,8 +65,11 @@ describe('Block 01 T4: Chemistry-generator — molar masses, yields, consistency
     // ORE_SPECS.Fe.formula = Fe₂O₃ (hematite)
     const feSpec = ORE_SPECS.Fe;
     expect(feSpec).toBeDefined();
-    expect(feSpec.formula).toBeDefined();
-    const yields = calculateYieldsFromFormula(feSpec.formula!, massMap);
+    // noUncheckedIndexedAccess: ORE_SPECS.Fe returns OreSpec | undefined;
+    // the expect(feSpec).toBeDefined() above narrows at runtime but TS can't
+    // see through it. Use a non-null assertion after the explicit check.
+    expect(feSpec!.formula).toBeDefined();
+    const yields = calculateYieldsFromFormula(feSpec!.formula!, massMap);
     // calculateYieldsFromFormula returns ContainedElement[] = [{ elementId, yield }, ...]
     const feYield = yields.find(y => y.elementId === 'Fe');
     const oYield = yields.find(y => y.elementId === 'O');
