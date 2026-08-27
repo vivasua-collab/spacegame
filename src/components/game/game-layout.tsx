@@ -6,6 +6,7 @@ import { GalaxyMap } from './galaxy-map';
 import { SystemView } from './system-view';
 import { PlanetView } from './planet-view';
 import { TimeControls } from './time-controls';
+import { ShipDesigner } from './ship-designer';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import {
@@ -32,6 +33,7 @@ import {
   Loader2,
   Flag,
   Globe,
+  Wrench,
 } from 'lucide-react';
 
 export function GameLayout() {
@@ -121,6 +123,18 @@ export function GameLayout() {
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
+
+        {/* Block 02 (F2): Конструктор кораблей — кнопка в верхнем меню */}
+        <Button
+          variant="ghost"
+          size="sm"
+          className={`h-7 text-xs ${view === 'ship-designer' ? 'text-cyan-300' : 'text-slate-400 hover:text-white'}`}
+          onClick={() => setView('ship-designer')}
+          aria-label="Конструктор кораблей"
+        >
+          <Wrench className="size-3 mr-1" />
+          Дизайнер
+        </Button>
       </header>
 
       {/* Colonization banner */}
@@ -205,6 +219,7 @@ export function GameLayout() {
           </div>
           {view === 'system' && <SystemView />}
           {view === 'planet' && <PlanetView />}
+          {view === 'ship-designer' && <ShipDesigner />}
         </main>
       </div>
 

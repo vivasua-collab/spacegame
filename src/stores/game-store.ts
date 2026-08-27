@@ -34,7 +34,14 @@ import { SerializedGameStateSchema } from '@/lib/schemas/game-state-schema'; // 
 
 // ============ Типы стора ============
 
-export type GameView = 'galaxy' | 'system' | 'planet';
+export type GameView = 'galaxy' | 'system' | 'planet' | 'ship-designer' | 'fleet';
+
+/**
+ * Block 02 (F2): детерминированный счётчик ID дизайнов кораблей.
+ * Аналог productionItemCounter из engine.ts — без Math.random(),
+ * для соблюдения детерминизма игры (Block 07 gap-3).
+ */
+let shipDesignCounter = 0;
 
 export interface SaveInfo {
   id: string;
@@ -98,6 +105,16 @@ export interface GameStore {
   loadGame: (id: string) => Promise<boolean>;
   loadSaveList: () => Promise<SaveInfo[]>;
   deleteSave: (id: string) => Promise<boolean>;
+
+  // ─── Block 02 (F2): Конструктор кораблей ────────────────
+  /** Сохранить дизайн корабля в GameState.shipDesigns. Возвращает id или null. */
+  saveShipDesign: (design: Omit<import('@/core/types').ShipDesign, 'id' | 'createdAtTick'> & { id?: string }) => string | null;
+  /** Удалить дизайн корабля по id. */
+  deleteShipDesign: (id: string) => boolean;
+  /** Получить дизайн по id. */
+  getShipDesign: (id: string) => import('@/core/types').ShipDesign | undefined;
+  /** Список всех дизайнов игрока. */
+  listShipDesigns: () => import('@/core/types').ShipDesign[];
 
   // Утилиты
   getSystem: (id: EntityId) => StarSystem | undefined;
@@ -857,6 +874,49 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
         if (planet) return planet;
       }
       return undefined;
+    },
+
+    // ─── Block 02 (F2): Конструктор кораблей ─────────────────────
+    // Direct immer mutation (no mediator round-trip needed — simple Map addition).
+    saveShipDesign: (design) => {
+      let newId: string | null = null;
+      set((state) => {
+        if (!state.gameState) return;
+        // Block 02: deterministic ID (counter, no Math.random) per Block 07 gap-3.
+        const id = design.id ?? `design_${state.gameState.time.tick}_${shipDesignCounter++}`;
+        newId = id;
+        const designRecord: import('@/core/types').ShipDesign = {
+          id,
+          name: design.name,
+          hullId: design.hullId,
+          armor: design.armor,
+          moduleIds: design.moduleIds.slice(),
+          owner: design.owner,
+          createdAtTick: state.gameState.time.tick,
+        };
+        state.gameState.shipDesigns.set(id, designRecord);
+      });
+      return newId;
+    },
+
+    deleteShipDesign: (id) => {
+      let ok = false;
+      set((state) => {
+        if (!state.gameState) return;
+        ok = state.gameState.shipDesigns.delete(id);
+      });
+      return ok;
+    },
+
+    getShipDesign: (id) => {
+      const { gameState } = get();
+      return gameState?.shipDesigns.get(id);
+    },
+
+    listShipDesigns: () => {
+      const { gameState } = get();
+      if (!gameState) return [];
+      return Array.from(gameState.shipDesigns.values());
     },
   };
 }));

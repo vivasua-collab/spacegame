@@ -234,7 +234,7 @@ export const SHIP_MODULES: ShipModule[] = [
     cost: 25,
     techLevel: 1,
     requiredTechs: [],
-    slotRestriction: 'system',
+    slotRestriction: 'any',
     auxiliaryType: 'cargo',
     capacity: 100, // т груза
   },
@@ -248,7 +248,7 @@ export const SHIP_MODULES: ShipModule[] = [
     cost: 10,
     techLevel: 1,
     requiredTechs: [],
-    slotRestriction: 'system',
+    slotRestriction: 'any',
     auxiliaryType: 'fuel_tank',
     fuelType: 'chemical',
     capacity: 50, // 50 ед. хим. топлива
@@ -263,7 +263,7 @@ export const SHIP_MODULES: ShipModule[] = [
     cost: 20,
     techLevel: 1,
     requiredTechs: [],
-    slotRestriction: 'system',
+    slotRestriction: 'any',
     auxiliaryType: 'fuel_tank',
     fuelType: 'xenon',
     capacity: 100, // 100 ед. ксенона
@@ -278,7 +278,7 @@ export const SHIP_MODULES: ShipModule[] = [
     cost: 18,
     techLevel: 1,
     requiredTechs: [],
-    slotRestriction: 'system',
+    slotRestriction: 'any',
     auxiliaryType: 'fuel_tank',
     fuelType: 'hydrogen',
     capacity: 200, // 200 ед. водорода
@@ -293,7 +293,7 @@ export const SHIP_MODULES: ShipModule[] = [
     cost: 15,
     techLevel: 1,
     requiredTechs: [],
-    slotRestriction: 'system',
+    slotRestriction: 'any',
     auxiliaryType: 'scanner',
     capacity: 200, // 200 а.е. дальность сканирования (в UI можно не использовать)
   },
@@ -307,7 +307,7 @@ export const SHIP_MODULES: ShipModule[] = [
     cost: 80,
     techLevel: 1,
     requiredTechs: [],
-    slotRestriction: 'system',
+    slotRestriction: 'any',
     auxiliaryType: 'jump_drive',
     maxJumpMass: 1500, // прыгает корабль массой до 1500 т
   },
@@ -321,7 +321,7 @@ export const SHIP_MODULES: ShipModule[] = [
     cost: 40,
     techLevel: 1,
     requiredTechs: [],
-    slotRestriction: 'system',
+    slotRestriction: 'any',
     auxiliaryType: 'colony',
     capacity: 1, // 1 использование (тратится при колонизации)
   },
@@ -335,7 +335,7 @@ export const SHIP_MODULES: ShipModule[] = [
     cost: 40,
     techLevel: 1,
     requiredTechs: [],
-    slotRestriction: 'system',
+    slotRestriction: 'any',
     auxiliaryType: 'reactor',
     energyOutput: 50, // МВт; план документация §3.3
   },

@@ -406,6 +406,27 @@ function UpgradeMode({
                   </Button>
                 </>
               )}
+
+              {/* ─── Block 02 (F2): shipyard action buttons ───────────────── */}
+              {existingBuilding.id === 'shipyard' && (
+                <div className="mt-3 pt-3 border-t border-white/10 space-y-2">
+                  <div className="text-xs uppercase tracking-wider text-slate-500">
+                    Верфь
+                  </div>
+                  <Button
+                    variant="outline"
+                    className="w-full border-cyan-400/30 hover:border-cyan-400/60 text-cyan-300"
+                    onClick={() => {
+                      // Close building dialog and navigate to ship designer
+                      onOpenChange(false);
+                      useGameStore.getState().setView('ship-designer');
+                    }}
+                  >
+                    <Wrench className="size-4 mr-2" />
+                    Конструктор кораблей
+                  </Button>
+                </div>
+              )}
             </div>
           </ScrollArea>
         </DialogContent>
