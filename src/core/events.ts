@@ -71,7 +71,16 @@ export interface EconomyEvents {
   'economy:resource-depleted': { planetId: EntityId; elementId: string; hexIndex: number };
   'economy:warehouse-full': { planetId: EntityId };
   'economy:warehouse-updated': { planetId: EntityId; capacity: number; used: number };
-  // ─── Block 05: специализация переработчиков (PR7) ──────────────────
+  // ─── Block 05 PR7: входящие события специализации (store → module) ──
+  /** Инициировать специализацию или откат к universal (store → engine.specializeBuilding). */
+  'economy:specialize': {
+    planetId: EntityId;
+    hexIndex: number;
+    category: ProcessorRecipeCategory | 'universal';
+  };
+  /** Повысить specializationLevel (store → engine.upgradeSpecialization). */
+  'economy:upgrade-specialization': { planetId: EntityId; hexIndex: number };
+  // ─── Block 05 PR7: исходящие события специализации (engine → listeners) ──
   /** Эмитится после specializeBuilding (включая откат к universal). */
   'economy:building-specialized': {
     planetId: EntityId;

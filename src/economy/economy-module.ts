@@ -34,6 +34,8 @@ import {
   enqueueProduction as engineEnqueueProduction,
   colonizePlanet as engineColonizePlanet,
   recalcEnergyBalance,
+  specializeBuilding as engineSpecializeBuilding,
+  upgradeSpecialization as engineUpgradeSpecialization,
 } from './engine';
 import { createDefaultWarehouse, applyColonyRole, calculateWarehouseCapacity, getOrbitBufferCapacity, canStoreResource } from '@/data/warehouse';
 
@@ -53,6 +55,10 @@ export class EconomyModule implements IGameModule {
       'economy:resource-depleted',
       'economy:warehouse-full',
       'economy:warehouse-updated',
+      // Block 05 PR7 — specialization events
+      'economy:building-specialized',
+      'economy:specialization-upgraded',
+      'economy:processor-output-changed',
       'core:state-changed',
     ],
     subscribes: [
@@ -61,6 +67,10 @@ export class EconomyModule implements IGameModule {
       { event: 'economy:upgrade' },
       { event: 'economy:enqueue' },
       { event: 'economy:colonize' },
+      // Block 05 PR7 — specialize/upgrade events (для логирования; основная
+      // обработка идёт через onSpecialize/onUpgrade обработчики ниже)
+      { event: 'economy:specialize' },
+      { event: 'economy:upgrade-specialization' },
     ],
     handlesQueries: [
       { queryName: 'economy:planet-resources', description: 'Ресурсы планеты', requestType: 'EntityId', responseType: 'Record<string, number>' },
@@ -118,6 +128,9 @@ export class EconomyModule implements IGameModule {
       bus.on('economy:upgrade', (p) => this.onUpgrade(p), { label: 'economy' }),
       bus.on('economy:enqueue', (p) => this.onEnqueue(p), { label: 'economy' }),
       bus.on('economy:colonize', (p) => this.onColonize(p), { label: 'economy' }),
+      // Block 05 PR7 — specialization events
+      bus.on('economy:specialize', (p) => this.onSpecialize(p), { label: 'economy' }),
+      bus.on('economy:upgrade-specialization', (p) => this.onUpgradeSpecialization(p), { label: 'economy' }),
     );
 
     // Регистрация обработчиков запросов
@@ -288,6 +301,56 @@ export class EconomyModule implements IGameModule {
         planetId: payload.planetId,
         hexIndex: colonyHubHexIndex,
       });
+    }
+  }
+
+  /**
+   * Block 05 PR7: обработчик economy:specialize.
+   * Оборачивает engine.specializeBuilding в immer.produce() — создаёт новое
+   * иммутабельное состояние с обновлённым hex (processorType/specialization/
+   * specializationLevel/activeRecipes) и списанной/возвращённой стоимостью.
+   *
+   * engine.specializeBuilding сам эмитит economy:building-specialized и
+   * economy:processor-output-changed через gameBus (legacy adapter проксирует
+   * в typedBus) — повторный эмит здесь не нужен.
+   */
+  private onSpecialize(payload: EventPayload<'economy:specialize'>): void {
+    const currentState = this.getGameState?.();
+    if (!currentState) return;
+
+    let success = false;
+    const newState = produce(currentState, (draft) => {
+      const planet = this.findPlanet(draft, payload.planetId);
+      if (!planet) return;
+      const result = engineSpecializeBuilding(planet, payload.hexIndex, payload.category);
+      success = result.success;
+    });
+
+    if (success) {
+      this.commitState?.(newState);
+    }
+  }
+
+  /**
+   * Block 05 PR7: обработчик economy:upgrade-specialization.
+   * Оборачивает engine.upgradeSpecialization в immer.produce().
+   * engine.upgradeSpecialization сам эмитит economy:specialization-upgraded
+   * и economy:processor-output-changed через gameBus.
+   */
+  private onUpgradeSpecialization(payload: EventPayload<'economy:upgrade-specialization'>): void {
+    const currentState = this.getGameState?.();
+    if (!currentState) return;
+
+    let success = false;
+    const newState = produce(currentState, (draft) => {
+      const planet = this.findPlanet(draft, payload.planetId);
+      if (!planet) return;
+      const result = engineUpgradeSpecialization(planet, payload.hexIndex);
+      success = result.success;
+    });
+
+    if (success) {
+      this.commitState?.(newState);
     }
   }
 

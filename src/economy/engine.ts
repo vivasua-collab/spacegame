@@ -415,13 +415,18 @@ export function findProcessorInstance(
  * Block 05 (PR3): расчёт множителя выхода для процессорного здания.
  *
  * Универсальный:
- *   output = base × 0.75 × (1 / sqrt(max(1, activeRecipes)))
+ *   output = base × baseYield × (1 / sqrt(max(1, activeRecipes)))
  *   purity = building.basePurity (по умолчанию 0.78, диапазон 0.70–0.85)
  *
- * Специализированный:
- *   output = base × 1.0 × purityBonus
+ * Специализированный (любое specialized здание — processor после specialize,
+ * или refinery/synthesizer как предельные специализированные формы):
+ *   output = base × 1.0 × purityBonus        // baseYield = 1.0 для specialized
  *   purityBonus = 1.0 + 0.02 × (specializationLevel - 1)   // +0%/+2%/+4%/+6%/+8%
  *   purity = 0.92 + 0.0175 × (specializationLevel - 1)     // 0.92..0.99
+ *
+ * Внимание: для specialized ветки baseYield фиксирован = 1.0 (по плану §11.3),
+ * НЕ building.baseYield (который 0.75 для processor). Это даёт специализированному
+ * processor L1 выход 7.0 × 1.0 × 1.0 = 7.0 ед. (+33% над universal L1 с 1 рецептом).
  *
  * Источник: docs/40-buildings.md §11.3 (формулы переработчиков).
  */
@@ -439,9 +444,11 @@ export function calculateProcessorOutputMultiplier(
     const specLvl = Math.max(1, Math.min(5, instance.specializationLevel ?? 1));
     const purityBonus = 1.0 + 0.02 * (specLvl - 1);       // +0%/+2%/+4%/+6%/+8%
     const purity = 0.92 + 0.0175 * (specLvl - 1);         // 0.92..0.99
-    return { yieldMult: (building.baseYield ?? 1.0) * purityBonus, purity };
+    // baseYield для specialized = 1.0 (фиксированный, по плану §11.3)
+    return { yieldMult: 1.0 * purityBonus, purity };
   }
   // Универсальная ветка (processor без specialization)
+  // building.baseYield: 0.75 для processor (можно тюнить в зданиях).
   const activeCount = Math.max(1, instance.activeRecipes?.length ?? 1);
   const multiPenalty = 1 / Math.sqrt(activeCount);         // 1.0 / 0.707 / 0.577 / 0.5 / 0.447 …
   return {

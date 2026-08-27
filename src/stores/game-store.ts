@@ -29,6 +29,7 @@ import { setCurrentLookups } from '@/data/baked-lookups';
 import { EconomyModule } from '@/economy/economy-module';
 import { GalaxyModule } from '@/galaxy/galaxy-module';
 import { resetProductionItemCounter } from '@/economy/engine';
+import { BUILDING_MAP } from '@/data/buildings'; // Block 05 PR7 — migratePlanet
 import { SerializedGameStateSchema } from '@/lib/schemas/game-state-schema'; // Block 08 gap-9: state validation on deserialize
 
 // ============ Типы стора ============
@@ -74,6 +75,13 @@ export interface GameStore {
   upgradeBuildingOnHex: (planetId: EntityId, hexIndex: number) => boolean;
   enqueueProduction: (planetId: EntityId, recipeId: string, repeat?: boolean) => boolean;
   cancelProduction: (planetId: EntityId, queueItemId: string) => boolean;
+  // Block 05 PR7 — специализация переработчиков
+  specializeBuildingOnHex: (
+    planetId: EntityId,
+    hexIndex: number,
+    category: import('@/core/types').ProcessorRecipeCategory | 'universal',
+  ) => boolean;
+  upgradeSpecializationOnHex: (planetId: EntityId, hexIndex: number) => boolean;
 
   // Колонизация
   colonizePlanet: (planetId: EntityId) => boolean;
@@ -217,12 +225,26 @@ export function deserializeGameState(json: string): GameState {
 
   setCurrentLookups(bakedModel);
 
+  // Block 05 PR7: миграция процессорных зданий в старых сейвах.
+  // У зданий processor/refinery/synthesizer должны быть установлены поля
+  // processorType/specialization/specializationLevel/activeRecipes, если
+  // их не было (старые сохранения до Блока 05). Также добавляется
+  // planet.resourcePurity — пустая карта (заполняется по мере производства).
+  const migratedSystems: StarSystem[] = (systems.length > 0
+    ? systems
+    : Array.from(systemMap.values())) as StarSystem[];
+  for (const system of migratedSystems) {
+    for (const planet of system.planets) {
+      migratePlanet(planet);
+    }
+  }
+
   return {
     ...raw,
     galaxy: {
       ...raw.galaxy,
       systemMap,
-      systems: systems.length > 0 ? systems : Array.from(systemMap.values()),
+      systems: migratedSystems,
       bakedModel,
     },
     productionQueues,
@@ -231,6 +253,73 @@ export function deserializeGameState(json: string): GameState {
       ? raw.time
       : { tick: raw.time?.tick ?? 0, dayInYear: (raw.time?.day ?? 0) % 365, year: raw.time?.year ?? 1 },
   };
+}
+
+/**
+ * Block 05 PR7: миграция полей специализации переработчиков при загрузке
+ * старых сейвов (до Блока 05).
+ *
+ * Для каждого здания processor/refinery/synthesizer:
+ * - Если processorType уже установлен — оставляем как есть.
+ * - Иначе берём defaults из BuildingDef:
+ *   - refinery/synthesizer → specialized с defaultSpecialization
+ *   - processor → universal
+ * - activeRecipes ??= [] (пустой список).
+ *
+ * planet.resourcePurity НЕ добавляется здесь — оно создаётся лениво в
+ * processProductionQueue при первой переработке (`if (!planet.resourcePurity)
+ * planet.resourcePurity = {};`). Это сохраняет deep-equals invariant в
+ * round-trip тестах (новая игра без зданий → serialize → deserialize →
+ * нет изменений в структуре планеты).
+ *
+ * Идемпотентна: повторный вызов на уже-мигрированном сейве — no-op (использует ??=).
+ * Запускать только в loadGame.
+ */
+function migratePlanet(planet: Planet): void {
+  // Surface hexes
+  for (const hex of planet.hexes) {
+    migrateProcessorInstance(hex);
+  }
+  // Atmospheric slots
+  for (const slot of planet.atmosphericSlots) {
+    migrateProcessorInstance(slot);
+  }
+  // Orbit slots
+  for (const slot of planet.orbitSlots) {
+    migrateProcessorInstance(slot);
+  }
+}
+
+/**
+ * Block 05 PR7: миграция одной ячейки здания (HexCell | AtmosphericSlot |
+ * OrbitalSlot). Универсальный интерфейс — все три типа имеют поля
+ * buildingId/buildingLevel/processorType/specialization/specializationLevel/
+ * activeRecipes.
+ */
+function migrateProcessorInstance(instance: {
+  buildingId: string | null;
+  buildingLevel: number;
+  processorType?: import('@/core/types').ProcessorType;
+  specialization?: import('@/core/types').ProcessorRecipeCategory;
+  specializationLevel?: number;
+  activeRecipes?: string[];
+}): void {
+  if (!instance.buildingId) return;
+  const def = BUILDING_MAP.get(instance.buildingId);
+  if (!def?.isUniversalProcessor) return;
+  // Если specialization уже есть — оставляем; иначе defaults
+  if (instance.processorType === undefined) {
+    instance.processorType = def.defaultProcessorType ?? 'universal';
+  }
+  if (instance.specialization === undefined && def.defaultSpecialization !== undefined) {
+    instance.specialization = def.defaultSpecialization;
+  }
+  if (instance.specializationLevel === undefined) {
+    instance.specializationLevel = def.defaultProcessorType === 'specialized' ? 1 : 0;
+  }
+  if (instance.activeRecipes === undefined) {
+    instance.activeRecipes = [];
+  }
 }
 
 // ============ Store ============
@@ -422,6 +511,53 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
         ok = true;
       });
       return ok;
+    },
+
+    // ─── Block 05 PR7 — специализация переработчиков ─────────────────
+    // Pattern: emit event → EconomyModule.onSpecialize wraps engine
+    // .specializeBuilding in immer.produce() and commits new state via
+    // mediator.commitState() → core:state-changed → store subscription
+    // syncs the new reference.
+    specializeBuildingOnHex: (planetId, hexIndex, category) => {
+      const mediator = getMediatorWithModules();
+      const gameState = get().gameState;
+      if (!gameState) return false;
+      const planet = findPlanet(gameState, planetId);
+      if (!planet) return false;
+      const before = planet.hexes[hexIndex]?.processorType;
+      const beforeSpec = planet.hexes[hexIndex]?.specialization;
+      mediator.getBus().emit('economy:specialize', { planetId, hexIndex, category });
+      // Re-fetch — engine.specializeBuilding mutates hex; immer produces a
+      // new state reference with the changed hex path.
+      const newState = get().gameState;
+      if (!newState) return false;
+      const newPlanet = findPlanet(newState, planetId);
+      if (!newPlanet) return false;
+      const after = newPlanet.hexes[hexIndex]?.processorType;
+      const afterSpec = newPlanet.hexes[hexIndex]?.specialization;
+      // Success criterion: either processorType changed OR (category === 'universal'
+      // AND specialization was non-empty before, now undefined).
+      if (category === 'universal') {
+        return before === 'specialized' && after === 'universal' && beforeSpec !== undefined && afterSpec === undefined;
+      }
+      return after === 'specialized' && afterSpec === category;
+    },
+
+    upgradeSpecializationOnHex: (planetId, hexIndex) => {
+      const mediator = getMediatorWithModules();
+      const gameState = get().gameState;
+      if (!gameState) return false;
+      const planet = findPlanet(gameState, planetId);
+      if (!planet) return false;
+      const before = planet.hexes[hexIndex]?.specializationLevel ?? 0;
+      if (before === 0) return false; // не specialized
+      mediator.getBus().emit('economy:upgrade-specialization', { planetId, hexIndex });
+      const newState = get().gameState;
+      if (!newState) return false;
+      const newPlanet = findPlanet(newState, planetId);
+      if (!newPlanet) return false;
+      const after = newPlanet.hexes[hexIndex]?.specializationLevel ?? 0;
+      return after > before;
     },
 
     colonizePlanet: (planetId) => {
