@@ -19,92 +19,116 @@
 ## Выполнено
 
 ### P7 — Трансурановые элементы ✅ (commit 6312bfe)
-**Файл:** `src/data/elements.ts`
-Добавлены Np, Pu, Am. Всего элементов: 60 (57 + 3 трансурановых).
-
 ### P6 — Стоимость апгрейда Colony Hub ✅ (commit 6312bfe)
-**Файл:** `src/data/buildings.ts`
-`colony_hub.costPerLevel`: `{ Fe: 10, Si: 5, Al: 3 }` (с масштабированием по уровню).
-
 ### C6 — warehouse.ts dead comparisons cleanup ✅ (commit 9b14fca, gap-5)
-**Файл:** `src/data/warehouse.ts:277`
-Удалены мёртвые проверки `category === 'platinoid' || category === 'rare_earth'` (значения ChemicalCharacter, не ElementCategory — всегда false). Элементы с chemicalCharacter 'platinoid' (Ru/Rh/Pd/Ir/Os) имеют category 'noble'; 'rare_earth' (Y/La/Ce/Nd/Dy) — 'lanthanide'; оба случая уже покрыты существующими проверками.
-
 ### C8 — nuclear_reactor rename ✅ (commit 9b14fca, gap-11)
-**Файлы:** `src/data/buildings.ts:122`, `src/economy/engine.ts:295,319,341`
-ID `nuclear_plant` → `nuclear_reactor` (соответствие `docs/40-buildings.md §10.1` — источник истины). 4 места изменены.
-
 ### P5 — Крафтовые материалы (категория 'crafted') ✅ (commit 9b14fca, gap-10)
-**Файлы:**
-- `src/core/types.ts:160` — добавлено `'crafted'` в `ElementCategory`
-- `src/data/element-helpers.ts` — `crafted: 'Синтезированные'` (label) + `text-fuchsia-400` (color)
-- `src/data/crafted-materials.ts` (NEW) — каталог 12 крафтовых материалов (steel, microchip, superconductor, titanium_alloy, silicon_crystal, sensor_array, shield_generator, engine_section, ion_engine, laser, cargo_bay, scanner) с русскими названиями + символами
-- `src/components/game/resource-panel.tsx` — lookup в `CRAFTED_MATERIALS` для ресурсов, не найденных в `ELEMENT_MAP`; теперь steel/microchip показываются в группе «Синтезированные» с русскими названиями, а не в «Прочих» с `id.replace(/-/g, ' ')`.
-
 ### P8 — Complex gas recipes ✅ (commit 9b14fca, gap-2)
-**Файл:** `src/data/recipes.ts` — добавлены 5 рецептов для атмосферных соединений:
-- `process_CO2`: CO₂ → C(2.7) + O(7.3)
-- `process_CH4`: CH₄ → C(2.5) + H(7.5)
-- `process_NH3`: NH₃ → N(5.6) + H(4.4)
-- `process_H2S`: H₂S → H(2.5) + S(7.5)
-- `process_SO2`: SO₂ → S(5.0) + O(5.0)
-
-Все рецепты: `buildingId: 'processor'`, `time: 150`, `energyCost: 4`. Закрывает геймплейный блокер audit §2.3 — газовые экстракторы на co2/methane/toxic планетах больше не копят «мусорные» газы в складе.
-
 ### P9 — ProductionItem deterministic IDs ✅ (commit 9b14fca, gap-6)
-**Файлы:** `src/economy/engine.ts`, `src/stores/game-store.ts`
-- Заменён `id: \`prod_\${Date.now()}_\${Math.random().toString(36).slice(2,6)}\`` (недетерминированный) на `id: \`prod_\${planet.id}_\${productionItemCounter++}\`` (детерминированный монотонный счётчик).
-- Добавлена `export function resetProductionItemCounter()` — для сброса в `newGame()` и `loadGame()` (синхронизация с новым seed).
-- `game-store.ts` вызывает `resetProductionItemCounter()` в `newGame` и `loadGame`.
-
 ### Блок 06 — Modular-bus integration ✅ (commit 51742ed, gap-1, audit §2.1 #1)
-Архитектурный долг #1 закрыт:
-- `src/stores/game-store.ts` — делегирует `mediator.tick()/setSpeed/togglePause`; build/upgrade/enqueue/colonize эмитят `economy:*` события; подписка на `core:state-changed`.
-- `src/economy/economy-module.ts` — `onTick` вызывает `processEconomyTick`; подписки на `economy:build/upgrade/enqueue/colonize`; эмитит `core:state-changed` после мутаций.
-- `src/core/game-loop.ts` — `start()`/`stop()` с `setInterval`; cap 50 ticks per interval.
-- `src/app/page.tsx` — удалён `setInterval`; useEffect вызывает `mediator.start()/stop()`.
-- `src/economy/engine.ts` — 6 `gameBus.emit` мигрированы на typed `bus.emit` (`production:complete` → `economy:production-complete`, и т.д.); удалены `as any` касты.
-- Тесты: `tests/modular-integration.test.ts` (9 тестов) + `tests/game-loop.test.ts` (9 тестов) — 18/18 зелёные.
-
 ### Pre-existing TS errors fix ✅ (commit 9b14fca)
-**Файл:** `src/galaxy/generate-systems.ts:7,230`
-- Добавлен `Planet` в imports (строка 7)
-- `const planets: Planet[] = []` (был `never[]` из-за пустого инициализатора → TS2345, TS2339 в строках 234, 244)
-- Блок 07 (TS strict) теперь разблокирован.
+
+### C1 — Delete deprecated event-bus.ts ✅ (commit 5f1bfeb)
+**Файл:** `src/core/event-bus.ts` (deleted)
+Block 06 мигрировал все 6 gameBus.emit вызовов на typed bus, файл legacy-адаптера больше никем не импортируется. Удалён вместе с экспортом `legacyGameBus` из `src/core/index.ts`.
+
+### C2 — Delete deprecated extractOreToElements ✅ (commit 5f1bfeb)
+**Файл:** `src/economy/engine.ts:198-228` (deleted)
+Функция была `@deprecated` и не имела вызовов — руды теперь кладутся на склад как сырьё и перерабатываются через `recipes.ts`. Удалена вместе с импортом `findContainedElements` (больше не нужен).
+
+### C3 — Extract ATMOSPHERE_GAS_MAP + DIRECT_GAS_MAP ✅ (commit 5f1bfeb, gap-3)
+**Файлы:**
+- `src/data/atmosphere-gases.ts` (NEW) — single source of truth: `ATMOSPHERE_GAS_MAP` (8 типов атмосферы → газы), `DIRECT_GAS_MAP` (6 чистых газов → элементы 1:1), `GAS_ELEMENT_TO_ATMO_ID` (reverse map), `getAtmosphericGasesForType()` helper.
+- `src/economy/engine.ts` — удалены inline maps, импорт из `data/atmosphere-gases`.
+- `src/data/chemistry-generator.ts:1434` — заменён inline `gasElementToAtmoId` на импорт `GAS_ELEMENT_TO_ATMO_ID` из `data/atmosphere-gases` (раньше дублировало engine.ts).
+
+### C7 — processProductionQueue emit on cancel ✅ (commit 5f1bfeb, gap-7)
+**Файлы:** `src/core/events.ts`, `src/economy/engine.ts:196-263`
+- Добавлено новое событие `economy:production-cancelled` с payload `{ planetId, recipeId, queueItemId, reason: 'recipe_not_found' | 'insufficient_inputs' }`.
+- `processProductionQueue` теперь эмитит событие перед удалением элемента из очереди (если рецепт не найден) или при нехватке входных ресурсов. Закрывает «silent recipe loss» — UI может подписаться и показывать toast.
+
+### P2 — Immutable store (zustand-immer) ✅ (commit c693807, Task ID 5 subagent)
+**Файлы:**
+- `src/stores/game-store.ts` — обернут в `immer()` middleware; 7+ shallow clones заменены на `set((state) => { state.gameState... })` draft mutations.
+- `src/economy/economy-module.ts` — все 5 mutation handlers (onBuild/onUpgrade/onEnqueue/onColonize/processEconomyTick) обёрнуты в `produce(currentState, draft => { engineCall(draft...) })`. **Выбран Option A** (Draft<Planet>), не Option B (pure functions) — меньше disruption к архитектуре Блока 06.
+- `src/core/game-mediator.ts` — добавлен `commitState(state)` lightweight state-update method.
+- `src/core/immer-setup.ts` (NEW) — side-effect import: `enableMapSet()` + `setAutoFreeze(false)`.
+- `src/components/game/game-layout.tsx:246` — workaround удалён, `useMemo` теперь работает.
+- `tests/immutability.test.ts` (NEW) — T6 test, 3 cases: planet reference changes after `economy:build`; systems array reference changes after `tick()`; store state reference changes per tick.
+
+### C5 — Split chemistry-generator.ts ✅ (commit 3a585e4, Task ID 6 subagent)
+**Файлы:** 7 new modules in `src/data/chemistry/`:
+- `baked-types.ts` (186 строк) — interfaces (BakedGalaxyModel, BakedOre, ...)
+- `ore-specs.ts` (499 строк) — ORE_SPECS, SPECIAL_ORE_SPECS, REFINERY_ALTERNATIVES
+- `ore-generator.ts` (447 строк) — bakeOreFromSpec, getDefaultFormula, getDefaultBuildingAndType
+- `atmospheric-generator.ts` (115 строк) — generateAtmosphericCompounds
+- `ice-generator.ts` (80 строк) — generateIceCompounds
+- `bake.ts` (389 строк) — bakeGalaxyModel main
+- `validate.ts` (129 строк) — validateBakedModel
+- `src/data/chemistry-generator.ts` — reduced from **1704 → 30 строк** (re-export shim).
+
+### T1 + T2 + T5 — Tests ✅ (commit ad57851, Task ID 7 subagent)
+**Файлы:**
+- `tests/prng.test.ts` (NEW, 4 cases) — T1 PRNG determinism: seed → same sequence; derive independence; derive determinism; uniformity (10000 values, mean ∈ [0.48, 0.52]).
+- `tests/galaxy-snapshot.test.ts` (NEW, 3 cases) — T2 Galaxy snapshot: snapshot stability, determinism, BFS connectedness.
+- `tests/serialization.test.ts` (NEW, 4 cases) — T5 Serialization round-trip: serialize → deserialize → equals; excludes systemMap/bakedModel; idempotent; v0→v1 migration.
+- `src/stores/game-store.ts` — `serializeGameState`/`deserializeGameState` exported for tests.
+- **Known bug documented (not blocking):** `bakeGalaxyModel` sets `createdAt: new Date().toISOString()` — non-deterministic. Tests strip `createdAt` from both sides. Future fix.
+
+### C4 — Performance fix (O(N²M) → O(N+M)) ✅ (commit 1bf5e83)
+**Файлы:**
+- `src/data/warehouse.ts` — `calculateWarehouseCapacities()` теперь memoized через `WeakMap<Planet, Capacities>`. Immer создаёт новый Planet при мутации → cache автоматически инвалидируется. В пределах одного тика (stable planet reference) — O(N+M) вместо O(N*M).
+- `src/economy/engine.ts:recalcEnergyBalance` — объединены 3 inline цикла (surface/atmosphere/orbit) в один helper `processBuildingEnergy(buildingId, buildingLevel, layer)`. Orbit ×1.2 solar bonus + colony_hub surface-only special case сохранены.
+
+### P1 — Recipe ID single-source-of-truth + validation ✅ (commit 1bf5e83)
+**Файлы:**
+- `scripts/validate-recipes.ts` (NEW) — валидирует все 75 рецептов в `recipes.ts` против BakedGalaxyModel (ores, atmospheric, ice) + ELEMENT_MAP + CRAFTED_MATERIALS. Запуск: `bun run validate:recipes`.
+- `package.json` — добавлен script `validate:recipes`.
+- `src/data/crafted-materials.ts` — добавлены 4 недостающих материала (plastic, synfuel, hull_element, armor_plate) — валидатор поймал их как undefined references. Всего теперь 16 крафтовых материалов.
+- Все 75 рецептов валидны. ✅
+
+### C9 — a11y improvements ✅ (commit aad3aa2, gap-10)
+**Файлы:**
+- `src/components/game/galaxy-map.tsx:458-463` — zoom controls: `aria-label` на 3 кнопки + `role=status`/`aria-live=polite` на индикатор масштаба.
+- `src/components/game/galaxy-map.tsx:297,527` — main SVG map + minimap: `role=img` + `aria-label`.
+- `src/components/game/planet-view.tsx:131-149` — tab buttons: `role=tablist` на контейнер + `role=tab`/`aria-selected`/`aria-controls`/`id` на каждую кнопку.
+- `src/components/game/planet-view.tsx:444` — HexGrid SVG: `role=img` + `aria-label` с hex count.
+- `src/components/game/game-layout.tsx:86` — заменён `confirm()` на shadcn `AlertDialog` (with AlertDialogTitle/Description, Cancel/Action, Russian labels). Added toast notification on new game creation.
 
 ---
 
 ## В процессе / pending
 
-### P1 — Унификация ID руд 🔴 (pending — критический)
-- [ ] `baked-lookups.ts`: добавить `getRecipeOreId(elementId)`
-- [ ] `recipes.ts`: заменить хардкод `Fe-ore`/`Ti-ore` на динамический lookup
-- [ ] `scripts/validate-recipes.ts` (новый): валидация всех рецептов
+### P3 — UI для атмосферы/орбиты 🔴 (pending — Task ID 8 subagent)
+- [ ] `building-dialog.tsx`: вкладки Surface/Atmosphere/Orbit
+- [ ] `planet-view.tsx`: действия для atmospheric/orbit слотов
 
-### Фаза 2 «Architecture» — P2, C1, C4, C5 (pending)
-- [ ] **P2** — Immutable store (zustand-immer): 13+ shallow clones → immer draft
-- [ ] **C1** — Delete `src/core/event-bus.ts` (Блок 06 мигрировал вызовы, файл можно удалить)
-- [ ] **C4** — Объединить 3 цикла `recalcEnergyBalance` в один
-- [ ] **C5** — Разбить `chemistry-generator.ts` (1704 строки) на 6 модулей
+### P4 — UI очереди производства 🔴 (pending — Task ID 8 subagent)
+- [ ] `production-queue-panel.tsx` (новый) — список доступных рецептов, кнопка «Добавить», прогресс-бар, автоповтор, отмена
+- [ ] `planet-view.tsx`: вкладка «Производство»
+- [ ] `game-store.ts`: `cancelProduction` action
 
-### Фаза 3 «UI» — P3, P4, C9 (pending)
-- [ ] **P3** — UI для атмосферы/орбиты (`building-dialog.tsx`: вкладки Surface/Atmosphere/Orbit)
-- [ ] **P4** — UI очереди производства (`production-queue-panel.tsx` новый)
-- [ ] **C9** — a11y improvements (aria-label, role="tab", SVG role, replace confirm() with AlertDialog)
+### T3 — Economy test 🟡 (pending — myself)
+- [ ] `tests/economy.test.ts` — добыча → крафт → энергия
 
-### Фаза 4 «Tests» — T1–T7 (pending)
-- [ ] **T1** — PRNG детерминизм
-- [ ] **T2** — Snapshot генерации галактики
-- [ ] **T3** — Экономика: добыча → крафт → энергия
-- [ ] **T4** — Chemistry-generator: молярные массы
-- [ ] **T5** — Сериализация: save → load → equals
-- [ ] **T6** — Immutability test (после P2)
-- [ ] **T7** — PRNG reference conformance (после Блока 07)
+### T4 — Chemistry-generator test 🟡 (pending — myself)
+- [ ] `tests/chemistry.test.ts` — молярные массы, ID руд консистентны
 
-### Фаза 5 «Cleanup» — C2, C3, C7 (pending)
-- [ ] **C2** — Delete `@deprecated extractOreToElements` from `engine.ts:182-212`
-- [ ] **C3** — Extract `ATMOSPHERE_GAS_MAP`, `DIRECT_GAS_MAP` to `src/data/atmosphere-gases.ts`
-- [ ] **C7** — `processProductionQueue` emit `economy:production-cancelled` on cancel (Блок 06 готов — typed bus работает)
+### T7 — PRNG reference conformance 🟡 (pending — после Блока 07)
+- [ ] `tests/prng-reference.test.ts` — сравнение с эталоном Vigna
+- [ ] Зависимость: Блок 07 (PRNG port fix)
+
+### Блок 07 — Engineering quality 🟡 (pending)
+- TS strict (`noImplicitAny: true`, `noUncheckedIndexedAccess: true`, `ignoreBuildErrors: false`)
+- ESLint warn-level enforcement
+- PRNG xoshiro256** port fix (Vigna reference)
+
+### Блок 08 — Security & Data 🟡 (pending)
+- API validation (zod) + rate limiting
+- Prisma schema redesign (indexes, version)
+
+### Блок 05 — Переработчики 🟡 (pending — после P1+C3 ✅)
+- 2 типа переработчиков (универсальный → специализированный апгрейд)
 
 ---
 
