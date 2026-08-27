@@ -12,7 +12,7 @@
  * 3. Обновить манифест модуля (emits / subscribes)
  */
 
-import type { EntityId, GameTime, GameSpeed, GameState, BuildingLayer } from './types';
+import type { EntityId, GameTime, GameSpeed, GameState, BuildingLayer, ProcessorRecipeCategory } from './types';
 
 // ─── Core ─────────────────────────────────────────────────
 
@@ -71,6 +71,37 @@ export interface EconomyEvents {
   'economy:resource-depleted': { planetId: EntityId; elementId: string; hexIndex: number };
   'economy:warehouse-full': { planetId: EntityId };
   'economy:warehouse-updated': { planetId: EntityId; capacity: number; used: number };
+  // ─── Block 05: специализация переработчиков (PR7) ──────────────────
+  /** Эмитится после specializeBuilding (включая откат к universal). */
+  'economy:building-specialized': {
+    planetId: EntityId;
+    hexIndex: number;
+    specialization: ProcessorRecipeCategory | 'universal';
+    specializationLevel: number;
+  };
+  /** Эмитится после upgradeSpecialization (+1 уровень). */
+  'economy:specialization-upgraded': {
+    planetId: EntityId;
+    hexIndex: number;
+    specializationLevel: number;
+  };
+  /**
+   * Эмитится после любого изменения, влияющего на выход процессора
+   * (specialize/upgrade/activeRecipes change) — чтобы UI перерисовал
+   * плашку коэф. выхода и чистоты.
+   */
+  'economy:processor-output-changed': {
+    planetId: EntityId;
+    hexIndex: number;
+    yieldMult: number;
+    purity: number;
+  };
+  /** (PR3-full, отложено) При изменении набора активных рецептов здания. */
+  'economy:active-recipes-changed': {
+    planetId: EntityId;
+    hexIndex: number;
+    activeRecipes: string[];
+  };
 }
 
 // ─── Ships ────────────────────────────────────────────────

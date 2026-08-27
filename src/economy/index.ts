@@ -14,6 +14,11 @@ export {
   cancelProduction,
   giveStarterResources,
   colonizePlanet,
+  // Block 05 — специализация переработчиков
+  calculateProcessorOutputMultiplier,
+  findProcessorInstance,
+  specializeBuilding,
+  upgradeSpecialization,
 } from './engine';
 
 // Модуль (для регистрации в ModuleRegistry)

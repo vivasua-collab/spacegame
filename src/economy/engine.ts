@@ -4,9 +4,10 @@
  * P1-27: Газовый экстрактор проверяет наличие атмосферы.
  */
 
-import type { Planet, HexCell, ProductionQueue, ProductionItem, EntityId, StarSystem } from '@/core/types';
+import type { Planet, HexCell, ProductionQueue, ProductionItem, EntityId, StarSystem, BuildingDef, ProcessorType, ProcessorRecipeCategory } from '@/core/types';
 import { BUILDING_MAP } from '@/data/buildings';
 import { RECIPE_MAP } from '@/data/recipes';
+import { PROCESSOR_CATEGORIES } from '@/data/processor-categories';
 import { ELEMENT_MAP } from '@/data/elements';
 import { getCurrentLookups } from '@/data/baked-lookups';
 import { canStoreResource, calculateWarehouseCapacity, calculateWarehouseCapacities, getOrbitBufferCapacity, ensureReservesForResources } from '@/data/warehouse';
@@ -192,6 +193,14 @@ function getAtmosphereEfficiency(type: string): number {
  *
  * (gap-7, C7 — добавлен emit `economy:production-cancelled` при удалении элемента
  * из очереди. Раньше рецепт «терялся молча» — audit §2.3.)
+ *
+ * Block 05 (PR3-min): перед записью выходов в `planet.resources` найти
+ * экземпляр здания-исполнителя (`recipe.buildingId`) на планете и применить
+ * `calculateProcessorOutputMultiplier`. Умножить `amount` на `yieldMult`
+ * и записать средневзвешенную чистоту в `planet.resourcePurity`.
+ *
+ * Альтернатива per-building cycles (PR3-full) — отложена; в PR3-min
+ * используется «одна очередь на планету» + поиск экземпляра по buildingId.
  */
 function processProductionQueue(planet: Planet, queues: Map<EntityId, ProductionQueue>): void {
   const queue = queues.get(planet.id);
@@ -239,8 +248,39 @@ function processProductionQueue(planet: Planet, queues: Map<EntityId, Production
       for (const [resourceId, amount] of Object.entries(recipe.inputs)) {
         planet.resources[resourceId] = (planet.resources[resourceId] ?? 0) - amount;
       }
+
+      // ─── Block 05 PR3-min: множитель выхода процессора ──────────────
+      // Найти экземпляр здания-исполнителя на планете (любой с подходящим
+      // buildingId). Это «минимальное» решение — без per-building cycles.
+      // Если таких зданий несколько, берём первое. PR3-full будет фильтровать
+      // по специализации: specialised здание для этой категории приоритетнее.
+      const buildingInstance = findProcessorInstance(planet, recipe.buildingId, recipe.processorCategory);
+      const buildingDef = BUILDING_MAP.get(recipe.buildingId);
+      let yieldMult = 1.0;
+      let purity = 1.0;
+      if (buildingDef?.isUniversalProcessor && buildingInstance) {
+        const result = calculateProcessorOutputMultiplier(buildingDef, buildingInstance);
+        yieldMult = result.yieldMult;
+        purity = result.purity;
+      }
+
+      // Применить множитель к выходам и записать чистоту (средневзвешенно).
+      if (!planet.resourcePurity) planet.resourcePurity = {};
       for (const [resourceId, amount] of Object.entries(recipe.outputs)) {
-        planet.resources[resourceId] = (planet.resources[resourceId] ?? 0) + amount;
+        const producedAmount = amount * yieldMult;
+        const prevAmount = planet.resources[resourceId] ?? 0;
+        const prevPurity = planet.resourcePurity[resourceId] ?? 1.0;
+        // Средневзвешенная чистота (только если был предыдущий запас).
+        const newTotal = prevAmount + producedAmount;
+        const newPurity = newTotal > 0
+          ? (prevPurity * prevAmount + purity * producedAmount) / newTotal
+          : purity;
+        planet.resources[resourceId] = newTotal;
+        if (newTotal > 0) {
+          planet.resourcePurity[resourceId] = newPurity;
+        } else {
+          delete planet.resourcePurity[resourceId];
+        }
       }
 
       gameBus.emit('economy:production-complete', { planetId: planet.id, recipeId: recipe.id });
@@ -260,6 +300,154 @@ function processProductionQueue(planet: Planet, queues: Map<EntityId, Production
       queue.items.shift();
     }
   }
+}
+
+/**
+ * Block 05 (PR3-min): найти экземпляр процессорного здания на планете
+ * по buildingId, предпочтительно с specialization, соответствующей
+ * recipe.processorCategory (если указана).
+ *
+ * Сканы: planet.hexes (surface) + planet.atmosphericSlots + planet.orbitSlots.
+ * Возвращает структуру с полями, нужными calculateProcessorOutputMultiplier.
+ *
+ * @param planet                — планета с построенными зданиями
+ * @param buildingId            — какой buildingId искать (processor/refinery/synthesizer)
+ * @param preferredCategory     — если указана, приоритет specialized зданию с этой специализацией
+ */
+export function findProcessorInstance(
+  planet: Planet,
+  buildingId: string,
+  preferredCategory?: ProcessorRecipeCategory,
+): {
+  processorType: ProcessorType;
+  specialization?: ProcessorRecipeCategory;
+  specializationLevel: number;
+  activeRecipes?: string[];
+  hexIndex: number;
+} | null {
+  // Собираем все экземпляры с указанным buildingId.
+  type Candidate = {
+    processorType: ProcessorType;
+    specialization?: ProcessorRecipeCategory;
+    specializationLevel: number;
+    activeRecipes?: string[];
+    hexIndex: number;
+  };
+  const candidates: Candidate[] = [];
+
+  // Surface hexes
+  for (let i = 0; i < planet.hexes.length; i++) {
+    const hex = planet.hexes[i];
+    if (hex.buildingId === buildingId && hex.processorType) {
+      candidates.push({
+        processorType: hex.processorType,
+        specialization: hex.specialization,
+        specializationLevel: hex.specializationLevel ?? 0,
+        activeRecipes: hex.activeRecipes,
+        hexIndex: i,
+      });
+    } else if (hex.buildingId === buildingId) {
+      // Building exists but processorType not set (e.g. migration deferred).
+      // Defaults: universal, level 0, no activeRecipes.
+      candidates.push({
+        processorType: 'universal' as ProcessorType,
+        specializationLevel: 0,
+        hexIndex: i,
+      });
+    }
+  }
+  // Atmosphere slots
+  for (let i = 0; i < planet.atmosphericSlots.length; i++) {
+    const slot = planet.atmosphericSlots[i];
+    if (slot.buildingId === buildingId && slot.processorType) {
+      candidates.push({
+        processorType: slot.processorType,
+        specialization: slot.specialization,
+        specializationLevel: slot.specializationLevel ?? 0,
+        activeRecipes: slot.activeRecipes,
+        hexIndex: -1 - i,
+      });
+    } else if (slot.buildingId === buildingId) {
+      candidates.push({
+        processorType: 'universal' as ProcessorType,
+        specializationLevel: 0,
+        hexIndex: -1 - i,
+      });
+    }
+  }
+  // Orbit slots
+  for (let i = 0; i < planet.orbitSlots.length; i++) {
+    const slot = planet.orbitSlots[i];
+    if (slot.buildingId === buildingId && slot.processorType) {
+      candidates.push({
+        processorType: slot.processorType,
+        specialization: slot.specialization,
+        specializationLevel: slot.specializationLevel ?? 0,
+        activeRecipes: slot.activeRecipes,
+        hexIndex: -100 - i,
+      });
+    } else if (slot.buildingId === buildingId) {
+      candidates.push({
+        processorType: 'universal' as ProcessorType,
+        specializationLevel: 0,
+        hexIndex: -100 - i,
+      });
+    }
+  }
+
+  if (candidates.length === 0) return null;
+
+  // Если есть preferredCategory — приоритет specialized зданию с этой специализацией.
+  if (preferredCategory) {
+    const matching = candidates.find(c =>
+      c.processorType === 'specialized' && c.specialization === preferredCategory,
+    );
+    if (matching) return matching;
+  }
+
+  // Fallback: первое попавшееся specialized, потом первое universal.
+  const specialized = candidates.find(c => c.processorType === 'specialized');
+  if (specialized) return specialized;
+  return candidates[0];
+}
+
+/**
+ * Block 05 (PR3): расчёт множителя выхода для процессорного здания.
+ *
+ * Универсальный:
+ *   output = base × 0.75 × (1 / sqrt(max(1, activeRecipes)))
+ *   purity = building.basePurity (по умолчанию 0.78, диапазон 0.70–0.85)
+ *
+ * Специализированный:
+ *   output = base × 1.0 × purityBonus
+ *   purityBonus = 1.0 + 0.02 × (specializationLevel - 1)   // +0%/+2%/+4%/+6%/+8%
+ *   purity = 0.92 + 0.0175 × (specializationLevel - 1)     // 0.92..0.99
+ *
+ * Источник: docs/40-buildings.md §11.3 (формулы переработчиков).
+ */
+export function calculateProcessorOutputMultiplier(
+  building: BuildingDef,
+  instance: {
+    processorType?: ProcessorType;
+    specialization?: ProcessorRecipeCategory;
+    specializationLevel?: number;
+    activeRecipes?: string[];
+  },
+): { yieldMult: number; purity: number } {
+  // Специализированная ветка (refinery/synthesizer или специализированный processor)
+  if (instance.processorType === 'specialized') {
+    const specLvl = Math.max(1, Math.min(5, instance.specializationLevel ?? 1));
+    const purityBonus = 1.0 + 0.02 * (specLvl - 1);       // +0%/+2%/+4%/+6%/+8%
+    const purity = 0.92 + 0.0175 * (specLvl - 1);         // 0.92..0.99
+    return { yieldMult: (building.baseYield ?? 1.0) * purityBonus, purity };
+  }
+  // Универсальная ветка (processor без specialization)
+  const activeCount = Math.max(1, instance.activeRecipes?.length ?? 1);
+  const multiPenalty = 1 / Math.sqrt(activeCount);         // 1.0 / 0.707 / 0.577 / 0.5 / 0.447 …
+  return {
+    yieldMult: (building.baseYield ?? 0.75) * multiPenalty,
+    purity: building.basePurity ?? 0.78,
+  };
 }
 
 /**
@@ -516,6 +704,240 @@ export function enqueueProduction(
   });
 
   return true;
+}
+
+// ─── Block 05 PR4: специализация переработчиков ────────────────────────────
+//
+// specializeBuilding(planet, hexIndex, category)
+//   Превратить универсальный processor в специализированный под категорию,
+//   либо откатить специализацию к универсальной (за 50% возврата стоимости).
+//
+// upgradeSpecialization(planet, hexIndex)
+//   Поднять specializationLevel 1→2→…→5. Каждый уровень даёт +2% purityBonus
+//   и +0.0175 к чистоте.
+//
+// Эти функции мутируют Planet.hexes[hexIndex] напрямую (как buildOnHex/
+// upgradeBuilding). Все события эмитируются через gameBus (legacy adapter
+// проксирует в typedBus — после DEP-1 миграции заменится на typedBus).
+
+/**
+ * Списать стоимость специализации с planet.resources.
+ * Возвращает true, если всех ресурсов достаточно; иначе false (без списания).
+ */
+function spendSpecializeCost(planet: Planet, cost: Partial<Record<string, number>>): boolean {
+  for (const [resourceId, amount] of Object.entries(cost)) {
+    if ((planet.resources[resourceId] ?? 0) < (amount ?? 0)) return false;
+  }
+  for (const [resourceId, amount] of Object.entries(cost)) {
+    if (amount && amount > 0) {
+      planet.resources[resourceId] = (planet.resources[resourceId] ?? 0) - amount;
+    }
+  }
+  return true;
+}
+
+/**
+ * Вернуть долю стоимости специализации на склад планеты (для отката).
+ * fraction=0.5 → вернуть 50%.
+ */
+function refundSpecializeCost(
+  planet: Planet,
+  cost: Partial<Record<string, number>>,
+  fraction: number,
+): void {
+  for (const [resourceId, amount] of Object.entries(cost)) {
+    if (amount && amount > 0) {
+      const refund = Math.floor(amount * fraction);
+      if (refund > 0) {
+        planet.resources[resourceId] = (planet.resources[resourceId] ?? 0) + refund;
+      }
+    }
+  }
+}
+
+/**
+ * Block 05 PR4: превратить универсальный processor в специализированный
+ * под конкретную категорию, либо откатить специализацию к универсальной.
+ *
+ * Проверки:
+ * - Здание должно быть processor (не refinery/synthesizer — они уже
+ *   specialized как предельные формы).
+ * - Уровень здания ≥ 3 (минимум для специализации).
+ * - Категория доступна на этом уровне (deep_ore_smelting требует ур. 5+).
+ * - Достаточно ресурсов для specializeCost.
+ *
+ * Эмитит:
+ * - economy:building-specialized (с specialization=category|'universal')
+ * - economy:processor-output-changed (с новым yieldMult/purity)
+ *
+ * Необратимость: ОБРАТИМО через specializeBuilding(..., 'universal') за
+ * 50% возврата стоимости (мягче для игрока, упрощает тестирование).
+ *
+ * @returns { success: boolean; reason?: string }
+ */
+export function specializeBuilding(
+  planet: Planet,
+  hexIndex: number,
+  category: ProcessorRecipeCategory | 'universal',
+  _options?: { silent?: boolean },
+): { success: boolean; reason?: string } {
+  if (hexIndex < 0 || hexIndex >= planet.hexes.length) {
+    return { success: false, reason: 'invalid-hex-index' };
+  }
+  const hex = planet.hexes[hexIndex];
+  if (!hex.buildingId) return { success: false, reason: 'no-building' };
+
+  const def = BUILDING_MAP.get(hex.buildingId);
+  if (!def) return { success: false, reason: 'unknown-building' };
+  if (!def.isUniversalProcessor) return { success: false, reason: 'not-processor' };
+  // refinery/synthesizer — уже специализированные предельные формы; их нельзя
+  // «специализировать дальше» или откатывать к универсальному.
+  if (def.defaultProcessorType === 'specialized') {
+    return { success: false, reason: 'already-specialized-form' };
+  }
+
+  // ─── Случай: откат к универсальному ───────────────────────────────
+  if (category === 'universal') {
+    if (hex.processorType !== 'specialized') {
+      return { success: false, reason: 'not-specialized' };
+    }
+    hex.processorType = 'universal';
+    hex.specialization = undefined;
+    hex.specializationLevel = 0;
+    // Возврат 50% specializeCost
+    refundSpecializeCost(planet, def.specializeCost ?? {}, 0.5);
+    gameBus.emit('economy:building-specialized', {
+      planetId: planet.id,
+      hexIndex,
+      specialization: 'universal',
+      specializationLevel: 0,
+    });
+    // Эмит output-changed с universal формулой
+    const out = calculateProcessorOutputMultiplier(def, hex);
+    gameBus.emit('economy:processor-output-changed', {
+      planetId: planet.id,
+      hexIndex,
+      yieldMult: out.yieldMult,
+      purity: out.purity,
+    });
+    return { success: true };
+  }
+
+  // ─── Случай: специализация universal → specialized ────────────────
+  // Минимальный уровень здания для специализации
+  if (hex.buildingLevel < 3) {
+    return { success: false, reason: 'level-too-low' };
+  }
+  // Категория требует мин. уровень здания
+  const catDef = PROCESSOR_CATEGORIES.get(category);
+  if (!catDef) {
+    return { success: false, reason: 'unknown-category' };
+  }
+  if (hex.buildingLevel < catDef.minBuildingLevel) {
+    return { success: false, reason: 'category-level-too-low' };
+  }
+  // Уже специализирован в эту же категорию?
+  if (hex.processorType === 'specialized' && hex.specialization === category) {
+    return { success: false, reason: 'already-specialized-this-category' };
+  }
+  // Списание стоимости (если переходим universal → specialized в другой категории,
+  // это считается как переключение; дешевле — построить новый processor).
+  // Для упрощения: switching category требует полной стоимости specializeCost.
+  if (hex.processorType !== 'specialized') {
+    if (!spendSpecializeCost(planet, def.specializeCost ?? {})) {
+      return { success: false, reason: 'cannot-afford' };
+    }
+  }
+  // Мутация
+  hex.processorType = 'specialized';
+  hex.specialization = category;
+  hex.specializationLevel = 1;
+  // Фильтр активных рецептов (только для PR3-full — сейчас activeRecipes может
+  // быть пустым; фильтр безопасен в обоих случаях).
+  hex.activeRecipes = (hex.activeRecipes ?? []).filter(rid => {
+    const r = RECIPE_MAP.get(rid);
+    return r?.processorCategory === category;
+  });
+
+  gameBus.emit('economy:building-specialized', {
+    planetId: planet.id,
+    hexIndex,
+    specialization: category,
+    specializationLevel: 1,
+  });
+  // Эмит output-changed со specialized формулой (L1)
+  const out = calculateProcessorOutputMultiplier(def, hex);
+  gameBus.emit('economy:processor-output-changed', {
+    planetId: planet.id,
+    hexIndex,
+    yieldMult: out.yieldMult,
+    purity: out.purity,
+  });
+  return { success: true };
+}
+
+/**
+ * Block 05 PR4: повысить уровень специализации (1→2→…→5).
+ *
+ * Каждый уровень даёт +2% purityBonus и +0.0175 к чистоте.
+ * Стоимость = upgradeSpecializationCost × specializationLevel.
+ *
+ * Эмитит:
+ * - economy:specialization-upgraded
+ * - economy:processor-output-changed (с новым yieldMult/purity)
+ */
+export function upgradeSpecialization(
+  planet: Planet,
+  hexIndex: number,
+): { success: boolean; reason?: string } {
+  if (hexIndex < 0 || hexIndex >= planet.hexes.length) {
+    return { success: false, reason: 'invalid-hex-index' };
+  }
+  const hex = planet.hexes[hexIndex];
+  if (!hex.buildingId) return { success: false, reason: 'no-building' };
+
+  const def = BUILDING_MAP.get(hex.buildingId);
+  if (!def) return { success: false, reason: 'unknown-building' };
+  if (!def.isUniversalProcessor) return { success: false, reason: 'not-processor' };
+  if (hex.processorType !== 'specialized') {
+    return { success: false, reason: 'not-specialized' };
+  }
+  const currentLevel = hex.specializationLevel ?? 1;
+  if (currentLevel >= 5) {
+    return { success: false, reason: 'max-level' };
+  }
+
+  // Стоимость = upgradeSpecializationCost × currentLevel
+  const upgradeCost = def.upgradeSpecializationCost ?? {};
+  for (const [resourceId, amount] of Object.entries(upgradeCost)) {
+    const required = (amount ?? 0) * currentLevel;
+    if ((planet.resources[resourceId] ?? 0) < required) {
+      return { success: false, reason: 'cannot-afford' };
+    }
+  }
+  for (const [resourceId, amount] of Object.entries(upgradeCost)) {
+    const required = (amount ?? 0) * currentLevel;
+    if (required > 0) {
+      planet.resources[resourceId] = (planet.resources[resourceId] ?? 0) - required;
+    }
+  }
+
+  // Мутация: +1 к specializationLevel
+  hex.specializationLevel = currentLevel + 1;
+
+  gameBus.emit('economy:specialization-upgraded', {
+    planetId: planet.id,
+    hexIndex,
+    specializationLevel: hex.specializationLevel,
+  });
+  const out = calculateProcessorOutputMultiplier(def, hex);
+  gameBus.emit('economy:processor-output-changed', {
+    planetId: planet.id,
+    hexIndex,
+    yieldMult: out.yieldMult,
+    purity: out.purity,
+  });
+  return { success: true };
 }
 
 /**
