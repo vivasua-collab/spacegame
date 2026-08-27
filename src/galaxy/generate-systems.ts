@@ -4,7 +4,7 @@
  */
 
 import type { Xoshiro256 } from '@/core/prng';
-import type { StarSystem, Star, EntityId, BinaryType } from '@/core/types';
+import type { StarSystem, Star, Planet, EntityId, BinaryType } from '@/core/types';
 import { STAR_TYPES, STAR_WEIGHTS } from '@/data/star-types';
 import { genId, usedNames } from './gen-context';
 import { generatePlanet, toRoman } from './generate-planets';
@@ -227,7 +227,7 @@ export function generateSystem(
     : binaryType === 'BINARY_CLOSE' ? 0.6 : 0.5;
   const planetCount = Math.floor(totalPlanets * stabilityMult);
 
-  const planets = [];
+  const planets: Planet[] = [];
   for (let i = 0; i < planetCount; i++) {
     const planetRng = rng.derive(`planet_${i}`);
     const planet = generatePlanet(systemId, i + 1, name, primaryStar, binaryType, planetRng);

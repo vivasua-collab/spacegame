@@ -4,12 +4,13 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { ELEMENT_MAP } from '@/data/elements';
 import { CATEGORY_LABELS, CATEGORY_COLORS } from '@/data/element-helpers';
+import { CRAFTED_MATERIALS, getCraftedMaterial } from '@/data/crafted-materials';
 import type { ElementCategory } from '@/core/types';
 
 const CATEGORY_ORDER: ElementCategory[] = [
   'structural', 'fuel', 'chemical', 'alkali', 'alkaline_earth',
   'halogen', 'nonmetal', 'metal', 'transmetal', 'noble',
-  'lanthanide', 'rare',
+  'lanthanide', 'rare', 'transuranic', 'crafted',
 ];
 
 interface ResourcePanelProps {
@@ -17,29 +18,41 @@ interface ResourcePanelProps {
   className?: string;
 }
 
+interface PanelEntry {
+  id: string;
+  name: string;
+  symbol: string;
+  amount: number;
+}
+
 export function ResourcePanel({ resources, className }: ResourcePanelProps) {
   const entries = Object.entries(resources).filter(([, amount]) => amount > 0);
 
   // Group by category
-  const grouped = new Map<ElementCategory, { id: string; name: string; symbol: string; amount: number }[]>();
-  for (const [id, amount] of entries) {
-    const elDef = ELEMENT_MAP.get(id);
-    const category = elDef?.category ?? 'structural';
-    if (!grouped.has(category)) grouped.set(category, []);
-    grouped.get(category)!.push({
-      id,
-      name: elDef?.name ?? id,
-      symbol: elDef?.symbol ?? id,
-      amount,
-    });
-  }
+  const grouped = new Map<ElementCategory, PanelEntry[]>();
+  const uncategorized: PanelEntry[] = [];
 
-  // Also add entries that might be ores or crafted materials not in ELEMENT_MAP
-  const uncategorized: { id: string; name: string; amount: number }[] = [];
   for (const [id, amount] of entries) {
-    if (!ELEMENT_MAP.has(id)) {
-      uncategorized.push({ id, name: id.replace(/-/g, ' '), amount });
+    // 1. Чистый элемент?
+    const elDef = ELEMENT_MAP.get(id);
+    if (elDef) {
+      const category = elDef.category;
+      if (!grouped.has(category)) grouped.set(category, []);
+      grouped.get(category)!.push({ id, name: elDef.name, symbol: elDef.symbol, amount });
+      continue;
     }
+
+    // 2. Крафтовый материал? (gap-10, P5)
+    const crafted = getCraftedMaterial(id);
+    if (crafted) {
+      const category: ElementCategory = 'crafted';
+      if (!grouped.has(category)) grouped.set(category, []);
+      grouped.get(category)!.push({ id, name: crafted.name, symbol: crafted.symbol, amount });
+      continue;
+    }
+
+    // 3. Руда, газ, лёд или неизвестный ресурс — в «Прочие»
+    uncategorized.push({ id, name: id.replace(/-/g, ' '), symbol: id, amount });
   }
 
   return (

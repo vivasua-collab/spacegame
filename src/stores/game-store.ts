@@ -20,6 +20,7 @@ import { ELEMENTS } from '@/data/elements';
 import { setCurrentLookups } from '@/data/baked-lookups';
 import { EconomyModule } from '@/economy/economy-module';
 import { GalaxyModule } from '@/galaxy/galaxy-module';
+import { resetProductionItemCounter } from '@/economy/engine';
 
 // ============ Типы стора ============
 
@@ -206,6 +207,9 @@ export const useGameStore = create<GameStore>((set, get) => {
 
     newGame: (config = {}) => {
       const state = createInitialState(config);
+      // Сброс детерминированного счётчика ProductionItem IDs (gap-6, P9)
+      // для согласованности с новым seed.
+      resetProductionItemCounter();
       set({
         gameState: state,
         view: 'galaxy',
@@ -480,6 +484,10 @@ export const useGameStore = create<GameStore>((set, get) => {
         const data = await res.json();
 
         const loadedState = deserializeGameState(data.state);
+
+        // Сброс детерминированного счётчика ProductionItem IDs (gap-6, P9)
+        // при загрузке сейва — новые ID будут идти с 0, что упрощает расследование.
+        resetProductionItemCounter();
 
         set({
           gameState: loadedState,

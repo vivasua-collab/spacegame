@@ -119,7 +119,7 @@ export const BUILDINGS: BuildingDef[] = [
     requiresAtmosphere: false,
   },
   {
-    id: 'nuclear_plant',
+    id: 'nuclear_reactor',
     name: 'Ядерный реактор',
     description: 'Выработка энергии из ядерного топлива',
     category: 'energy',

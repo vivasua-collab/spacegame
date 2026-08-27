@@ -157,7 +157,7 @@ export type ChemicalCharacter =
  */
 export type ElementRarity = 'abundant' | 'common' | 'rare' | 'ultra_rare';
 
-export type ElementCategory = 'structural' | 'fuel' | 'metal' | 'chemical' | 'noble' | 'rare' | 'alkali' | 'alkaline_earth' | 'halogen' | 'nonmetal' | 'lanthanide' | 'transmetal' | 'transuranic';
+export type ElementCategory = 'structural' | 'fuel' | 'metal' | 'chemical' | 'noble' | 'rare' | 'alkali' | 'alkaline_earth' | 'halogen' | 'nonmetal' | 'lanthanide' | 'transmetal' | 'transuranic' | 'crafted';
 
 export interface ElementDef {
   id: string;

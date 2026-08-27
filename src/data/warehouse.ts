@@ -272,9 +272,13 @@ export function getWarehouseType(resourceId: string): 'ore' | 'processed' | 'hig
   }
 
   // Редкие и уникальные чистые элементы → высокотехнологичный
+  // Примечание (gap-5, C6): 'platinoid' и 'rare_earth' — это значения ChemicalCharacter,
+  // а не ElementCategory. Их сравнения с `category` всегда false. Удалено как мёртвый код.
+  // Элементы с chemicalCharacter 'platinoid' (Ru/Rh/Pd/Ir/Os) имеют category 'noble',
+  // элементы с 'rare_earth' (Y/La/Ce/Nd/Dy) — category 'lanthanide'; оба случая уже покрыты ниже.
   const category = getResourceCategory(resourceId);
   if (category === 'noble' || category === 'rare' || category === 'lanthanide' ||
-      category === 'transuranic' || category === 'platinoid' || category === 'rare_earth') {
+      category === 'transuranic') {
     return 'highTech';
   }
 

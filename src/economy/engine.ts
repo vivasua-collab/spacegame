@@ -13,6 +13,22 @@ import { canStoreResource, calculateWarehouseCapacity, calculateWarehouseCapacit
 import { gameBus } from '@/core/typed-event-bus';
 
 /**
+ * Детерминированный счётчик ProductionItem IDs (gap-6, P9).
+ * Раньше использовался `Date.now() + Math.random()` — нарушал принцип детерминизма игры
+ * (audit §2.3). Теперь — монотонный счётчик. Для одного seed и последовательности actions
+ * IDs будут одинаковыми (если enqueue вызывается в том же порядке).
+ */
+let productionItemCounter = 0;
+
+/**
+ * Сбросить счётчик ProductionItem IDs (для детерминированных тестов).
+ * Вызывать после newGame/loadGame, чтобы начать с 0.
+ */
+export function resetProductionItemCounter(): void {
+  productionItemCounter = 0;
+}
+
+/**
  * Обработка одного тика экономики для всех планет.
  */
 export function processEconomyTick(planets: Planet[], queues: Map<EntityId, ProductionQueue>, systemMap?: Map<EntityId, StarSystem>): void {
@@ -292,7 +308,7 @@ export function recalcEnergyBalance(planet: Planet, system?: StarSystem): void {
       if (buildingDef.id === 'solar_plant') {
         // P1-26: power_output = base_output × level × star_luminosity / distance_factor
         production += 10 * levelMult * starLuminosity / distanceFactor;
-      } else if (buildingDef.id === 'nuclear_plant') {
+      } else if (buildingDef.id === 'nuclear_reactor') {
         // P2-06/P2-07: nuclear plant base output = 25, no luminosity factor
         production += 25 * levelMult;
       } else {
@@ -316,7 +332,7 @@ export function recalcEnergyBalance(planet: Planet, system?: StarSystem): void {
     if (buildingDef.category === 'energy') {
       if (buildingDef.id === 'solar_plant') {
         production += 10 * levelMult * starLuminosity / distanceFactor;
-      } else if (buildingDef.id === 'nuclear_plant') {
+      } else if (buildingDef.id === 'nuclear_reactor') {
         // P2-06/P2-07: nuclear plant base output = 25
         production += 25 * levelMult;
       } else {
@@ -338,7 +354,7 @@ export function recalcEnergyBalance(planet: Planet, system?: StarSystem): void {
       if (buildingDef.id === 'solar_plant') {
         // Орбитальные солнечные станции работают эффективнее
         production += 10 * levelMult * starLuminosity / distanceFactor * 1.2;
-      } else if (buildingDef.id === 'nuclear_plant') {
+      } else if (buildingDef.id === 'nuclear_reactor') {
         // P2-06/P2-07: nuclear plant base output = 25
         production += 25 * levelMult;
       } else {
@@ -529,7 +545,7 @@ export function enqueueProduction(
   }
 
   queue.items.push({
-    id: `prod_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    id: `prod_${planet.id}_${productionItemCounter++}`,
     recipeId,
     progress: recipe.time,
     total: recipe.time,

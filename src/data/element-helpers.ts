@@ -20,6 +20,7 @@ export const CATEGORY_LABELS: Record<ElementCategory, string> = {
   lanthanide: 'Лантаноиды',
   rare: 'Редкие',
   transuranic: 'Трансурановые',
+  crafted: 'Синтезированные',
 };
 
 /** Цвета категорий элементов для UI */
@@ -37,4 +38,5 @@ export const CATEGORY_COLORS: Record<ElementCategory, string> = {
   lanthanide: 'text-purple-400',
   rare: 'text-orange-400',
   transuranic: 'text-pink-400',
+  crafted: 'text-fuchsia-400',
 };
