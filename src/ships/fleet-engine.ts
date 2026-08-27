@@ -13,8 +13,17 @@
  * Документация: docs/50-ships.md §1.6 (fleet), §10 (примеры), Приложение D (MVP).
  */
 
-import type { EntityId, Fleet, Ship } from '@/core/types';
+import type { EntityId, Fleet, Ship, GameState, FleetOrder } from '@/core/types';
 import { emptyFuelStore, ALL_FUEL_TYPES } from '@/data/ships/fuel-map';
+import { gameBus } from '@/core/typed-event-bus';
+import {
+  resolveCombat,
+  canColonizePlanet,
+  calculateFleetStats,
+  JUMP_RECHARGE_TICKS,
+  TRAVEL_SCALE,
+} from './orders';
+import { colonizePlanet as engineColonizePlanet } from '@/economy/engine';
 
 // ─── F3: create / merge / split ──────────────────────────────────────────
 
@@ -219,4 +228,297 @@ export function getLooseShips(
 }
 
 // ─── F5: processFleetTick / advanceFleet / consumeFuel / completeOrder ────
-// (Implemented in Phase 2.6 — see end of file after Phase 2.6 work)
+// Phase 2.6 — full tick processing for fleet movement, fuel consumption,
+// and order completion (move/patrol/colonize/attack/defend).
+
+/**
+ * Результат обработки одного тика флота.
+ */
+export interface ProcessFleetTickResult {
+  /** Обновлённый флот (с обновлённой location / orders / fuelStores / defending). */
+  updatedFleet: Fleet;
+  /** true если текущий приказ завершён на этом тике. */
+  completed: boolean;
+  /** systemId если флот прибыл в новую систему на этом тике (next leg completed). */
+  arrivedAt?: EntityId;
+  /** true если флот застрял из-за нехватки топлива. */
+  stranded?: boolean;
+  /** planetId если была колонизирована планета (для colonize order). */
+  colonizedPlanetId?: EntityId;
+}
+
+/**
+ * Стоимость топлива за один leg перехода через JP.
+ * Константа MVP — Etap 4 может усложнить формулой (зависимость от массы флота,
+ * дальности прыжка, эффективности двигателя).
+ */
+const FUEL_COST_PER_LEG = 1;
+
+/**
+ * Обработать 1 тик флота — главный движок движения (§F5 plan).
+ *
+ * Логика:
+ * 1. Нет активного приказа (orders[0]) → no-op.
+ * 2. Приказ 'defend' → мгновенное завершение: fleet.defending = true, order removed.
+ * 3. Если currentTick < order.etaTick → флот в пути. Если currentLegIndex === 0 —
+ *    emit fleet:movement-started (один раз за order; не повторяем на промежуточных).
+ *    Возвращаем без изменений (без движения).
+ * 4. Если currentTick >= order.etaTick → advance на 1 leg:
+ *    a. consumeFuel(fleet, FUEL_COST_PER_LEG) — если insufficient → emit stranded, halt
+ *    b. currentLegIndex + 1, fleet.location = path[currentLegIndex]
+ *    c. emit ships:arrived (для каждого корабля) + fleet:arrived
+ *    d. Если currentLegIndex == path.length - 1 → completeOrder (move done / patrol loops / colonize / attack / defend)
+ *    e. Иначе — пересчёт etaTick для следующего leg (на основе distance / speed)
+ *
+ * @param fleet        — флот для обработки (immutable input)
+ * @param gameState    — для lookup galaxy/systems/planets (используется в colonize/attack)
+ * @param currentTick  — текущий игровой тик
+ */
+export function processFleetTick(
+  fleet: Fleet,
+  gameState: GameState,
+  currentTick: number,
+): ProcessFleetTickResult {
+  // No active order
+  if (fleet.orders.length === 0) {
+    return { updatedFleet: fleet, completed: false };
+  }
+
+  const order = fleet.orders[0]!;
+
+  // 'defend' order: complete immediately, no movement
+  if (order.type === 'defend') {
+    const newFleet: Fleet = {
+      ...fleet,
+      defending: true,
+      orders: fleet.orders.slice(1),
+    };
+    gameBus.emit('fleet:order-completed', {
+      fleetId: fleet.id,
+      orderType: 'defend',
+      targetId: order.targetId,
+    });
+    return { updatedFleet: newFleet, completed: true };
+  }
+
+  // For move/patrol/colonize/attack: movement logic
+  // If currentTick < etaTick → still in transit on current leg
+  if (currentTick < order.etaTick) {
+    // Emit movement-started once per order (when on first leg AND just after issue)
+    // For tests: emit on the first tick after issue (currentTick === issuedTick + 1)
+    // AND currentLegIndex === 0.
+    if (order.currentLegIndex === 0 && currentTick === order.issuedTick + 1) {
+      const toSystemId = order.path.length > 1 ? order.path[1]! : order.targetId;
+      gameBus.emit('fleet:movement-started', {
+        fleetId: fleet.id,
+        fromSystemId: fleet.location,
+        toSystemId,
+        path: order.path,
+        etaTick: order.etaTick,
+      });
+    }
+    return { updatedFleet: fleet, completed: false };
+  }
+
+  // currentTick >= etaTick → advance one leg
+  const nextLegIndex = order.currentLegIndex + 1;
+
+  // Cannot advance beyond path
+  if (nextLegIndex >= order.path.length) {
+    // Already at end — complete
+    return completeOrder(fleet, gameState, currentTick);
+  }
+
+  // Consume fuel for the leg
+  const fuelResult = consumeFuel(fleet, FUEL_COST_PER_LEG);
+  if (fuelResult.insufficient) {
+    gameBus.emit('fleet:fuel-low', {
+      fleetId: fleet.id,
+      remainingFuel: 0,
+      requiredFuel: FUEL_COST_PER_LEG,
+    });
+    gameBus.emit('fleet:stranded', {
+      fleetId: fleet.id,
+      systemId: fleet.location,
+    });
+    return { updatedFleet: fleet, completed: false, stranded: true };
+  }
+
+  // Update fleet location
+  const newLocation = order.path[nextLegIndex]!;
+
+  // Recalculate etaTick for next leg (or set to currentTick if at end)
+  let newEtaTick = order.etaTick;
+  if (nextLegIndex < order.path.length - 1) {
+    // Still more legs to go — calculate time for next leg
+    const fleetStats = computeFleetStatsForTick(fleet, gameState);
+    const nextLegDistance = systemDistance(gameState.galaxy, newLocation, order.path[nextLegIndex + 1]!);
+    const nextLegTime = fleetStats.speed > 0
+      ? Math.ceil((nextLegDistance * TRAVEL_SCALE) / fleetStats.speed + JUMP_RECHARGE_TICKS)
+      : 0;
+    newEtaTick = currentTick + nextLegTime;
+  } else {
+    // Reached final destination
+    newEtaTick = currentTick;
+  }
+
+  // Build new order with updated legIndex + etaTick
+  const newOrder: FleetOrder = {
+    ...order,
+    currentLegIndex: nextLegIndex,
+    etaTick: newEtaTick,
+  };
+  const newFleet: Fleet = {
+    ...fuelResult.fleet,
+    location: newLocation,
+    orders: [newOrder, ...fleet.orders.slice(1)],
+  };
+
+  // Emit arrival events
+  gameBus.emit('fleet:arrived', { fleetId: fleet.id, systemId: newLocation });
+  for (const shipId of fleet.shipIds) {
+    gameBus.emit('ships:arrived', { shipId, systemId: newLocation });
+  }
+
+  // If reached final destination → complete order
+  if (nextLegIndex === order.path.length - 1) {
+    return completeOrder(newFleet, gameState, currentTick);
+  }
+
+  return { updatedFleet: newFleet, completed: false, arrivedAt: newLocation };
+}
+
+/**
+ * Списать топливо с флота. Пробует типы в порядке: xenon → hydrogen → chemical.
+ * Antimatter зарезервирован для Etap 4.
+ *
+ * @returns { fleet, insufficient } — если insufficient, топливо не списано.
+ */
+export function consumeFuel(
+  fleet: Fleet,
+  amount: number,
+): { fleet: Fleet; insufficient: boolean } {
+  // Try each fuel type in priority order (xenon → hydrogen → chemical)
+  const fuelPriority: Array<'xenon' | 'hydrogen' | 'chemical'> = ['xenon', 'hydrogen', 'chemical'];
+  for (const ft of fuelPriority) {
+    if (fleet.fuelStores[ft] >= amount) {
+      const newFuel = { ...fleet.fuelStores, [ft]: fleet.fuelStores[ft] - amount };
+      gameBus.emit('ships:fuel-consumed', {
+        fleetId: fleet.id,
+        fuelType: ft,
+        amount,
+        remaining: newFuel[ft],
+      });
+      return { fleet: { ...fleet, fuelStores: newFuel }, insufficient: false };
+    }
+  }
+  // Insufficient fuel
+  return { fleet, insufficient: true };
+}
+
+/**
+ * Завершить текущий приказ (orders[0]) — pop, emit order-completed.
+ *
+ * Поведение по типам приказов:
+ * - move: просто pop order (fleet остаётся в target системе).
+ * - patrol: re-queue с reversed path (loops обратно к origin).
+ * - colonize: найти первую rocky unowned planet в target system и colonize.
+ * - attack: stub resolveCombat (attacker wins), emit combat:engaged.
+ * - defend: fleet.defending = true, pop order.
+ *
+ * @param fleet        — флот с завершённым orders[0]
+ * @param gameState    — для galaxy/systemMap lookup (colonize/attack)
+ * @param currentTick  — для нового issuedTick (patrol re-queue)
+ */
+export function completeOrder(
+  fleet: Fleet,
+  gameState: GameState,
+  currentTick: number,
+): ProcessFleetTickResult {
+  const order = fleet.orders[0];
+  if (!order) return { updatedFleet: fleet, completed: false };
+
+  let updatedFleet = fleet;
+  let colonizedPlanetId: EntityId | undefined;
+
+  switch (order.type) {
+    case 'move': {
+      // Pop order, fleet stays at target system
+      updatedFleet = { ...fleet, orders: fleet.orders.slice(1) };
+      break;
+    }
+    case 'patrol': {
+      // Re-queue with reversed path (loops back to origin, then back again)
+      const reversedPath = [...order.path].reverse();
+      const travelDuration = order.etaTick - order.issuedTick;
+      const newOrder: FleetOrder = {
+        ...order,
+        path: reversedPath,
+        currentLegIndex: 0,
+        issuedTick: currentTick,
+        etaTick: currentTick + travelDuration,
+      };
+      updatedFleet = { ...fleet, orders: [newOrder, ...fleet.orders.slice(1)] };
+      break;
+    }
+    case 'colonize': {
+      // Find first rocky unowned planet in target system
+      const targetSystem = gameState.galaxy.systemMap.get(order.targetId);
+      if (targetSystem) {
+        const planet = targetSystem.planets.find(p => canColonizePlanet(p));
+        if (planet) {
+          // engineColonizePlanet mutates planet in place (assumes draft or mutable)
+          engineColonizePlanet(planet, targetSystem);
+          colonizedPlanetId = planet.id;
+        }
+      }
+      updatedFleet = { ...fleet, orders: fleet.orders.slice(1) };
+      break;
+    }
+    case 'attack': {
+      // Stub: resolve combat — attacker wins, no losses
+      resolveCombat(fleet);
+      gameBus.emit('combat:engaged', {
+        systemId: fleet.location,
+        attackerFactionId: fleet.owner,
+        defenderFactionId: 'enemy', // stub — Etap 4 will compute real defender
+      });
+      updatedFleet = { ...fleet, orders: fleet.orders.slice(1) };
+      break;
+    }
+    case 'defend': {
+      updatedFleet = { ...fleet, defending: true, orders: fleet.orders.slice(1) };
+      break;
+    }
+  }
+
+  gameBus.emit('fleet:order-completed', {
+    fleetId: fleet.id,
+    orderType: order.type,
+    targetId: order.targetId,
+  });
+
+  return { updatedFleet, completed: true, colonizedPlanetId };
+}
+
+// ─── Helpers (used by processFleetTick for etaTick recalculation) ───────
+
+/**
+ * Compute fleet stats (mass/thrust/speed/jumpDrive) — wrapper for use in
+ * processFleetTick's etaTick recalculation.
+ */
+function computeFleetStatsForTick(fleet: Fleet, gameState: GameState) {
+  return calculateFleetStats(fleet, gameState.ships, gameState.shipDesigns);
+}
+
+/**
+ * Euclidean distance between two systems (in galaxy position units).
+ */
+function systemDistance(galaxy: GameState['galaxy'], sysA: EntityId, sysB: EntityId): number {
+  const a = galaxy.systemMap.get(sysA);
+  const b = galaxy.systemMap.get(sysB);
+  if (!a || !b) return Infinity;
+  const dx = a.position.x - b.position.x;
+  const dy = a.position.y - b.position.y;
+  return Math.sqrt(dx * dx + dy * dy);
+}

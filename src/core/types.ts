@@ -632,6 +632,13 @@ export interface Fleet {
   owner: EntityId;
   orders: FleetOrder[];
   fuelStores: Record<FuelType, number>;
+  /**
+   * Block 02 (F5): true когда флот находится в режиме защиты текущей системы.
+   * Устанавливается в completeOrder для order.type === 'defend' (после прибытия
+   * или мгновенно, т.к. defend не требует перемещения). Снимается при новой
+   * issue-fleet-order (store action сбрасывает в false при любом новом приказе).
+   */
+  defending?: boolean;
 }
 
 export interface FleetOrder {
