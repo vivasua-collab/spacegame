@@ -12,7 +12,7 @@
  * 3. Обновить манифест модуля (emits / subscribes)
  */
 
-import type { EntityId, GameTime, GameSpeed, GameState } from './types';
+import type { EntityId, GameTime, GameSpeed, GameState, BuildingLayer } from './types';
 
 // ─── Core ─────────────────────────────────────────────────
 
@@ -45,7 +45,20 @@ export interface GalaxyEvents {
 // ─── Economy ──────────────────────────────────────────────
 
 export interface EconomyEvents {
-  'economy:build': { planetId: EntityId; hexIndex: number; buildingId: string };
+  /**
+   * Построить здание. Block 01 P3: добавлены опциональные поля `layer` и
+   * `slotIndex` для поддержки atmospheric/orbit слотов.
+   *
+   * - Поведение по умолчанию (backward-compat): `layer` отсутствует или
+   *   `'surface'` — интерпретируется как постройка на гексе, индекс берётся
+   *   из `hexIndex`. Существующие emit-вызовы в тестах и UI не требуют
+   *   правок.
+   * - `layer: 'atmosphere'` — постройка на atmospheric-слоте, индекс берётся
+   *   из `slotIndex` (игнорирует `hexIndex`).
+   * - `layer: 'orbit'` — постройка на orbit-слоте, индекс берётся из
+   *   `slotIndex` (игнорирует `hexIndex`).
+   */
+  'economy:build': { planetId: EntityId; buildingId: string; hexIndex?: number; slotIndex?: number; layer?: BuildingLayer };
   'economy:building-constructed': { planetId: EntityId; hexIndex: number; buildingId: string };
   'economy:upgrade': { planetId: EntityId; hexIndex: number };
   'economy:building-upgraded': { planetId: EntityId; hexIndex: number; level: number };

@@ -68,8 +68,11 @@ export interface GameStore {
 
   // Экономика
   buildOnHex: (planetId: EntityId, hexIndex: number, buildingId: string) => boolean;
+  buildOnAtmosphereSlot: (planetId: EntityId, slotIndex: number, buildingId: string) => boolean;
+  buildOnOrbitSlot: (planetId: EntityId, slotIndex: number, buildingId: string) => boolean;
   upgradeBuildingOnHex: (planetId: EntityId, hexIndex: number) => boolean;
   enqueueProduction: (planetId: EntityId, recipeId: string, repeat?: boolean) => boolean;
+  cancelProduction: (planetId: EntityId, queueItemId: string) => boolean;
 
   // Колонизация
   colonizePlanet: (planetId: EntityId) => boolean;
@@ -319,6 +322,54 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
       return after > before;
     },
 
+    buildOnAtmosphereSlot: (planetId, slotIndex, buildingId) => {
+      // Block 01 P3 — emit economy:build with layer='atmosphere' + slotIndex.
+      // EconomyModule.onBuild dispatches to engine.buildOnAtmosphereSlot.
+      const mediator = getMediatorWithModules();
+      const gameState = get().gameState;
+      if (!gameState) return false;
+      const planet = findPlanet(gameState, planetId);
+      if (!planet) return false;
+      if (slotIndex < 0 || slotIndex >= planet.atmosphericSlots.length) return false;
+      const before = planet.atmosphericSlots[slotIndex]?.buildingId ?? null;
+      mediator.getBus().emit('economy:build', {
+        planetId,
+        buildingId,
+        slotIndex,
+        layer: 'atmosphere',
+      });
+      const newState = get().gameState;
+      if (!newState) return false;
+      const newPlanet = findPlanet(newState, planetId);
+      if (!newPlanet) return false;
+      const after = newPlanet.atmosphericSlots[slotIndex]?.buildingId ?? null;
+      return after === buildingId && before !== buildingId;
+    },
+
+    buildOnOrbitSlot: (planetId, slotIndex, buildingId) => {
+      // Block 01 P3 — emit economy:build with layer='orbit' + slotIndex.
+      // EconomyModule.onBuild dispatches to engine.buildOnOrbitSlot.
+      const mediator = getMediatorWithModules();
+      const gameState = get().gameState;
+      if (!gameState) return false;
+      const planet = findPlanet(gameState, planetId);
+      if (!planet) return false;
+      if (slotIndex < 0 || slotIndex >= planet.orbitSlots.length) return false;
+      const before = planet.orbitSlots[slotIndex]?.buildingId ?? null;
+      mediator.getBus().emit('economy:build', {
+        planetId,
+        buildingId,
+        slotIndex,
+        layer: 'orbit',
+      });
+      const newState = get().gameState;
+      if (!newState) return false;
+      const newPlanet = findPlanet(newState, planetId);
+      if (!newPlanet) return false;
+      const after = newPlanet.orbitSlots[slotIndex]?.buildingId ?? null;
+      return after === buildingId && before !== buildingId;
+    },
+
     enqueueProduction: (planetId, recipeId, repeat = false) => {
       const mediator = getMediatorWithModules();
       const gameState = get().gameState;
@@ -332,6 +383,26 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
       if (!newState) return false;
       const after = newState.productionQueues.get(planetId)?.items.length ?? 0;
       return after > before;
+    },
+
+    cancelProduction: (planetId, queueItemId) => {
+      // Block 01 P4 — cancel a queued production item by ID.
+      // Pattern: directly mutate the queue via immer draft (same as
+      // setReserveMinimum / setColonyRole — no need to round-trip
+      // through the mediator for a simple deletion).
+      let ok = false;
+      set((state) => {
+        if (!state.gameState) return;
+        const planet = findPlanet(state.gameState, planetId);
+        if (!planet) return;
+        const queue = state.gameState.productionQueues.get(planetId);
+        if (!queue) return;
+        const idx = queue.items.findIndex((it) => it.id === queueItemId);
+        if (idx === -1) return;
+        queue.items.splice(idx, 1);
+        ok = true;
+      });
+      return ok;
     },
 
     colonizePlanet: (planetId) => {

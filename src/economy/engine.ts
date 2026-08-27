@@ -519,6 +519,37 @@ export function enqueueProduction(
 }
 
 /**
+ * Отменить элемент очереди производства по его ID (Block 01 P4).
+ *
+ * Сканирует очередь планеты и удаляет элемент с совпадающим `id`.
+ * Возвращает true, если элемент найден и удалён; false — если очередь
+ * или элемент не существуют. Эмитит `economy:production-cancelled`
+ * с причиной `insufficient_inputs` (ближайшая доступная причина из
+ * `EconomyEvents['economy:production-cancelled']['reason']` для ручной
+ * отмены; будущая итерация может добавить `'manual'` в union type).
+ */
+export function cancelProduction(
+  planet: Planet,
+  queues: Map<EntityId, ProductionQueue>,
+  queueItemId: string,
+): boolean {
+  const queue = queues.get(planet.id);
+  if (!queue) return false;
+
+  const idx = queue.items.findIndex((it) => it.id === queueItemId);
+  if (idx === -1) return false;
+
+  const [removed] = queue.items.splice(idx, 1);
+  gameBus.emit('economy:production-cancelled', {
+    planetId: planet.id,
+    recipeId: removed.recipeId,
+    queueItemId: removed.id,
+    reason: 'insufficient_inputs',
+  });
+  return true;
+}
+
+/**
  * Колонизировать планету: поставить colony_hub на лучший гекс + дать стартовые ресурсы.
  * Возвращает true если успешно, false если нельзя колонизировать.
  */

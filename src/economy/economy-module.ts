@@ -28,6 +28,8 @@ import { produce } from 'immer';
 import {
   processEconomyTick,
   buildOnHex as engineBuildOnHex,
+  buildOnAtmosphereSlot as engineBuildOnAtmosphereSlot,
+  buildOnOrbitSlot as engineBuildOnOrbitSlot,
   upgradeBuilding as engineUpgradeBuilding,
   enqueueProduction as engineEnqueueProduction,
   colonizePlanet as engineColonizePlanet,
@@ -171,23 +173,43 @@ export class EconomyModule implements IGameModule {
     const currentState = this.getGameState?.();
     if (!currentState) return;
 
+    // Block 01 P3: dispatch by `layer`. Defaults to 'surface' for backward
+    // compatibility — existing test emit `{ planetId, hexIndex, buildingId }`
+    // without `layer` continues to call engine.buildOnHex.
+    const layer = payload.layer ?? 'surface';
+
     // Block 01 P2: wrap engine mutation in immer produce() — creates a new
     // immutable state with new references for changed paths. The engine
     // mutates the draft directly (Option A: Draft<Planet> is structurally
     // compatible with Planet for mutation purposes).
     let success = false;
-    let hexIndexAfter = payload.hexIndex;
+    let reportedHexIndex = payload.hexIndex ?? -1;
     const newState = produce(currentState, (draft) => {
       const planet = this.findPlanet(draft, payload.planetId);
       if (!planet) return;
-      success = engineBuildOnHex(planet, payload.hexIndex, payload.buildingId);
+      if (layer === 'atmosphere') {
+        const slotIndex = payload.slotIndex ?? 0;
+        success = engineBuildOnAtmosphereSlot(planet, slotIndex, payload.buildingId);
+        // engine emits use hexIndex = -1 - slotIndex for atmosphere — mirror
+        // that convention so downstream listeners (UI) can locate the slot.
+        if (success) reportedHexIndex = -1 - slotIndex;
+      } else if (layer === 'orbit') {
+        const slotIndex = payload.slotIndex ?? 0;
+        success = engineBuildOnOrbitSlot(planet, slotIndex, payload.buildingId);
+        if (success) reportedHexIndex = -100 - slotIndex;
+      } else {
+        // surface (default)
+        const hexIndex = payload.hexIndex ?? 0;
+        success = engineBuildOnHex(planet, hexIndex, payload.buildingId);
+        if (success) reportedHexIndex = hexIndex;
+      }
     });
 
     if (success) {
       this.commitState?.(newState);
       this.bus.emit('economy:building-constructed', {
         planetId: payload.planetId,
-        hexIndex: hexIndexAfter,
+        hexIndex: reportedHexIndex,
         buildingId: payload.buildingId,
       });
       // Note: core:state-changed is emitted by mediator.commitState() —

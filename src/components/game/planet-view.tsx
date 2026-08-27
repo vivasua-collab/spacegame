@@ -5,12 +5,15 @@ import { useGameStore } from '@/stores/game-store';
 import { axialToPixel } from '@/galaxy';
 import { TERRAIN_COLORS, TERRAIN_NAMES, TYPE_NAMES, SIZE_NAMES } from '@/data/planet-types';
 import { BUILDING_MAP } from '@/data/buildings';
+import { RECIPE_MAP } from '@/data/recipes';
 import { ELEMENT_MAP } from '@/data/elements';
 import { getCurrentLookups, findResourceDisplay } from '@/data/baked-lookups';
 import { CATEGORY_LABELS } from '@/data/element-helpers';
 import { getUsedCapacity, getOrbitBufferUsed, getSpecInfo, getResourceType, getResourceCategory } from '@/data/warehouse';
-import { BuildingDialog } from './building-dialog';
+import { BuildingDialog, type BuildingDialogTarget } from './building-dialog';
 import { ResourcePanel } from './resource-panel';
+import { ProductionQueuePanel } from './production-queue-panel';
+import { ProductionQueue } from './production-queue';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
@@ -32,8 +35,9 @@ import {
   Gem,
   Map,
   Warehouse,
+  Factory,
 } from 'lucide-react';
-import type { Planet, HexCell, AtmosphereType, LifeLevel, AtmosphericSlot, OrbitalSlot, PlanetResourceDeposit, ColonyRole, WarehouseSpecialization } from '@/core/types';
+import type { Planet, HexCell, AtmosphereType, LifeLevel, AtmosphericSlot, OrbitalSlot, PlanetResourceDeposit, ColonyRole, WarehouseSpecialization, BuildingLayer } from '@/core/types';
 
 const ATMO_DISPLAY: Record<AtmosphereType, string> = {
   none: 'Нет', thin: 'Тонкая', standard: 'Стандартная', dense: 'Плотная',
@@ -61,7 +65,7 @@ function formatQuantity(q: number): string {
 
 const HEX_SIZE = 24; // pixel size for hex rendering
 
-type PlanetTab = 'map' | 'resources';
+type PlanetTab = 'map' | 'resources' | 'production';
 
 export function PlanetView() {
   const gameState = useGameStore((s) => s.gameState);
@@ -70,7 +74,7 @@ export function PlanetView() {
   const setView = useGameStore((s) => s.setView);
 
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [selectedHexIndex, setSelectedHexIndex] = useState<number | null>(null);
+  const [dialogTarget, setDialogTarget] = useState<BuildingDialogTarget | null>(null);
   const [hoveredHexIndex, setHoveredHexIndex] = useState<number | null>(null);
   const [activeTab, setActiveTab] = useState<PlanetTab>('map');
   const [warehouseOpen, setWarehouseOpen] = useState(false);
@@ -98,10 +102,20 @@ export function PlanetView() {
     );
   }
 
-  const selectedHex = selectedHexIndex !== null ? planet.hexes[selectedHexIndex] : null;
-
   const handleHexClick = (hexIndex: number) => {
-    setSelectedHexIndex(hexIndex);
+    setDialogTarget({ kind: 'hex', hexIndex });
+    setDialogOpen(true);
+  };
+
+  /** Открыть диалог постройки на атмосферном слоте. */
+  const handleAtmosphereSlotClick = (slotIndex: number) => {
+    setDialogTarget({ kind: 'atmosphere', slotIndex });
+    setDialogOpen(true);
+  };
+
+  /** Открыть диалог постройки на орбитальном слоте. */
+  const handleOrbitSlotClick = (slotIndex: number) => {
+    setDialogTarget({ kind: 'orbit', slotIndex });
     setDialogOpen(true);
   };
 
@@ -155,6 +169,19 @@ export function PlanetView() {
               <Gem className="size-3 inline mr-0.5" />
               Ресурсы ({planet.resourceDeposits.length})
             </button>
+            <button
+              className={`text-[10px] px-2 py-0.5 rounded transition-colors ${
+                activeTab === 'production' ? 'bg-white/15 text-white' : 'text-slate-500 hover:text-slate-300'
+              }`}
+              onClick={() => setActiveTab('production')}
+              role="tab"
+              aria-selected={activeTab === 'production'}
+              aria-controls="panel-production"
+              id="tab-production"
+            >
+              <Factory className="size-3 inline mr-0.5" />
+              Производство
+            </button>
             <Separator orientation="vertical" className="h-3 bg-white/10 mx-0.5" />
             {/* Warehouse button → opens Sheet */}
             <Sheet open={warehouseOpen} onOpenChange={setWarehouseOpen}>
@@ -191,9 +218,13 @@ export function PlanetView() {
               hoveredHexIndex={hoveredHexIndex}
             />
           </div>
-        ) : (
+        ) : activeTab === 'resources' ? (
           <div className="flex-1 min-h-0">
             <ResourcesTabContent planet={planet} />
+          </div>
+        ) : (
+          <div className="flex-1 min-h-0">
+            <ProductionTabContent planet={planet} />
           </div>
         )}
       </div>
@@ -245,12 +276,22 @@ export function PlanetView() {
 
             {/* Atmospheric Slots (gas giants) */}
             {planet.atmosphericSlots.length > 0 && (
-              <SlotCard title="Атмосферные слоты" slots={planet.atmosphericSlots} />
+              <SlotCard
+                title="Атмосферные слоты"
+                slots={planet.atmosphericSlots}
+                layer="atmosphere"
+                onSlotClick={handleAtmosphereSlotClick}
+              />
             )}
 
             {/* Orbital Slots */}
             {planet.orbitSlots.length > 0 && (
-              <SlotCard title="Орбитальные слоты" slots={planet.orbitSlots} />
+              <SlotCard
+                title="Орбитальные слоты"
+                slots={planet.orbitSlots}
+                layer="orbit"
+                onSlotClick={handleOrbitSlotClick}
+              />
             )}
           </div>
         </ScrollArea>
@@ -261,8 +302,7 @@ export function PlanetView() {
         open={dialogOpen}
         onOpenChange={setDialogOpen}
         planet={planet}
-        hexIndex={selectedHexIndex}
-        terrain={selectedHex?.terrain ?? null}
+        target={dialogTarget}
       />
     </div>
   );
@@ -380,6 +420,110 @@ function ResourceSection({
         })}
       </div>
     </div>
+  );
+}
+
+// ============ Production Tab (Block 01 P4) ============
+
+/** ID зданий, у которых есть очередь производства. */
+const PRODUCTION_BUILDING_IDS = ['processor', 'synthesizer', 'refinery', 'shipyard'] as const;
+
+/**
+ * Найти все экземпляры здания (на поверхности / в атмосфере / на орбите).
+ */
+function findBuildingInstances(planet: Planet, buildingId: string): Array<{ layer: 'surface' | 'atmosphere' | 'orbit'; level: number; slotIndex: number }> {
+  const instances: Array<{ layer: 'surface' | 'atmosphere' | 'orbit'; level: number; slotIndex: number }> = [];
+
+  // Surface hexes
+  planet.hexes.forEach((h, idx) => {
+    if (h.buildingId === buildingId) {
+      instances.push({ layer: 'surface', level: h.buildingLevel, slotIndex: idx });
+    }
+  });
+
+  // Atmospheric slots
+  planet.atmosphericSlots.forEach((s) => {
+    if (s.buildingId === buildingId) {
+      instances.push({ layer: 'atmosphere', level: s.buildingLevel, slotIndex: s.index });
+    }
+  });
+
+  // Orbital slots
+  planet.orbitSlots.forEach((s) => {
+    if (s.buildingId === buildingId) {
+      instances.push({ layer: 'orbit', level: s.buildingLevel, slotIndex: s.index });
+    }
+  });
+
+  return instances;
+}
+
+function ProductionTabContent({ planet }: { planet: Planet }) {
+  const gameState = useGameStore((s) => s.gameState);
+  if (!gameState) return null;
+
+  const planetQueue = gameState.productionQueues.get(planet.id);
+
+  return (
+    <ScrollArea className="h-full max-h-[calc(100vh-160px)]">
+      <div className="p-2 space-y-4">
+        <div className="text-[10px] text-slate-600 italic px-1">
+          Очередь производства — по зданиям. Список рецептов доступен после постройки здания.
+        </div>
+
+        {PRODUCTION_BUILDING_IDS.map((buildingId) => {
+          const instances = findBuildingInstances(planet, buildingId);
+          const buildingDef = BUILDING_MAP.get(buildingId);
+          if (!buildingDef) return null;
+
+          if (instances.length === 0) {
+            return (
+              <Card key={buildingId} className="bg-[#0d0d24] border-white/10 text-white py-3 gap-3 opacity-60">
+                <CardContent className="px-4 py-0 space-y-1">
+                  <div className="flex items-center gap-2">
+                    <Factory className="size-4 text-slate-500" />
+                    <span className="text-sm font-semibold text-slate-300">{buildingDef.name}</span>
+                  </div>
+                  <div className="text-[11px] text-slate-500">
+                    Постройте «{buildingDef.name}» для запуска производства.
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          }
+
+          // Filter queue items by recipe.buildingId === buildingId
+          const items = planetQueue?.items.filter((it) => {
+            // Look up recipe to find its buildingId
+            const recipe = RECIPE_MAP.get(it.recipeId);
+            return recipe?.buildingId === buildingId;
+          }) ?? [];
+
+          return (
+            <Card key={buildingId} className="bg-[#0d0d24] border-white/10 text-white py-3 gap-3">
+              <CardContent className="px-4 py-0 space-y-3">
+                <div className="flex items-center gap-2">
+                  <Factory className="size-4 text-amber-400" />
+                  <span className="text-sm font-semibold text-white">{buildingDef.name}</span>
+                  <Badge variant="outline" className="text-[9px] h-4 px-1">
+                    {instances.length} шт.
+                  </Badge>
+                  <span className="text-[10px] text-slate-500 ml-auto">
+                    Lvl {instances.map((i) => i.level).join(', ')}
+                  </span>
+                </div>
+
+                {/* Current queue for this building */}
+                <ProductionQueue planetId={planet.id} items={items} />
+
+                {/* Recipe picker + add-to-queue buttons */}
+                <ProductionQueuePanel planetId={planet.id} buildingId={buildingId} />
+              </CardContent>
+            </Card>
+          );
+        })}
+      </div>
+    </ScrollArea>
   );
 }
 
@@ -656,7 +800,17 @@ function HexInfoCard({ hex }: { hex: HexCell }) {
 
 // ============ Slot Card (Atmosphere / Orbit) ============
 
-function SlotCard({ title, slots }: { title: string; slots: (AtmosphericSlot | OrbitalSlot)[] }) {
+function SlotCard({
+  title,
+  slots,
+  layer,
+  onSlotClick,
+}: {
+  title: string;
+  slots: (AtmosphericSlot | OrbitalSlot)[];
+  layer: BuildingLayer;
+  onSlotClick: (slotIndex: number) => void;
+}) {
   const filledCount = slots.filter((s) => s.buildingId !== null).length;
 
   return (
@@ -668,15 +822,36 @@ function SlotCard({ title, slots }: { title: string; slots: (AtmosphericSlot | O
         <div className="space-y-1">
           {slots.map((slot) => {
             const buildingDef = slot.buildingId ? BUILDING_MAP.get(slot.buildingId) : null;
+            const isOccupied = !!slot.buildingId;
             return (
-              <div key={slot.index} className="flex items-center justify-between text-xs">
-                <span className="text-slate-500 font-mono">#{slot.index + 1}</span>
+              <div
+                key={slot.index}
+                className="flex items-center justify-between text-xs gap-1"
+              >
+                <span className="text-slate-500 font-mono shrink-0">#{slot.index + 1}</span>
                 {buildingDef ? (
-                  <span className="text-amber-400">
+                  <span
+                    className="text-amber-400 cursor-pointer truncate"
+                    title={`${buildingDef.name} — нажмите для просмотра`}
+                    onClick={() => onSlotClick(slot.index)}
+                  >
                     {buildingDef.name} {slot.buildingLevel > 1 ? `(Lv.${slot.buildingLevel})` : ''}
                   </span>
                 ) : (
-                  <span className="text-slate-600 italic">Пусто</span>
+                  <button
+                    className="text-[10px] px-2 py-0.5 rounded bg-white/5 text-slate-400 hover:bg-white/10 hover:text-slate-200 transition-colors"
+                    onClick={() => onSlotClick(slot.index)}
+                    aria-label={`Построить здание в слоте ${layer} #${slot.index + 1}`}
+                  >
+                    + Построить
+                  </button>
+                )}
+                {/* Show "Построить" hint even on occupied slot — clicking it opens dialog
+                    so user can switch tabs and build elsewhere on the same planet. */}
+                {isOccupied && (
+                  <span className="text-[9px] text-slate-600 italic shrink-0">
+                    клик = открыть
+                  </span>
                 )}
               </div>
             );

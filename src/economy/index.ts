@@ -7,8 +7,11 @@ export {
   processEconomyTick,
   recalcEnergyBalance,
   buildOnHex,
+  buildOnAtmosphereSlot,
+  buildOnOrbitSlot,
   upgradeBuilding,
   enqueueProduction,
+  cancelProduction,
   giveStarterResources,
   colonizePlanet,
 } from './engine';
