@@ -37,6 +37,7 @@ import {
 } from '@/components/ui/dialog';
 import { toast } from '@/hooks/use-toast';
 import { ShipCard } from './ship-card';
+import { FleetOrdersPanel } from './fleet-orders-panel';
 import type { EntityId } from '@/core/types';
 import {
   Rocket,
@@ -414,8 +415,11 @@ export function FleetView() {
           </CardContent>
         </Card>
 
-        {/* Right panel: loose ships + selected fleet actions */}
+        {/* Right panel: orders + selected fleet actions + loose ships */}
         <div className="w-72 shrink-0 flex flex-col gap-3">
+          {/* Block 02 (F4): Orders panel — показывается когда флот выбран */}
+          <FleetOrdersPanel fleet={selectedFleet} />
+
           {/* Selected fleet actions */}
           {selectedFleet && (
             <Card className="bg-[#0d0d24] border-white/10">

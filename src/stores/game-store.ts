@@ -40,6 +40,7 @@ import {
   getFleetsAt as getFleetsAtFn,
   getLooseShips as getLooseShipsFn,
 } from '@/ships/fleet-engine'; // Block 02 F3
+import { executeOrder as executeOrderFn } from '@/ships/orders'; // Block 02 F4
 
 // ============ Типы стора ============
 
@@ -162,6 +163,16 @@ export interface GameStore {
   getShip: (shipId: string) => import('@/core/types').Ship | undefined;
   /** Получить «свободные» корабли игрока на локации (planetId или systemId). */
   getLooseShips: (ownerId: string, location?: string) => import('@/core/types').Ship[];
+
+  // ─── Block 02 (F4): Приказы флотов ─────────────────────
+  /** Отдать приказ флоту. type — move/patrol/colonize/attack/defend. Возвращает true если успешно. */
+  issueFleetOrder: (
+    fleetId: string,
+    type: import('@/core/types').FleetOrder['type'],
+    targetId: string,
+  ) => boolean;
+  /** Отменить текущий приказ флота (снимает orders[0]). */
+  cancelFleetOrder: (fleetId: string) => boolean;
 
   // Утилиты
   getSystem: (id: EntityId) => StarSystem | undefined;
@@ -1115,6 +1126,48 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
       const { gameState } = get();
       if (!gameState) return [];
       return getLooseShipsFn(gameState.ships, gameState.fleets, ownerId, location);
+    },
+
+    // ─── Block 02 (F4): Приказы флотов ────────────────────
+    // Pattern: pure engine function executeOrder returns { updatedFleet, ok } —
+    // store applies via immer draft. Failure (no route / no jump drive) returns false;
+    // UI shows toast error per failure reason.
+    issueFleetOrder: (fleetId, type, targetId) => {
+      let ok = false;
+      set((state) => {
+        if (!state.gameState) return;
+        const fleet = getFleetByIdFn(state.gameState.fleets, fleetId);
+        if (!fleet) return;
+        const result = executeOrderFn(
+          fleet,
+          type,
+          targetId,
+          state.gameState.galaxy,
+          state.gameState.ships,
+          state.gameState.shipDesigns,
+          state.gameState.time.tick,
+        );
+        if (!result.ok || !result.order) return;
+        // Replace fleet in array
+        const idx = state.gameState.fleets.findIndex(f => f.id === fleetId);
+        if (idx === -1) return;
+        state.gameState.fleets[idx] = result.updatedFleet;
+        ok = true;
+      });
+      return ok;
+    },
+
+    cancelFleetOrder: (fleetId) => {
+      let ok = false;
+      set((state) => {
+        if (!state.gameState) return;
+        const fleet = getFleetByIdFn(state.gameState.fleets, fleetId);
+        if (!fleet) return;
+        if (fleet.orders.length === 0) return;
+        fleet.orders = fleet.orders.slice(1);
+        ok = true;
+      });
+      return ok;
     },
   };
 }));
