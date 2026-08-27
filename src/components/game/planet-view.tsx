@@ -12,6 +12,7 @@ import { CATEGORY_LABELS } from '@/data/element-helpers';
 import { getUsedCapacity, getOrbitBufferUsed, getSpecInfo, getResourceType, getResourceCategory } from '@/data/warehouse';
 import { BuildingDialog, type BuildingDialogTarget } from './building-dialog';
 import { ResourcePanel } from './resource-panel';
+import { ShipyardDialog } from './shipyard-dialog';
 import { ProductionQueuePanel } from './production-queue-panel';
 import { ProductionQueue } from './production-queue';
 import { Card, CardContent } from '@/components/ui/card';
@@ -36,6 +37,7 @@ import {
   Map,
   Warehouse,
   Factory,
+  Rocket,
 } from 'lucide-react';
 import type { Planet, HexCell, AtmosphereType, LifeLevel, AtmosphericSlot, OrbitalSlot, PlanetResourceDeposit, ColonyRole, WarehouseSpecialization, BuildingLayer } from '@/core/types';
 
@@ -78,6 +80,9 @@ export function PlanetView() {
   const [hoveredHexIndex, setHoveredHexIndex] = useState<number | null>(null);
   const [activeTab, setActiveTab] = useState<PlanetTab>('map');
   const [warehouseOpen, setWarehouseOpen] = useState(false);
+  // Block 02 (F7): shipyard dialog open state — opened from ShipyardIndicator
+  // in the right sidebar (quick access without navigating through BuildingDialog).
+  const [shipyardDialogOpen, setShipyardDialogOpen] = useState(false);
 
   if (!gameState || !selectedPlanetId) {
     return (
@@ -293,6 +298,9 @@ export function PlanetView() {
                 onSlotClick={handleOrbitSlotClick}
               />
             )}
+
+            {/* Block 02 (F7): Shipyard indicator — quick access to shipyard queue */}
+            <ShipyardIndicator planet={planet} onOpenShipyard={() => setShipyardDialogOpen(true)} />
           </div>
         </ScrollArea>
       </div>
@@ -303,6 +311,13 @@ export function PlanetView() {
         onOpenChange={setDialogOpen}
         planet={planet}
         target={dialogTarget}
+      />
+
+      {/* Block 02 (F7): Shipyard dialog — opened from ShipyardIndicator */}
+      <ShipyardDialog
+        open={shipyardDialogOpen}
+        onOpenChange={setShipyardDialogOpen}
+        planet={planet}
       />
     </div>
   );
@@ -883,6 +898,24 @@ const SPEC_NAMES: Record<WarehouseSpecialization, string> = {
 function WarehousePanel({ planet }: { planet: Planet }) {
   const setColonyRole = useGameStore((s) => s.setColonyRole);
   const setWarehouseSpecialization = useGameStore((s) => s.setWarehouseSpecialization);
+  const gameState = useGameStore((s) => s.gameState);
+
+  // Block 02 (F7): compute fleet fuel summary (sum across all player fleets).
+  // Each fuelStore entry per fleet is summed by type. Shown in ResourcePanel
+  // as the «Топливо флотов» section — gives player at-a-glance view of
+  // strategic fuel reserves when checking planet warehouse.
+  // NOTE: hooks must be called unconditionally — see Rules of Hooks.
+  const fleetFuelSummary = useMemo(() => {
+    if (!gameState) return [];
+    const sums: Record<string, number> = {};
+    for (const fleet of gameState.fleets) {
+      if (fleet.owner !== gameState.playerFactionId) continue;
+      for (const [fuelType, amount] of Object.entries(fleet.fuelStores)) {
+        sums[fuelType] = (sums[fuelType] ?? 0) + (amount as number);
+      }
+    }
+    return Object.entries(sums).map(([fuelType, amount]) => ({ fuelType, amount }));
+  }, [gameState]);
 
   if (!planet.warehouse) {
     return (
@@ -1014,18 +1047,92 @@ function WarehousePanel({ planet }: { planet: Planet }) {
       {/* Stored resources in warehouse */}
       {(() => {
         const storedEntries = Object.entries(planet.resources).filter(([, amount]) => amount > 0);
-        if (storedEntries.length === 0) return null;
+        if (storedEntries.length === 0 && fleetFuelSummary.length === 0) return null;
         return (
           <div className="space-y-1.5">
             <span className="text-[10px] text-slate-500 uppercase tracking-wider">Хранимые ресурсы</span>
             <Card className="bg-white/[0.03] border-white/5 py-3 gap-3">
               <CardContent className="px-3 py-0">
-                <ResourcePanel resources={planet.resources} className="h-48" />
+                <ResourcePanel
+                  resources={planet.resources}
+                  className="h-48"
+                  fleetFuelSummary={fleetFuelSummary}
+                />
               </CardContent>
             </Card>
           </div>
         );
       })()}
     </div>
+  );
+}
+
+/**
+ * Block 02 (F7): Shipyard indicator — compact card in planet-view right
+ * sidebar showing shipyard presence + queue size. Click opens ShipyardDialog
+ * for quick access (player doesn't have to navigate BuildingDialog →
+ * shipyard → «Очередь верфи»).
+ *
+ * Hidden if the planet has no shipyard building instance. Uses the
+ * shared `findBuildingInstances` helper to detect shipyard across all
+ * building layers (surface hexes, atmospheric slots, orbital slots).
+ */
+function ShipyardIndicator({
+  planet,
+  onOpenShipyard,
+}: {
+  planet: Planet;
+  onOpenShipyard: () => void;
+}) {
+  const gameState = useGameStore((s) => s.gameState);
+  if (!gameState) return null;
+
+  const shipyardInstances = findBuildingInstances(planet, 'shipyard');
+  if (shipyardInstances.length === 0) return null;
+
+  // Sum levels across all shipyard instances (each level adds build capacity
+  // in the MVP — Etap 4 may parallelize queues per-instance).
+  const totalLevels = shipyardInstances.reduce((sum, i) => sum + i.level, 0);
+  // Read queue for this planet — may be undefined if no items enqueued yet.
+  const queue = gameState.shipyardQueues.get(planet.id);
+  const queueSize = queue?.items.length ?? 0;
+  // Count items currently in progress (progressTicks < totalTicks)
+  const inProgress = queue?.items.filter(i => i.progressTicks < i.totalTicks).length ?? 0;
+
+  return (
+    <Card className="bg-[#0d0d24] border-amber-600/30 text-white py-3 gap-3">
+      <CardContent className="px-4 py-0 space-y-1.5">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-1.5">
+            <Rocket className="size-3.5 text-amber-300" />
+            <span className="text-xs font-semibold uppercase tracking-wider text-amber-200">
+              Верфь
+            </span>
+          </div>
+          <Badge variant="outline" className="text-[9px] h-4 px-1 border-amber-600/40 text-amber-200">
+            L{totalLevels}
+          </Badge>
+        </div>
+        <div className="text-xs text-slate-300 space-y-0.5">
+          <div className="flex justify-between">
+            <span className="text-slate-500">В очереди</span>
+            <span className="font-mono text-amber-200">{queueSize}</span>
+          </div>
+          {inProgress > 0 && (
+            <div className="flex justify-between">
+              <span className="text-slate-500">Строится</span>
+              <span className="font-mono text-cyan-300">{inProgress}</span>
+            </div>
+          )}
+        </div>
+        <button
+          onClick={onOpenShipyard}
+          className="w-full mt-1 text-[10px] text-amber-300 hover:text-amber-100 hover:bg-amber-600/10 py-1 rounded transition-colors border border-amber-600/20 hover:border-amber-600/40"
+          aria-label={`Открыть очередь верфи планеты ${planet.name}`}
+        >
+          Открыть очередь
+        </button>
+      </CardContent>
+    </Card>
   );
 }

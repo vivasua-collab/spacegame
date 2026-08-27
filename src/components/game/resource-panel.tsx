@@ -5,6 +5,7 @@ import { Separator } from '@/components/ui/separator';
 import { ELEMENT_MAP } from '@/data/elements';
 import { CATEGORY_LABELS, CATEGORY_COLORS } from '@/data/element-helpers';
 import { CRAFTED_MATERIALS, getCraftedMaterial } from '@/data/crafted-materials';
+import { Rocket } from 'lucide-react';
 import type { ElementCategory } from '@/core/types';
 
 const CATEGORY_ORDER: ElementCategory[] = [
@@ -16,6 +17,12 @@ const CATEGORY_ORDER: ElementCategory[] = [
 interface ResourcePanelProps {
   resources: Record<string, number>;
   className?: string;
+  /**
+   * Block 02 (F7): summary of fuel across all player fleets (sum of fuelStores).
+   * Each entry: { fuelType, amount }. Optional — if undefined, the
+   * «Топливо флотов» section is not rendered.
+   */
+  fleetFuelSummary?: Array<{ fuelType: string; amount: number }>;
 }
 
 interface PanelEntry {
@@ -25,7 +32,7 @@ interface PanelEntry {
   amount: number;
 }
 
-export function ResourcePanel({ resources, className }: ResourcePanelProps) {
+export function ResourcePanel({ resources, className, fleetFuelSummary }: ResourcePanelProps) {
   const entries = Object.entries(resources).filter(([, amount]) => amount > 0);
 
   // Group by category
@@ -55,9 +62,36 @@ export function ResourcePanel({ resources, className }: ResourcePanelProps) {
     uncategorized.push({ id, name: id.replace(/-/g, ' '), symbol: id, amount });
   }
 
+  // Block 02 (F7): filter fleet fuel summary to non-zero entries
+  const fleetFuelEntries = (fleetFuelSummary ?? []).filter(e => e.amount > 0);
+
   return (
     <ScrollArea className={className}>
       <div className="space-y-2 pr-2">
+        {/* Block 02 (F7): Fleet fuel summary section (shown first — strategic resource) */}
+        {fleetFuelEntries.length > 0 && (
+          <div>
+            <div className="text-xs font-semibold uppercase tracking-wider text-cyan-300 mb-1 flex items-center gap-1">
+              <Rocket className="size-3" />
+              Топливо флотов
+            </div>
+            <div className="space-y-0.5">
+              {fleetFuelEntries.map((entry) => (
+                <div key={entry.fuelType} className="flex items-center justify-between text-xs">
+                  <span className="text-muted-foreground truncate mr-2">
+                    <span className="text-cyan-400/70 font-mono mr-1">{entry.fuelType.slice(0, 3).toUpperCase()}</span>
+                    {entry.fuelType}
+                  </span>
+                  <span className="font-mono text-cyan-200 whitespace-nowrap">
+                    {formatAmount(entry.amount)}
+                  </span>
+                </div>
+              ))}
+            </div>
+            <Separator className="my-1.5 bg-cyan-500/15" />
+          </div>
+        )}
+
         {CATEGORY_ORDER.map((cat) => {
           const items = grouped.get(cat);
           if (!items || items.length === 0) return null;

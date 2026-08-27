@@ -84,6 +84,14 @@ const ProductionQueuesSchema = z.array(
  * `passthrough()` on the root object — extra fields are tolerated (forward
  * compat: if a future version adds `version: 2` etc., the v1 schema still
  * parses successfully, allowing migration logic to handle the upgrade).
+ *
+ * Block 02 (F7) migration: `fleets`, `shipDesigns`, `shipyardQueues`, `ships`
+ * are now OPTIONAL with default empty arrays. This allows pre-Block-02 saves
+ * (which lack these fields) to pass strict validation rather than falling
+ * back to the unvalidated parse path. The migration step in
+ * `deserializeGameState` (`fleets: raw.fleets || []`, `new Map(raw.X ?? [])`)
+ * already initializes missing fields; making the schema permissive just
+ * removes the spurious validation warning on old saves.
  */
 export const SerializedGameStateSchema = z.object({
   time: GameTimeSchema,
@@ -91,7 +99,11 @@ export const SerializedGameStateSchema = z.object({
   phase: GamePhaseSchema,
   galaxy: SerializedGalaxySchema,
   productionQueues: ProductionQueuesSchema,
-  fleets: z.array(z.unknown()),
+  fleets: z.array(z.unknown()).optional().default([]),
+  // Block 02 (F7): serialized as arrays of [id, value] pairs (Map.entries())
+  shipDesigns: z.array(z.tuple([z.string(), z.unknown()])).optional().default([]),
+  shipyardQueues: z.array(z.tuple([z.string(), z.unknown()])).optional().default([]),
+  ships: z.array(z.tuple([z.string(), z.unknown()])).optional().default([]),
   playerFactionId: z.string(),
 }).passthrough();
 

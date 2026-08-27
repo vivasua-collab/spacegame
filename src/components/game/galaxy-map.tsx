@@ -3,6 +3,8 @@
 import { useCallback, useMemo, useState, useRef, useEffect } from 'react';
 import { useGameStore } from '@/stores/game-store';
 import type { StarSystem } from '@/core/types';
+import { FleetRouteOverlay } from './fleet-route-overlay';
+import { Rocket, Crosshair } from 'lucide-react';
 
 /**
  * Deterministic LCG for star background — avoids hydration mismatch.
@@ -42,8 +44,88 @@ export function GalaxyMap() {
   const gameState = useGameStore((s) => s.gameState);
   const selectSystem = useGameStore((s) => s.selectSystem);
   const selectedSystemId = useGameStore((s) => s.selectedSystemId);
+  // Block 02 (F7): selected fleet for right-click «move here» orders
+  const selectedFleetId = useGameStore((s) => s.selectedFleetId);
+  const selectFleet = useGameStore((s) => s.selectFleet);
+  const issueFleetOrder = useGameStore((s) => s.issueFleetOrder);
+  const setView = useGameStore((s) => s.setView);
+  const getFleetsAtSystem = useGameStore((s) => s.getFleetsAtSystem);
 
   const [hoveredSystemId, setHoveredSystemId] = useState<string | null>(null);
+  // Block 02 (F7): context menu for right-click on system —
+  // «Перебросить флот сюда» issues a move order to the currently selected fleet.
+  const [contextMenu, setContextMenu] = useState<{
+    visible: boolean;
+    x: number;  // screen pixels (relative to container)
+    y: number;
+    systemId: string | null;
+    systemName: string;
+  }>({ visible: false, x: 0, y: 0, systemId: null, systemName: '' });
+  const contextMenuRef = useRef<HTMLDivElement>(null);
+
+  // Close context menu on outside click or Escape
+  useEffect(() => {
+    if (!contextMenu.visible) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (contextMenuRef.current && !contextMenuRef.current.contains(e.target as Node)) {
+        setContextMenu((prev) => ({ ...prev, visible: false }));
+      }
+    };
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setContextMenu((prev) => ({ ...prev, visible: false }));
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [contextMenu.visible]);
+
+  // Block 02 (F7): right-click handler — show context menu, optionally
+  // pre-select a fleet if exactly one fleet is at the right-clicked system.
+  const handleSystemContextMenu = useCallback((e: React.MouseEvent, system: StarSystem) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const rect = containerRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    // If no fleet is selected and there's exactly one player fleet at this
+    // system, auto-select it (UX convenience — the player probably wants to
+    // move THAT fleet). Otherwise the menu will hint «no fleet selected».
+    if (!selectedFleetId && gameState) {
+      const fleetsHere = getFleetsAtSystem(system.id).filter(f => f.owner === gameState.playerFactionId);
+      if (fleetsHere.length === 1) {
+        selectFleet(fleetsHere[0]!.id);
+      }
+    }
+    setContextMenu({
+      visible: true,
+      x,
+      y,
+      systemId: system.id,
+      systemName: system.name,
+    });
+  }, [selectedFleetId, gameState, getFleetsAtSystem, selectFleet]);
+
+  // Issue move order to the selected fleet, targeting the right-clicked system
+  const handleMoveFleetHere = useCallback(() => {
+    if (!contextMenu.systemId || !selectedFleetId) {
+      setContextMenu((prev) => ({ ...prev, visible: false }));
+      return;
+    }
+    issueFleetOrder(selectedFleetId, 'move', contextMenu.systemId);
+    setContextMenu((prev) => ({ ...prev, visible: false }));
+  }, [contextMenu.systemId, selectedFleetId, issueFleetOrder]);
+
+  // Open fleet view to let player pick a fleet manually
+  const handleOpenFleetView = useCallback(() => {
+    setView('fleet');
+    setContextMenu((prev) => ({ ...prev, visible: false }));
+  }, [setView]);
 
   // Zoom & pan state
   const [zoom, setZoom] = useState(1);
@@ -319,6 +401,11 @@ export function GalaxyMap() {
           />
         ))}
 
+        {/* Block 02 (F5): Fleet routes overlay — dashed polylines through JP
+            paths + animated in-transit markers. Rendered after JP lines but
+            before star systems so systems render on top of routes. */}
+        <FleetRouteOverlay systemPositions={systemPositions} invZ={invZ} />
+
         {/* Star systems */}
         {systems.map((sys) => {
           const pos = systemPositions.get(sys.id);
@@ -341,6 +428,7 @@ export function GalaxyMap() {
             <g
               key={sys.id}
               onClick={() => handleSystemClick(sys)}
+              onContextMenu={(e) => handleSystemContextMenu(e, sys)}
               onMouseEnter={() => setHoveredSystemId(sys.id)}
               onMouseLeave={() => setHoveredSystemId(null)}
               className="cursor-pointer"
@@ -467,8 +555,45 @@ export function GalaxyMap() {
 
       {/* Zoom hint */}
       <div className="absolute top-3 left-3 bg-black/60 rounded-lg px-2 py-1 text-[10px] text-slate-500 backdrop-blur-sm border border-white/5">
-        Scroll to zoom • Drag to pan
+        Scroll to zoom • Drag to pan • Right-click for fleet menu
       </div>
+
+      {/* Block 02 (F7): right-click context menu for fleet orders */}
+      {contextMenu.visible && contextMenu.systemId && (
+        <div
+          ref={contextMenuRef}
+          className="absolute z-50 bg-[#0a0a1a]/95 border border-cyan-600/40 rounded-md shadow-xl backdrop-blur-sm py-1 min-w-[200px]"
+          style={{
+            left: `${contextMenu.x}px`,
+            top: `${contextMenu.y}px`,
+          }}
+          role="menu"
+          aria-label={`Меню действий для системы ${contextMenu.systemName}`}
+        >
+          <div className="px-3 py-1.5 text-[10px] uppercase tracking-wider text-slate-500 border-b border-white/5">
+            {contextMenu.systemName}
+          </div>
+          <button
+            onClick={handleMoveFleetHere}
+            disabled={!selectedFleetId}
+            className="w-full px-3 py-1.5 text-left text-xs flex items-center gap-2 hover:bg-cyan-600/20 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            role="menuitem"
+          >
+            <Rocket className="size-3.5 text-cyan-300" />
+            <span className="text-slate-200">
+              {selectedFleetId ? 'Перебросить флот сюда' : 'Флот не выбран'}
+            </span>
+          </button>
+          <button
+            onClick={handleOpenFleetView}
+            className="w-full px-3 py-1.5 text-left text-xs flex items-center gap-2 hover:bg-cyan-600/20 transition-colors"
+            role="menuitem"
+          >
+            <Crosshair className="size-3.5 text-cyan-300" />
+            <span className="text-slate-200">Показать флоты</span>
+          </button>
+        </div>
+      )}
 
       {/* Minimap at high zoom */}
       {zoom > 3 && (

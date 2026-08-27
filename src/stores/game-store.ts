@@ -32,6 +32,8 @@ import { resetProductionItemCounter } from '@/economy/engine';
 import { BUILDING_MAP } from '@/data/buildings'; // Block 05 PR7 — migratePlanet
 import { SerializedGameStateSchema } from '@/lib/schemas/game-state-schema'; // Block 08 gap-9: state validation on deserialize
 import { enqueueShipBuild as enqueueShipBuildFn, cancelShipyardItem as cancelShipyardItemFn } from '@/data/ships/shipyard-queue'; // Block 02 F6
+import { ShipsModule, resetShipCounter } from '@/ships/ships-module'; // Block 02 F5
+import { FleetModule } from '@/ships/fleet-module'; // Block 02 F5
 import {
   createFleet as createFleetFn,
   mergeFleets as mergeFleetsFn,
@@ -80,6 +82,9 @@ export interface GameStore {
   view: GameView;
   selectedSystemId: EntityId | null;
   selectedPlanetId: EntityId | null;
+  /** Block 02 (F7): currently selected fleet (for galaxy-map right-click
+   *  context menu — «Перебросить флот сюда» issues move order to this fleet). */
+  selectedFleetId: EntityId | null;
   isInitialized: boolean;
   currentSaveId: string | null;
   isSaving: boolean;
@@ -173,6 +178,8 @@ export interface GameStore {
   ) => boolean;
   /** Отменить текущий приказ флота (снимает orders[0]). */
   cancelFleetOrder: (fleetId: string) => boolean;
+  /** Block 02 (F7): выбрать флот (для контекстного меню galaxy-map). */
+  selectFleet: (fleetId: EntityId | null) => void;
 
   // Утилиты
   getSystem: (id: EntityId) => StarSystem | undefined;
@@ -198,6 +205,12 @@ function getMediatorWithModules() {
   if (!modulesRegistered) {
     const economyModule = new EconomyModule();
     const galaxyModule = new GalaxyModule();
+    // Block 02 (F5, F7): ships + fleet modules — shipyard queue processing
+    // (priority SIMULATION+10, after economy) + fleet movement via JP
+    // (priority SIMULATION+20, after ships). Both need GameState accessor +
+    // mutator to commit immutable produced state (Block 01 P2 pattern).
+    const shipsModule = new ShipsModule();
+    const fleetModule = new FleetModule();
 
     // Модули нуждаются в доступе к GameState — устанавливаем accessor.
     // Block 01 P2: also set a mutator so modules can commit new immutable state
@@ -206,8 +219,12 @@ function getMediatorWithModules() {
     economyModule.setGameStateMutator((state) => mediator.commitState(state));
     galaxyModule.setGameStateAccessor(() => mediator.getGameState());
     galaxyModule.setGameStateMutator((state) => mediator.commitState(state));
+    shipsModule.setGameStateAccessor(() => mediator.getGameState());
+    shipsModule.setGameStateMutator((state) => mediator.commitState(state));
+    fleetModule.setGameStateAccessor(() => mediator.getGameState());
+    fleetModule.setGameStateMutator((state) => mediator.commitState(state));
 
-    mediator.registerAndInit([galaxyModule, economyModule]);
+    mediator.registerAndInit([galaxyModule, economyModule, shipsModule, fleetModule]);
 
     // Block 01 P2: subscribe to core:state-changed — modules already produce
     // immutable state via immer.produce(), so we just assign the new reference.
@@ -420,6 +437,7 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
     view: 'galaxy',
     selectedSystemId: null,
     selectedPlanetId: null,
+    selectedFleetId: null,
     isInitialized: false,
     currentSaveId: null,
     isSaving: false,
@@ -431,11 +449,14 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
       // Сброс детерминированного счётчика ProductionItem IDs (gap-6, P9)
       // для согласованности с новым seed.
       resetProductionItemCounter();
+      // Block 02 (F5): reset ship ID counter — new game starts at 0.
+      resetShipCounter();
       set({
         gameState: state,
         view: 'galaxy',
         selectedSystemId: state.galaxy.systems[0]?.id ?? null,
         selectedPlanetId: null,
+        selectedFleetId: null,
         isInitialized: true,
         currentSaveId: null,
       });
@@ -863,12 +884,15 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
         // Сброс детерминированного счётчика ProductionItem IDs (gap-6, P9)
         // при загрузке сейва — новые ID будут идти с 0, что упрощает расследование.
         resetProductionItemCounter();
+        // Block 02 (F5): reset ship ID counter — newly built ships get fresh IDs.
+        resetShipCounter();
 
         set({
           gameState: loadedState,
           view: 'galaxy',
           selectedSystemId: loadedState.galaxy.systems[0]?.id ?? null,
           selectedPlanetId: null,
+          selectedFleetId: null,
           isInitialized: true,
           currentSaveId: id,
         });
@@ -1168,6 +1192,13 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
         ok = true;
       });
       return ok;
+    },
+
+    // Block 02 (F7): выбрать флот — синхронно устанавливает selectedFleetId.
+    // Используется galaxy-map context menu для определения, какому флоту
+    // отдать приказ перемещения при right-click на систему.
+    selectFleet: (fleetId) => {
+      set({ selectedFleetId: fleetId });
     },
   };
 }));
