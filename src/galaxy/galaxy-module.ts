@@ -44,10 +44,23 @@ export class GalaxyModule implements IGameModule {
   private unsubscribers: Array<() => void> = [];
   private getGameState: (() => import('@/core/types').GameState | null) | null = null;
 
+  /**
+   * Block 01 P2: mutator for committing new immutable state to the mediator.
+   * GalaxyModule doesn't currently produce state mutations, but the API is
+   * symmetrical with EconomyModule for future-proofing (e.g., system
+   * discovery, faction territory shifts).
+   */
+  private commitState: ((state: import('@/core/types').GameState) => void) | null = null;
+
   get phase(): ModulePhase { return this._phase; }
 
   setGameStateAccessor(accessor: () => import('@/core/types').GameState | null): void {
     this.getGameState = accessor;
+  }
+
+  /** Block 01 P2: wire up the state mutator (mirrors EconomyModule). */
+  setGameStateMutator(mutator: (state: import('@/core/types').GameState) => void): void {
+    this.commitState = mutator;
   }
 
   init(bus: TypedEventBus, registry: ModuleRegistry): void {

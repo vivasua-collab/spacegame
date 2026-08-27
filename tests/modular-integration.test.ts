@@ -11,6 +11,14 @@
  * - mediator.getBus().emit('economy:enqueue', ...) → engine.enqueueProduction.
  * - mediator.getBus().emit('economy:colonize', ...) → engine.colonizePlanet + warehouse init.
  *
+ * Block 01 P2 (immutable store): EconomyModule now wraps engine calls in
+ * immer.produce(). State is no longer mutated in-place; a new immutable
+ * state is produced and committed via mediator.commitState(). Tests must
+ * therefore re-fetch state from the mediator after each emit (the local
+ * `state` variable becomes stale). Direct mutations on the state in test
+ * setup still work because immer's setAutoFreeze(false) is set in
+ * game-store.ts (imported transitively via @/stores/game-store if needed).
+ *
  * Run: bun test tests/modular-integration.test.ts
  */
 
@@ -19,18 +27,23 @@ import { getGameMediator, resetGameMediator, GameMediator } from '@/core';
 import { EconomyModule } from '@/economy/economy-module';
 import { GalaxyModule } from '@/galaxy/galaxy-module';
 import { giveStarterResources, buildOnHex as engineBuildOnHex } from '@/economy/engine';
-import type { EntityId, GameState } from '@/core/types';
+import type { EntityId, GameState, Planet } from '@/core/types';
 
 /**
  * Создать свежий медиатор с зарегистрированными модулями и новой игрой.
  * Минимальная галактика (1 система) для ускорения тестов.
+ *
+ * Block 01 P2: also wires up setGameStateMutator — without it, EconomyModule's
+ * produce()-based mutations wouldn't be committed back to the mediator.
  */
 function freshMediatorWithGame(): { mediator: GameMediator; state: GameState } {
   const mediator = getGameMediator();
   const economyModule = new EconomyModule();
   const galaxyModule = new GalaxyModule();
   economyModule.setGameStateAccessor(() => mediator.getGameState());
+  economyModule.setGameStateMutator((s) => mediator.commitState(s));
   galaxyModule.setGameStateAccessor(() => mediator.getGameState());
+  galaxyModule.setGameStateMutator((s) => mediator.commitState(s));
   mediator.registerAndInit([galaxyModule, economyModule]);
   const state = mediator.newGame({ seed: 42, systemCount: 1 });
   return { mediator, state };
@@ -46,6 +59,15 @@ function findFirstPlanet(state: GameState) {
     }
   }
   throw new Error('No suitable planet found for test');
+}
+
+/** Block 01 P2: re-fetch a planet by id from the (immutable) state. */
+function findPlanetById(state: GameState, planetId: EntityId): Planet | undefined {
+  for (const system of state.galaxy.systems) {
+    const planet = system.planets.find((p) => p.id === planetId);
+    if (planet) return planet;
+  }
+  return undefined;
 }
 
 describe('Block 06: modular-bus integration', () => {
@@ -113,9 +135,16 @@ describe('Block 06: modular-bus integration', () => {
       buildingId: 'mine',
     });
 
-    // Assert — здание размещено
-    expect(planet.hexes[hexIndex].buildingId).toBe('mine');
-    expect(planet.hexes[hexIndex].buildingLevel).toBe(1);
+    // Block 01 P2: EconomyModule.onBuild wraps engine.buildOnHex in immer.produce(),
+    // producing a NEW immutable state. The old `planet` reference is stale —
+    // re-fetch from the mediator's committed state.
+    const newState = mediator.getGameState()!;
+    const newPlanet = findPlanetById(newState, planet.id)!;
+    expect(newPlanet).not.toBe(planet); // reference changed — immer produced a new planet
+    expect(newPlanet.hexes[hexIndex].buildingId).toBe('mine');
+    expect(newPlanet.hexes[hexIndex].buildingLevel).toBe(1);
+    // Old planet (stale ref) is unchanged — proves immutability.
+    expect(planet.hexes[hexIndex].buildingId).toBeNull();
   });
 
   test('emit economy:build emits economy:building-constructed + core:state-changed on success', () => {
@@ -148,12 +177,17 @@ describe('Block 06: modular-bus integration', () => {
     planet.owner = 'player';
     giveStarterResources(planet);
 
-    // Сначала построим здание
+    // Сначала построим здание (direct engine call — mutates the original state
+    // because setAutoFreeze(false) is set in game-store.ts).
     const hexIndex = planet.hexes.findIndex(h => !h.buildingId && h.terrain !== 'ocean');
     expect(hexIndex).toBeGreaterThanOrEqual(0);
     engineBuildOnHex(planet, hexIndex, 'mine');
     expect(planet.hexes[hexIndex].buildingId).toBe('mine');
     expect(planet.hexes[hexIndex].buildingLevel).toBe(1);
+
+    // Sync the mediator's state reference so EconomyModule.produce() picks up
+    // the latest mutation (otherwise it would produce from the pre-build state).
+    mediator.commitState(state);
 
     // Act: эмитим upgrade
     mediator.getBus().emit('economy:upgrade', {
@@ -161,8 +195,11 @@ describe('Block 06: modular-bus integration', () => {
       hexIndex,
     });
 
-    // Assert — уровень повысился
-    expect(planet.hexes[hexIndex].buildingLevel).toBe(2);
+    // Block 01 P2: EconomyModule.onUpgrade wraps engine.upgradeBuilding in
+    // immer.produce() — re-fetch the planet from the committed new state.
+    const newState = mediator.getGameState()!;
+    const newPlanet = findPlanetById(newState, planet.id)!;
+    expect(newPlanet.hexes[hexIndex].buildingLevel).toBe(2);
   });
 
   test('emit economy:enqueue → EconomyModule.onEnqueue → engine.enqueueProduction', () => {
@@ -212,10 +249,13 @@ describe('Block 06: modular-bus integration', () => {
     // Act
     mediator.getBus().emit('economy:colonize', { planetId: planet.id });
 
-    // Assert — планета колонизирована, склад инициализирован
-    expect(planet.owner).toBe('player');
-    expect(planet.warehouse).toBeDefined();
-    expect(planet.warehouse?.colonyRole).toBe('industrial');
+    // Block 01 P2: EconomyModule.onColonize wraps engine.colonizePlanet in
+    // immer.produce() — re-fetch the planet from the committed new state.
+    const newState = mediator.getGameState()!;
+    const newPlanet = findPlanetById(newState, planet.id)!;
+    expect(newPlanet.owner).toBe('player');
+    expect(newPlanet.warehouse).toBeDefined();
+    expect(newPlanet.warehouse?.colonyRole).toBe('industrial');
     expect(colonizedEmitted).toBe(true);
   });
 

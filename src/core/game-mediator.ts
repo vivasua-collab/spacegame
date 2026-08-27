@@ -128,6 +128,19 @@ export class GameMediator {
     return this.gameState;
   }
 
+  /**
+   * Обновить внутреннюю ссылку на gameState и эмитнуть `core:state-changed`.
+   * Лёгкий метод — НЕ останавливает модули, НЕ меняет скорость/фазу loop'а.
+   * Используется модулями (EconomyModule) после produce() для коммита
+   * нового иммутабельного состояния (Block 01 P2).
+   *
+   * Тяжёлые операции (загрузка сейва, newGame) остаются в setGameState/setLoadedState.
+   */
+  commitState(state: GameState): void {
+    this.gameState = state;
+    this.bus.emit('core:state-changed', state);
+  }
+
   /** Обновить ссылку на gameState (для синхронизации с Zustand) */
   setGameState(state: GameState): void {
     this.gameState = state;

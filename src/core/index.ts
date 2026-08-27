@@ -57,3 +57,9 @@ export { GameMediator, getGameMediator, resetGameMediator } from './game-mediato
 
 // PRNG
 export { Xoshiro256 } from './prng';
+
+// Block 01 P2: immer configuration side-effect import. Configures the
+// global immer state (enableMapSet for GameState Maps, setAutoFreeze(false)
+// for direct-mutation compatibility). Imported here so any code that uses
+// `@/core` gets the configuration automatically.
+import './immer-setup';

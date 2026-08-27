@@ -10,14 +10,20 @@
  * - Управление складами
  *
  * Связь с другими модулями — только через TypedEventBus и ModuleRegistry.query().
+ *
+ * Block 01 P2 (immutable store): все мутации GameState оборачиваются в
+ * `produce(currentState, draft => { engine.mutate(draft...) })` —
+ * immer создаёт новые ссылки для изменённых путей, что позволяет
+ * `useMemo([gameState.galaxy.systems])` корректно срабатывать.
  */
 
 import type { IGameModule, ModuleManifest, ModulePhase } from '@/core/module-types';
 import type { TypedEventBus } from '@/core/typed-event-bus';
 import type { ModuleRegistry } from '@/core/module-registry';
-import type { GameTime, EntityId, Planet, ProductionQueue } from '@/core/types';
+import type { GameTime, EntityId, Planet, ProductionQueue, GameState } from '@/core/types';
 import type { EventPayload } from '@/core/events';
 import { PRIORITY } from '@/core/module-types';
+import { produce } from 'immer';
 
 import {
   processEconomyTick,
@@ -70,7 +76,14 @@ export class EconomyModule implements IGameModule {
   private unsubscribers: Array<() => void> = [];
 
   /** Ссылка на GameState — устанавливается извне для доступа к планетам */
-  private getGameState: (() => import('@/core/types').GameState | null) | null = null;
+  private getGameState: (() => GameState | null) | null = null;
+
+  /**
+   * Мутатор для коммита нового иммутабельного состояния в медиатор (Block 01 P2).
+   * После produce() модуль вызывает этот колбэк, чтобы обновить ссылку
+   * в медиаторе и эмитнуть `core:state-changed` для синхронизации Zustand-стора.
+   */
+  private commitState: ((state: GameState) => void) | null = null;
 
   get phase(): ModulePhase { return this._phase; }
 
@@ -78,8 +91,17 @@ export class EconomyModule implements IGameModule {
    * Установить функцию доступа к GameState.
    * EconomyModule нуждается в доступе к планетам, но не владеетGameState напрямую.
    */
-  setGameStateAccessor(accessor: () => import('@/core/types').GameState | null): void {
+  setGameStateAccessor(accessor: () => GameState | null): void {
     this.getGameState = accessor;
+  }
+
+  /**
+   * Установить мутатор для коммита нового состояния в медиатор.
+   * Block 01 P2: используется после produce() для обновления ссылки
+   * и эмитта `core:state-changed`.
+   */
+  setGameStateMutator(mutator: (state: GameState) => void): void {
+    this.commitState = mutator;
   }
 
   init(bus: TypedEventBus, registry: ModuleRegistry): void {
@@ -146,78 +168,104 @@ export class EconomyModule implements IGameModule {
   }
 
   private onBuild(payload: EventPayload<'economy:build'>): void {
-    const state = this.getGameState?.();
-    if (!state) return;
+    const currentState = this.getGameState?.();
+    if (!currentState) return;
 
-    const planet = this.findPlanet(state, payload.planetId);
-    if (!planet) return;
+    // Block 01 P2: wrap engine mutation in immer produce() — creates a new
+    // immutable state with new references for changed paths. The engine
+    // mutates the draft directly (Option A: Draft<Planet> is structurally
+    // compatible with Planet for mutation purposes).
+    let success = false;
+    let hexIndexAfter = payload.hexIndex;
+    const newState = produce(currentState, (draft) => {
+      const planet = this.findPlanet(draft, payload.planetId);
+      if (!planet) return;
+      success = engineBuildOnHex(planet, payload.hexIndex, payload.buildingId);
+    });
 
-    const result = engineBuildOnHex(planet, payload.hexIndex, payload.buildingId);
-    if (result) {
+    if (success) {
+      this.commitState?.(newState);
       this.bus.emit('economy:building-constructed', {
         planetId: payload.planetId,
-        hexIndex: payload.hexIndex,
+        hexIndex: hexIndexAfter,
         buildingId: payload.buildingId,
       });
-      this.bus.emit('core:state-changed', state);
+      // Note: core:state-changed is emitted by mediator.commitState() —
+      // no need to emit again here.
     }
   }
 
   private onUpgrade(payload: EventPayload<'economy:upgrade'>): void {
-    const state = this.getGameState?.();
-    if (!state) return;
+    const currentState = this.getGameState?.();
+    if (!currentState) return;
 
-    const planet = this.findPlanet(state, payload.planetId);
-    if (!planet) return;
+    let success = false;
+    let newLevel = 0;
+    const newState = produce(currentState, (draft) => {
+      const planet = this.findPlanet(draft, payload.planetId);
+      if (!planet) return;
+      success = engineUpgradeBuilding(planet, payload.hexIndex);
+      if (success) {
+        newLevel = planet.hexes[payload.hexIndex]?.buildingLevel ?? 0;
+      }
+    });
 
-    const result = engineUpgradeBuilding(planet, payload.hexIndex);
-    if (result) {
-      const hex = planet.hexes[payload.hexIndex];
+    if (success) {
+      this.commitState?.(newState);
       this.bus.emit('economy:building-upgraded', {
         planetId: payload.planetId,
         hexIndex: payload.hexIndex,
-        level: hex.buildingLevel,
+        level: newLevel,
       });
-      this.bus.emit('core:state-changed', state);
     }
   }
 
   private onEnqueue(payload: EventPayload<'economy:enqueue'>): void {
-    const state = this.getGameState?.();
-    if (!state) return;
+    const currentState = this.getGameState?.();
+    if (!currentState) return;
 
-    const planet = this.findPlanet(state, payload.planetId);
-    if (!planet) return;
+    let success = false;
+    const newState = produce(currentState, (draft) => {
+      const planet = this.findPlanet(draft, payload.planetId);
+      if (!planet) return;
+      success = engineEnqueueProduction(planet, draft.productionQueues, payload.recipeId, payload.repeat);
+    });
 
-    const result = engineEnqueueProduction(planet, state.productionQueues, payload.recipeId, payload.repeat);
-    if (result) {
-      this.bus.emit('core:state-changed', state);
+    if (success) {
+      this.commitState?.(newState);
     }
   }
 
   private onColonize(payload: EventPayload<'economy:colonize'>): void {
-    const state = this.getGameState?.();
-    if (!state) return;
+    const currentState = this.getGameState?.();
+    if (!currentState) return;
 
-    const planet = this.findPlanet(state, payload.planetId);
-    if (!planet) return;
+    let success = false;
+    let colonyHubHexIndex = -1;
+    const newState = produce(currentState, (draft) => {
+      const planet = this.findPlanet(draft, payload.planetId);
+      if (!planet) return;
 
-    const system = state.galaxy.systemMap.get(planet.systemId);
-    const result = engineColonizePlanet(planet, system);
-    if (result) {
-      // Инициализация склада при колонизации
-      if (!planet.warehouse) {
-        planet.warehouse = createDefaultWarehouse();
-        planet.warehouse = applyColonyRole(planet.warehouse, 'industrial');
-        planet.warehouse.totalCapacity = calculateWarehouseCapacity(planet);
-        planet.warehouse.orbitBuffer.capacity = getOrbitBufferCapacity(planet);
+      const system = draft.galaxy.systemMap.get(planet.systemId);
+      success = engineColonizePlanet(planet, system);
+      if (success) {
+        // Инициализация склада при колонизации
+        if (!planet.warehouse) {
+          planet.warehouse = createDefaultWarehouse();
+          planet.warehouse = applyColonyRole(planet.warehouse, 'industrial');
+          planet.warehouse.totalCapacity = calculateWarehouseCapacity(planet);
+          planet.warehouse.orbitBuffer.capacity = getOrbitBufferCapacity(planet);
+        }
+        colonyHubHexIndex = planet.hexes.findIndex(h => h.buildingId === 'colony_hub');
       }
+    });
 
+    if (success) {
+      this.commitState?.(newState);
       this.bus.emit('economy:planet-colonized', {
         planetId: payload.planetId,
-        hexIndex: planet.hexes.findIndex(h => h.buildingId === 'colony_hub'),
+        hexIndex: colonyHubHexIndex,
       });
-      this.bus.emit('core:state-changed', state);
     }
   }
 
@@ -225,19 +273,26 @@ export class EconomyModule implements IGameModule {
    * Обработка тика экономики.
    * Вызывается ModuleRegistry.tickAll() внутри каждого game-loop тика,
    * а также напрямую из GameMediator.tick() для пошагового режима.
+   *
+   * Block 01 P2: обёрнуто в immer produce() — после тика создаётся новое
+   * иммутабельное состояние с новыми ссылками для изменённых путей
+   * (planet.resources, planet.energyBalance, и т.д.).
    */
   private processEconomyTick(): void {
-    const state = this.getGameState?.();
-    if (!state) return;
+    const currentState = this.getGameState?.();
+    if (!currentState) return;
 
-    const colonizedPlanets = state.galaxy.systems
-      .flatMap(s => s.planets)
-      .filter(p => p.owner != null);
+    const newState = produce(currentState, (draft) => {
+      const colonizedPlanets = draft.galaxy.systems
+        .flatMap(s => s.planets)
+        .filter(p => p.owner != null);
 
-    processEconomyTick(colonizedPlanets, state.productionQueues, state.galaxy.systemMap);
+      processEconomyTick(colonizedPlanets, draft.productionQueues, draft.galaxy.systemMap);
+    });
 
-    // Уведомить store об изменении состояния после тика
-    this.bus.emit('core:state-changed', state);
+    // Коммит нового состояния в медиатор → эмит core:state-changed →
+    // подписка в game-store обновляет Zustand-state.
+    this.commitState?.(newState);
   }
 
   // ─── Обработчики запросов ─────────────────────────────

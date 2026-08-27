@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { useGameStore, type GameView } from '@/stores/game-store';
 import { GalaxyMap } from './galaxy-map';
 import { SystemView } from './system-view';
@@ -243,11 +243,19 @@ function ColoniesSection({
   selectSystem: (id: EntityId | null) => void;
   selectPlanet: (id: EntityId | null) => void;
 }) {
-  // Вычисляем колонии напрямую — useMemo с [gameState.galaxy.systems] ломается,
-  // т.к. при мутации planet.owner ссылка на systems не меняется.
-  // Прямой расчёт достаточно дешёвый (~N систем × M планет).
-  const colonies = gameState.galaxy.systems.flatMap((s) =>
-    s.planets.filter((p) => p.owner != null).map((p) => ({ ...p, systemName: s.name }))
+  // Block 01 P2 (immutable store): now uses proper useMemo with
+  // [gameState.galaxy.systems] as dependency — immer creates a new array
+  // reference on every mutation (build/upgrade/tick/colonize), so this
+  // useMemo correctly re-computes when any planet's owner field changes.
+  // Previously this used ad-hoc re-computation on every render because the
+  // shallow-clone pattern in game-store didn't create new inner references.
+  const systems = gameState.galaxy.systems;
+  const colonies = useMemo(
+    () =>
+      systems.flatMap((s) =>
+        s.planets.filter((p) => p.owner != null).map((p) => ({ ...p, systemName: s.name }))
+      ),
+    [systems]
   );
 
   const handleNavigate = useCallback(

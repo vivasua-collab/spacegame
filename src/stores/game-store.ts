@@ -1,18 +1,26 @@
 /**
  * Основной Zustand-стор для игрового состояния.
  *
+ * Версия 4.0 (Block 01 P2): обёрнут в immer-middleware.
+ * Все set()-вызовы используют draft-мутации — immer создаёт новые
+ * ссылки для изменённых путей, что позволяет `useMemo([gameState.galaxy.systems])`
+ * корректно срабатывать после любой мутации.
+ *
  * Версия 3.0: Работает через GameMediator.
  * Стор делегирует действия медиатору и модулям,
  * а сам отвечает за реактивность (React re-renders).
  *
  * Паттерн:
- * - Мутации → через модули/медиатор (движок)
+ * - Мутации → через модули/медиатор (движок) с immer produce()
  * - Реактивность → через Zustand set() (UI)
  * - События → через TypedEventBus (межмодульное взаимодействие)
  */
 
 import { create } from 'zustand';
+import { immer } from 'zustand/middleware/immer';
+import { produce } from 'immer';
 import type { GameState, GameTime, GameSpeed, GamePhase, Galaxy, StarSystem, Planet, EntityId, ProductionQueue, ColonyRole, WarehouseSpecialization } from '@/core/types';
+import '@/core/immer-setup'; // Block 01 P2: enableMapSet + setAutoFreeze(false)
 import { getGameMediator } from '@/core/game-mediator';
 import { applyColonyRole, calculateWarehouseCapacity, calculateWarehouseCapacities, canStoreResource, getOrbitBufferUsed } from '@/data/warehouse';
 import { bakeGalaxyModel } from '@/data/chemistry-generator';
@@ -104,17 +112,21 @@ function getMediatorWithModules() {
     const economyModule = new EconomyModule();
     const galaxyModule = new GalaxyModule();
 
-    // Модули нуждаются в доступе к GameState — устанавливаем accessor
+    // Модули нуждаются в доступе к GameState — устанавливаем accessor.
+    // Block 01 P2: also set a mutator so modules can commit new immutable state
+    // (produced via immer.produce) back to the mediator.
     economyModule.setGameStateAccessor(() => mediator.getGameState());
+    economyModule.setGameStateMutator((state) => mediator.commitState(state));
     galaxyModule.setGameStateAccessor(() => mediator.getGameState());
+    galaxyModule.setGameStateMutator((state) => mediator.commitState(state));
 
     mediator.registerAndInit([galaxyModule, economyModule]);
 
-    // Подписка на `core:state-changed` — обновляем Zustand-state
-    // после любой мутации GameState в медиаторе или модулях.
-    // Shallow-clone top-level — чтобы React/Zustand увидели новое reference.
+    // Block 01 P2: subscribe to core:state-changed — modules already produce
+    // immutable state via immer.produce(), so we just assign the new reference.
+    // No shallow clone needed — newState already has new refs for changed paths.
     mediator.getBus().on('core:state-changed', (newState) => {
-      useGameStore.setState({ gameState: { ...newState } });
+      useGameStore.setState({ gameState: newState });
     });
 
     modulesRegistered = true;
@@ -186,7 +198,7 @@ function deserializeGameState(json: string): GameState {
 
 // ============ Store ============
 
-export const useGameStore = create<GameStore>((set, get) => {
+export const useGameStore = create<GameStore>()(immer((set, get) => {
   /** Создать начальное GameState */
   function createInitialState(config: Partial<import('@/galaxy').GalaxyGenConfig>): GameState {
     const mediator = getMediatorWithModules();
@@ -257,64 +269,88 @@ export const useGameStore = create<GameStore>((set, get) => {
 
     buildOnHex: (planetId, hexIndex, buildingId) => {
       const mediator = getMediatorWithModules();
-      const { gameState } = get();
+      const gameState = get().gameState;
       if (!gameState) return false;
       const planet = findPlanet(gameState, planetId);
       if (!planet) return false;
       const before = planet.hexes[hexIndex]?.buildingId;
-      // Эмитим событие — EconomyModule.onBuild вызовет engine.buildOnHex
-      // и эмитнет `economy:building-constructed` + `core:state-changed`.
-      // emit синхронный — поэтому после вызова проверяем состояние планеты.
+      // Emit event — EconomyModule.onBuild wraps engine.buildOnHex in immer.produce(),
+      // commits new immutable state via mediator.commitState() which emits
+      // core:state-changed → our subscription updates the store.
       mediator.getBus().emit('economy:build', { planetId, hexIndex, buildingId });
-      const success = planet.hexes[hexIndex]?.buildingId === buildingId && before !== buildingId;
-      return success;
+      // Re-fetch state — after produce(), the old planet reference is stale.
+      const newState = get().gameState;
+      if (!newState) return false;
+      const newPlanet = findPlanet(newState, planetId);
+      if (!newPlanet) return false;
+      const after = newPlanet.hexes[hexIndex]?.buildingId;
+      return after === buildingId && before !== buildingId;
     },
 
     upgradeBuildingOnHex: (planetId, hexIndex) => {
       const mediator = getMediatorWithModules();
-      const { gameState } = get();
+      const gameState = get().gameState;
       if (!gameState) return false;
       const planet = findPlanet(gameState, planetId);
       if (!planet) return false;
       const before = planet.hexes[hexIndex]?.buildingLevel ?? 0;
       mediator.getBus().emit('economy:upgrade', { planetId, hexIndex });
-      const after = planet.hexes[hexIndex]?.buildingLevel ?? 0;
+      // Re-fetch — produce() in EconomyModule created a new state reference.
+      const newState = get().gameState;
+      if (!newState) return false;
+      const newPlanet = findPlanet(newState, planetId);
+      if (!newPlanet) return false;
+      const after = newPlanet.hexes[hexIndex]?.buildingLevel ?? 0;
       return after > before;
     },
 
     enqueueProduction: (planetId, recipeId, repeat = false) => {
       const mediator = getMediatorWithModules();
-      const { gameState } = get();
+      const gameState = get().gameState;
       if (!gameState) return false;
       const planet = findPlanet(gameState, planetId);
       if (!planet) return false;
       const before = gameState.productionQueues.get(planetId)?.items.length ?? 0;
       mediator.getBus().emit('economy:enqueue', { planetId, recipeId, repeat });
-      const after = gameState.productionQueues.get(planetId)?.items.length ?? 0;
+      // Re-fetch — produce() in EconomyModule created a new state reference.
+      const newState = get().gameState;
+      if (!newState) return false;
+      const after = newState.productionQueues.get(planetId)?.items.length ?? 0;
       return after > before;
     },
 
     colonizePlanet: (planetId) => {
       const mediator = getMediatorWithModules();
-      const { gameState } = get();
+      const gameState = get().gameState;
       if (!gameState) return false;
       const planet = findPlanet(gameState, planetId);
       if (!planet) return false;
 
-      // Эмитим событие — EconomyModule.onColonize вызовет engine.colonizePlanet,
-      // инициализирует склад, эмитнет `economy:planet-colonized` + `core:state-changed`.
+      // Emit event — EconomyModule.onColonize wraps engine.colonizePlanet in
+      // immer.produce() and commits the new state via mediator.commitState().
       mediator.getBus().emit('economy:colonize', { planetId });
 
-      const success = planet.owner === 'player';
+      // Re-fetch state — planet reference is stale after produce().
+      const newState = get().gameState;
+      if (!newState) return false;
+      const newPlanet = findPlanet(newState, planetId);
+      if (!newPlanet) return false;
+      const success = newPlanet.owner === 'player';
       if (success) {
-        // Переключаем фазу в 'playing' — переход к активной игре.
-        // Mediator через setGameState обновит state и эмитнет state-changed.
-        gameState.phase = 'playing';
-        gameState.speed = 1;
-        mediator.setGameState(gameState);
-
+        // Block 01 P2: use immer produce() to create a new state with
+        // phase='playing' + speed=1 — keeps immutability invariant.
+        // mediator.setGameState emits core:state-changed which syncs the
+        // Zustand-state via our subscription.
+        const currentState = mediator.getGameState();
+        if (currentState) {
+          const finalState = produce(currentState, (draft) => {
+            draft.phase = 'playing';
+            draft.speed = 1;
+          });
+          mediator.setGameState(finalState);
+        }
         set({
-          selectedSystemId: planet.systemId,
+          selectedSystemId: newPlanet.systemId,
           selectedPlanetId: planetId,
           view: 'planet',
         });
@@ -323,93 +359,104 @@ export const useGameStore = create<GameStore>((set, get) => {
     },
 
     // ─── Склад ────────────────────────────────────────────
+    // Block 01 P2: all warehouse mutations use immer draft via set((state) => ...).
+    // immer creates new references for changed paths (galaxy.systems array,
+    // planet, planet.warehouse) — useMemo on galaxy.systems now triggers.
 
     setColonyRole: (planetId, role) => {
-      const { gameState } = get();
-      if (!gameState) return;
-      const planet = findPlanet(gameState, planetId);
-      if (!planet || !planet.warehouse) return;
-      planet.warehouse = applyColonyRole(planet.warehouse, role);
-      set({ gameState: { ...gameState, galaxy: { ...gameState.galaxy, systems: [...gameState.galaxy.systems] } } });
+      set((state) => {
+        if (!state.gameState) return;
+        const planet = findPlanet(state.gameState, planetId);
+        if (!planet || !planet.warehouse) return;
+        planet.warehouse = applyColonyRole(planet.warehouse, role);
+      });
     },
 
     setReserveMinimum: (planetId, resourceId, minimum) => {
-      const { gameState } = get();
-      if (!gameState) return;
-      const planet = findPlanet(gameState, planetId);
-      if (!planet || !planet.warehouse) return;
-      if (planet.warehouse.reserves[resourceId]) {
-        planet.warehouse.reserves[resourceId].minimum = minimum;
-      } else {
-        planet.warehouse.reserves[resourceId] = { resourceId, minimum, priority: 5 };
-      }
-      set({ gameState: { ...gameState, galaxy: { ...gameState.galaxy, systems: [...gameState.galaxy.systems] } } });
+      set((state) => {
+        if (!state.gameState) return;
+        const planet = findPlanet(state.gameState, planetId);
+        if (!planet || !planet.warehouse) return;
+        if (planet.warehouse.reserves[resourceId]) {
+          planet.warehouse.reserves[resourceId].minimum = minimum;
+        } else {
+          planet.warehouse.reserves[resourceId] = { resourceId, minimum, priority: 5 };
+        }
+      });
     },
 
     setWarehouseSpecialization: (planetId, spec) => {
-      const { gameState } = get();
-      if (!gameState) return;
-      const planet = findPlanet(gameState, planetId);
-      if (!planet || !planet.warehouse) return;
-      planet.warehouse.specialization = spec;
-      planet.warehouse.capacities = calculateWarehouseCapacities(planet);
-      planet.warehouse.totalCapacity = calculateWarehouseCapacity(planet);
-      set({ gameState: { ...gameState, galaxy: { ...gameState.galaxy, systems: [...gameState.galaxy.systems] } } });
+      set((state) => {
+        if (!state.gameState) return;
+        const planet = findPlanet(state.gameState, planetId);
+        if (!planet || !planet.warehouse) return;
+        planet.warehouse.specialization = spec;
+        planet.warehouse.capacities = calculateWarehouseCapacities(planet);
+        planet.warehouse.totalCapacity = calculateWarehouseCapacity(planet);
+      });
     },
 
     moveToOrbit: (planetId, resourceId, amount) => {
-      const { gameState } = get();
-      if (!gameState) return false;
-      const planet = findPlanet(gameState, planetId);
-      if (!planet || !planet.warehouse) return false;
+      let ok = false;
+      set((state) => {
+        if (!state.gameState) return;
+        const planet = findPlanet(state.gameState, planetId);
+        if (!planet || !planet.warehouse) return;
 
-      const available = planet.resources[resourceId] ?? 0;
-      const moveAmount = Math.min(amount, available);
-      if (moveAmount <= 0) return false;
+        const available = planet.resources[resourceId] ?? 0;
+        const moveAmount = Math.min(amount, available);
+        if (moveAmount <= 0) return;
 
-      const orbitUsed = getOrbitBufferUsed(planet);
-      const orbitCapacity = planet.warehouse.orbitBuffer.capacity;
-      if (orbitUsed + moveAmount > orbitCapacity) return false;
+        const orbitUsed = getOrbitBufferUsed(planet);
+        const orbitCapacity = planet.warehouse.orbitBuffer.capacity;
+        if (orbitUsed + moveAmount > orbitCapacity) return;
 
-      planet.resources[resourceId] -= moveAmount;
-      planet.warehouse.orbitBuffer.resources[resourceId] = (planet.warehouse.orbitBuffer.resources[resourceId] ?? 0) + moveAmount;
-      set({ gameState: { ...gameState, galaxy: { ...gameState.galaxy, systems: [...gameState.galaxy.systems] } } });
-      return true;
+        planet.resources[resourceId] -= moveAmount;
+        planet.warehouse.orbitBuffer.resources[resourceId] = (planet.warehouse.orbitBuffer.resources[resourceId] ?? 0) + moveAmount;
+        ok = true;
+      });
+      return ok;
     },
 
     moveFromOrbit: (planetId, resourceId, amount) => {
-      const { gameState } = get();
-      if (!gameState) return false;
-      const planet = findPlanet(gameState, planetId);
-      if (!planet || !planet.warehouse) return false;
+      let ok = false;
+      set((state) => {
+        if (!state.gameState) return;
+        const planet = findPlanet(state.gameState, planetId);
+        if (!planet || !planet.warehouse) return;
 
-      const orbitAmount = planet.warehouse.orbitBuffer.resources[resourceId] ?? 0;
-      const moveAmount = Math.min(amount, orbitAmount);
-      if (moveAmount <= 0) return false;
+        const orbitAmount = planet.warehouse.orbitBuffer.resources[resourceId] ?? 0;
+        const moveAmount = Math.min(amount, orbitAmount);
+        if (moveAmount <= 0) return;
 
-      const canStoreAmount = canStoreResource(planet, resourceId, moveAmount);
-      if (canStoreAmount <= 0) return false;
+        const canStoreAmount = canStoreResource(planet, resourceId, moveAmount);
+        if (canStoreAmount <= 0) return;
 
-      const actualMove = Math.min(moveAmount, canStoreAmount);
-      planet.warehouse.orbitBuffer.resources[resourceId] -= actualMove;
-      planet.resources[resourceId] = (planet.resources[resourceId] ?? 0) + actualMove;
-      set({ gameState: { ...gameState, galaxy: { ...gameState.galaxy, systems: [...gameState.galaxy.systems] } } });
-      return true;
+        const actualMove = Math.min(moveAmount, canStoreAmount);
+        planet.warehouse.orbitBuffer.resources[resourceId] -= actualMove;
+        planet.resources[resourceId] = (planet.resources[resourceId] ?? 0) + actualMove;
+        ok = true;
+      });
+      return ok;
     },
 
     // ─── Сохранение / Загрузка ─────────────────────────────
 
     saveGame: async (name?: string) => {
-      const { gameState, currentSaveId } = get();
+      const gameState = get().gameState;
+      const currentSaveId = get().currentSaveId;
       if (!gameState) return false;
 
       const savedSpeed = gameState.speed;
       const savedPhase = gameState.phase;
 
+      // Block 01 P2: pause state during save via immer draft mutation.
       if (gameState.phase === 'playing' || gameState.phase === 'colonization') {
-        gameState.phase = 'paused';
-        gameState.speed = 0;
-        set({ gameState: { ...gameState } });
+        set((state) => {
+          if (!state.gameState) return;
+          state.gameState.phase = 'paused';
+          state.gameState.speed = 0;
+        });
       }
 
       set({ isSaving: true, saveError: null });
@@ -417,8 +464,9 @@ export const useGameStore = create<GameStore>((set, get) => {
       await new Promise<void>((resolve) => setTimeout(resolve, 50));
 
       try {
-        const saveName = name || `Galaxy #${gameState.galaxy.seed}`;
-        const stateJson = serializeGameState(gameState);
+        const currentGameState = get().gameState!;
+        const saveName = name || `Galaxy #${currentGameState.galaxy.seed}`;
+        const stateJson = serializeGameState(currentGameState);
 
         const fetchWithTimeout = async (url: string, options: RequestInit) => {
           const controller = new AbortController();
@@ -435,7 +483,7 @@ export const useGameStore = create<GameStore>((set, get) => {
           const res = await fetchWithTimeout(`/api/save/${currentSaveId}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name: saveName, state: stateJson, tick: gameState.time.tick }),
+            body: JSON.stringify({ name: saveName, state: stateJson, tick: currentGameState.time.tick }),
           });
           if (!res.ok) {
             const errText = await res.text().catch(() => 'Unknown error');
@@ -447,9 +495,9 @@ export const useGameStore = create<GameStore>((set, get) => {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               name: saveName,
-              seed: gameState.galaxy.seed,
+              seed: currentGameState.galaxy.seed,
               state: stateJson,
-              tick: gameState.time.tick,
+              tick: currentGameState.time.tick,
             }),
           });
           if (!res.ok) {
@@ -467,10 +515,13 @@ export const useGameStore = create<GameStore>((set, get) => {
         set({ saveError: errorMsg });
         return false;
       } finally {
+        // Block 01 P2: restore phase via immer draft mutation.
         if (savedPhase === 'playing' || savedPhase === 'colonization') {
-          gameState.phase = savedPhase === 'colonization' ? 'colonization' : 'playing';
-          gameState.speed = savedSpeed || 1;
-          set({ gameState: { ...gameState } });
+          set((state) => {
+            if (!state.gameState) return;
+            state.gameState.phase = savedPhase === 'colonization' ? 'colonization' : 'playing';
+            state.gameState.speed = savedSpeed || 1;
+          });
         }
         set({ isSaving: false });
       }
@@ -561,7 +612,7 @@ export const useGameStore = create<GameStore>((set, get) => {
       return undefined;
     },
   };
-});
+}));
 
 function findPlanet(state: GameState, planetId: EntityId): Planet | undefined {
   for (const system of state.galaxy.systems) {
