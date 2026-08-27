@@ -161,6 +161,9 @@ export function serializeGameState(state: GameState): string {
     ...state,
     galaxy: galaxyWithoutMap,
     productionQueues: Array.from(state.productionQueues.entries()),
+    // Block 02 (F7): serialize shipDesigns + shipyardQueues as entries arrays
+    shipDesigns: Array.from(state.shipDesigns.entries()),
+    shipyardQueues: Array.from(state.shipyardQueues.entries()),
   };
   return JSON.stringify(serializable);
 }
@@ -249,6 +252,9 @@ export function deserializeGameState(json: string): GameState {
     },
     productionQueues,
     fleets: raw.fleets || [],
+    // Block 02 (F7): defensive parse — empty Map if missing or malformed
+    shipDesigns: new Map(raw.shipDesigns ?? []),
+    shipyardQueues: new Map(raw.shipyardQueues ?? []),
     time: raw.time?.dayInYear !== undefined
       ? raw.time
       : { tick: raw.time?.tick ?? 0, dayInYear: (raw.time?.day ?? 0) % 365, year: raw.time?.year ?? 1 },

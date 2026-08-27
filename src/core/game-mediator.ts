@@ -77,6 +77,9 @@ export class GameMediator {
       productionQueues: new Map(),
       fleets: [],
       playerFactionId: 'player',
+      // Block 02 (F1, F7): пустые Map для дизайнов кораблей и очередей верфи
+      shipDesigns: new Map(),
+      shipyardQueues: new Map(),
     };
 
     // Установить lookup для baked model

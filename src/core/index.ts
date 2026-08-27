@@ -21,11 +21,15 @@ export type {
   ChemicalCharacter, ElementRarity, ElementCategory, ElementDef,
   BuildingCategory, BuildingLayer, BuildingDef,
   RecipeCategory, RecipeDef,
-  HullSize, HullDef, ModuleType, ModuleDef,
+  ProcessorType, ProcessorRecipeCategory,
+  HullSize, HullArmorThickness, SlotType, ModuleCategory, DamageType, FuelType,
+  HullType, HullDef, ShipModule, ModuleDef,
   ResourceDeposit, HexCell, AtmosphericSlot, OrbitalSlot, Planet, PlanetResourceDeposit,
   WarehouseReserve, WarehouseSpecialization, ColonyRole, PlanetWarehouse,
+  WarehouseCapacities,
   Star, JumpPoint, StarSystem, Galaxy,
-  Ship, Fleet, FleetOrder, ProductionQueue, ProductionItem, GameState,
+  Ship, Fleet, FleetOrder, ShipDesign, ShipyardQueueItem, ShipyardQueue,
+  ProductionQueue, ProductionItem, GameState,
 } from './types';
 
 // События

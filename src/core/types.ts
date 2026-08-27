@@ -274,27 +274,133 @@ export interface RecipeDef {
  */
 export type HullSize = 'scout' | 'fighter' | 'frigate' | 'cruiser' | 'battleship' | 'transport' | 'flagship';
 
-export interface HullDef {
+/**
+ * Block 02 (F1): толщина обшивки корабля — docs/50-ships.md §2.3.
+ * - light     — Лёгкая, множители 1.0/1.0/1.0 (HP/mass/cost)
+ * - standard  — Стандартная, 1.25/1.10/1.20
+ * - thick     — Утолщённая, 1.50/1.25/1.50
+ * - heavy     — Тяжёлая, 2.00/1.50/2.00
+ */
+export type HullArmorThickness = 'light' | 'standard' | 'thick' | 'heavy';
+
+/**
+ * Block 02 (F1): тип слота под модуль — docs/50-ships.md §1.4.
+ * - 'any'     — слот принимает модуль любой категории
+ * - 'weapon'  — только оружие
+ * - 'engine'  — только двигатели
+ * - 'system'  — ЦПУ/связь/сканер/прыжок/реактор/ЖО
+ * - 'defense' — щиты, броня
+ */
+export type SlotType = 'any' | 'weapon' | 'engine' | 'system' | 'defense';
+
+/**
+ * Block 02 (F1): категория модуля — docs/50-ships.md §1.4.
+ * Заменяет ModuleType (который был слишком «плоским»).
+ */
+export type ModuleCategory = 'engine' | 'control' | 'life_support' | 'weapon' | 'defense' | 'auxiliary';
+
+/** Block 02 (F1): тип урона — docs/50-ships.md §6.9. */
+export type DamageType = 'energy' | 'kinetic' | 'ion' | 'plasma' | 'missile' | 'torpedo';
+
+/** Block 02 (F1): тип топлива — docs/50-ships.md §1.6 + §3.1. */
+export type FuelType = 'chemical' | 'xenon' | 'hydrogen' | 'antimatter';
+
+/**
+ * Block 02 (F1): полная структура корпуса — docs/50-ships.md §2.5.
+ *
+ * Расширяет минимальный HullDef (который был только {id, name, size,
+ * moduleSlots, hp, cost}). Теперь содержит все поля спеки:
+ * totalHS, baseHP, baseMass, weaponSlots/engineSlots/systemSlots/defenseSlots,
+ * baseCost, requiredEngineeringLevel, requiredShipyardLevel, armorOptions.
+ */
+export interface HullType {
   id: string;
   name: string;
   size: HullSize;
-  moduleSlots: number;
-  hp: number;
-  cost: Record<string, number>;
+  totalHS: number;
+  baseHP: number;
+  baseMass: number; // т
+  weaponSlots: number;
+  engineSlots: number;
+  systemSlots: number;
+  defenseSlots: number;
+  baseCost: number; // у.е.р.
+  requiredEngineeringLevel: number;
+  requiredShipyardLevel: number;
+  armorOptions: HullArmorThickness[];
 }
 
-export type ModuleType = 'engine' | 'weapon' | 'shield' | 'sensor' | 'cargo' | 'life_support' | 'control' | 'cloaking';
+/**
+ * @deprecated используйте HullType. Alias для backward compat.
+ * Block 02: переименовано HullDef → HullType (см. выше).
+ */
+export type HullDef = HullType;
 
-export interface ModuleDef {
+/**
+ * Block 02 (F1): каталог модулей кораблей — docs/50-ships.md §1.4.
+ *
+ * Поле `size` теперь HS (number, не HullSize[]).
+ * Поле `category` — это новая ModuleCategory (замена ModuleType).
+ *
+ * Специфичные поля per category — расширяем через optional-поля
+ * (не делаем 6 интерфейсов). Поле со значением undefined означает
+ * «неприменимо к этой категории».
+ */
+export interface ShipModule {
   id: string;
   name: string;
-  type: ModuleType;
-  size: HullSize[];
-  hp: number;
-  powerConsumption: number;
-  cost: Record<string, number>;
-  stats: Record<string, number>;
+  category: ModuleCategory;
+  size: number; // HS
+  mass: number; // т
+  energyConsumption: number; // МВт (0 — не потребляет)
+  cost: number; // у.е.р.
+  techLevel: number;
+  requiredTechs: string[];
+  slotRestriction?: SlotType;
+
+  // ─── Engine category ──────────────────────────────
+  thrust?: number; // двигатель: тяга (кН)
+  fuelType?: FuelType; // двигатель + топливный бак
+  fuelPerThrust?: number; // двигатель: расход топлива на 1 ед. тяги
+  warpRange?: number; // двигатель-варп (св. лет/прыжок) — НЕ используется в MVP
+
+  // ─── Control category (ЦПУ) ───────────────────────
+  controlType?: 'cpu' | 'navigation' | 'tactical' | 'communication';
+  combatBonus?: number;
+  fuelEfficiencyBonus?: number;
+  communicationRange?: number; // св. лет
+  minHull?: HullSize; // мин. класс корпуса для этого ЦПУ
+
+  // ─── Weapon category ───────────────────────────────
+  weaponType?: 'laser' | 'plasma' | 'missile' | 'gauss' | 'ion' | 'torpedo' | 'fighter_bay';
+  damage?: number;
+  range?: number; // км
+  fireRate?: number; // выстрелов/тик
+  energyPerShot?: number;
+  accuracy?: number; // %
+  damageType?: DamageType;
+  ammo?: number | null; // null = бесконечный
+
+  // ─── Defense category ──────────────────────────────
+  defenseType?: 'shield' | 'stealth' | 'emi_shield' | 'armor';
+  shieldHP?: number;
+  regenRate?: number; // %/тик
+  hpPerHS?: number; // броня: HP на 1 HS
+  massPerHS?: number; // броня: масса на 1 HS
+
+  // ─── Auxiliary category ────────────────────────────
+  auxiliaryType?: 'cargo' | 'fuel_tank' | 'scanner' | 'sensor_array'
+    | 'repair' | 'mining' | 'colony' | 'jump_drive' | 'reactor';
+  capacity?: number; // груз/топливо/колонисты
+  maxJumpMass?: number; // т — jump drive
+  energyOutput?: number; // МВт — реактор (> 0)
 }
+
+/**
+ * @deprecated используйте ShipModule. Alias для backward compat.
+ * Block 02: переименовано ModuleDef → ShipModule (см. выше).
+ */
+export type ModuleDef = ShipModule;
 
 // ============ Runtime-модели ============
 
@@ -506,26 +612,75 @@ export interface Galaxy {
 export interface Ship {
   id: EntityId;
   name: string;
+  designId: EntityId;
   hullId: string;
-  modules: string[]; // moduleId[]
+  moduleIds: string[];
+  armor: HullArmorThickness;
   hp: number;
   maxHp: number;
-  location: EntityId; // systemId или planetId
+  fuel: Record<FuelType, number>;
+  location: EntityId;
   owner: EntityId;
+  designName: string;
 }
 
 export interface Fleet {
   id: EntityId;
   name: string;
-  ships: Ship[];
+  shipIds: EntityId[];
   location: EntityId;
   owner: EntityId;
   orders: FleetOrder[];
+  fuelStores: Record<FuelType, number>;
 }
 
 export interface FleetOrder {
   type: 'move' | 'patrol' | 'colonize' | 'attack' | 'defend';
   targetId: EntityId;
+  issuedTick: number;
+  path: EntityId[];
+  currentLegIndex: number;
+  etaTick: number;
+  repeat?: boolean;
+}
+
+/**
+ * Block 02 (F1): Проект корабля — docs/50-ships.md Приложение B.
+ * Сохраняемый чертёж (без runtime-состояния), переиспользуется для постройки
+ * нескольких кораблей. Хранится в `GameState.shipDesigns`.
+ */
+export interface ShipDesign {
+  id: EntityId;
+  name: string;
+  hullId: string;
+  armor: HullArmorThickness;
+  moduleIds: string[];
+  owner: EntityId;
+  createdAtTick: number;
+}
+
+/**
+ * Block 02 (F1, F6): Элемент очереди постройки кораблей на верфи.
+ * Хранит designId (какой дизайн строить), прогресс (progressTicks) и
+ * totalTicks (время постройки из Приложения C).
+ */
+export interface ShipyardQueueItem {
+  id: EntityId;
+  designId: EntityId;
+  shipName: string;
+  progressTicks: number;
+  totalTicks: number;
+}
+
+/**
+ * Block 02 (F1, F6): Очередь постройки кораблей на верфи планеты.
+ * Отдельная от `ProductionQueue`, т.к. постройка кораблей завершается
+ * созданием новой Ship-сущности на орбите планеты, а не только списанием
+ * ресурсов со склада. Хранится в `GameState.shipyardQueues`.
+ */
+export interface ShipyardQueue {
+  planetId: EntityId;
+  items: ShipyardQueueItem[];
 }
 
 export interface ProductionQueue {
@@ -549,4 +704,8 @@ export interface GameState {
   productionQueues: Map<EntityId, ProductionQueue>;
   fleets: Fleet[];
   playerFactionId: EntityId;
+  // Block 02 (F1, F7): дизайны кораблей (Map для O(1) lookup по id)
+  shipDesigns: Map<EntityId, ShipDesign>;
+  // Block 02 (F1, F6): очереди постройки кораблей на верфи каждой планеты
+  shipyardQueues: Map<EntityId, ShipyardQueue>;
 }
