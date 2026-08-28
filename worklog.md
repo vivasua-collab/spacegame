@@ -1259,3 +1259,306 @@ Stage Summary:
 - Конфликтов с предыдущими задачами нет: публичный API @/data/ships
   сохранён, research barrel не тронут, buildings/research data-driven
   структура не тронута, бонус-система общая и обратно-совместимая.
+
+---
+Task ID: 21-c
+Agent: Explore (docs consistency audit)
+Task: Verify documentation consistency vs actual repo state post-R-BLD-MOD + R-SHIPS-DATA refactoring.
+
+Work Log:
+- Прочитан worklog.md целиком (~1262 строк). Контекст: Task 19 (R-BLD-MOD — modular
+  buildings JSON + thin loader + validator + tests); Task 20 (R-SHIPS-DATA —
+  ships data extracted to JSON + thin loaders + validator + new
+  data-driven-architecture.md + 50-ships.md §11 + 03-project-structure.md update
+  + !listing.md update).
+- Собраны repo facts:
+  * `find docs -name '*.md' | wc -l` = 29 (28 в docs/ + 1 в docs/architecture/).
+  * Total bytes = 1 424 561 (~407K токенов по doc-формуле wc-c/3.5).
+  * Total lines = 23 448 (header !listing.md утверждает ~20 560 → STALE).
+  * Buildings: surface.json=14, orbit.json=1 (spaceport), space.json=2
+    (starlift_collector, deep_space_sensor) → 17 total ✓ matches worklog.
+  * Research: techs.json=15, fundamentals.json=6, branch-links.json=8,
+    tech-unlocks.json=9 entries (НЕ stub), bonuses.json=empty `{bonuses:{}}`.
+  * Ships: hulls.json=4, modules.json=20 (2 engine + 5 control + 1 life_support
+    + 2 weapon + 2 defense + 8 auxiliary), fuel-map.json=4 FuelType.
+  * Recipes inline TS: 75 ✓. Elements inline TS: 60 ✓.
+  * tsconfig.json: `"resolveJsonModule": true` ✓.
+  * Validator scripts: scripts/validate-{recipes,buildings,ships}.ts exist;
+    package.json has validate:recipes/buildings/ships/all ✓.
+  * Test files exist: tests/ships/data-files.test.ts (26 тестов ✓),
+    tests/research/bonus-resolver.test.ts (18 tests),
+    tests/economy/building-tech-gate.test.ts (16 tests).
+- Прочитаны и сверены все указанные документы + дополнительные (STATUS.md,
+  modularity.md) против актуального кода.
+
+Stage Summary:
+
+F) FINDINGS TABLE (claim vs reality):
+
+| Doc | Section:line | Claim (doc) | Reality (code/file) | Status |
+|-----|--------------|-------------|---------------------|--------|
+| data-driven-architecture.md | TOC:14-21 | Lists sections 1-7 | §8 "Дорожная карта расширений" exists at 348-363 | WRONG (TOC missing §8) |
+| data-driven-architecture.md | §3.1:155 | "Прямое присваивание вызывает TS-ошибку... Каст через unknown обходит это" implies all loaders | research loaders (tech-tree.ts:24, branch-links.ts:19, tech-unlocks.ts:18) use direct `as Type[]` cast, NO `as unknown as` | STALE/MISLEADING (overgeneralizes) |
+| data-driven-architecture.md | Header:8 | "Зависимости: [40-buildings.md] §R-BLD-MOD" | 40-buildings.md has no §R-BLD-MOD (no mention at all) | WRONG (anchor doesn't exist) |
+| data-driven-architecture.md | §2.1:86 | space.json=2 stubs (starlift_collector, deep_space_sensor) | ✓ matches | OK |
+| data-driven-architecture.md | §2.2:101 | "tech-unlocks.json | stub" | tech-unlocks.json has 9 entries (fusion_reactor, ion_engine, etc.) — not empty | STALE (file has 9 entries) |
+| data-driven-architecture.md | §2.3:116 | "4 FuelType + 3 elementId reverse + 4 cost-per-unit" | ✓ matches (ELEMENT_TO_FUEL has 3 keys: H, Xe, antimatter) | OK |
+| data-driven-architecture.md | §5:264-266 | validators: recipes=75, buildings=17, ships=4+20+4 | ✓ matches actual validator outputs | OK |
+| data-driven-architecture.md | §8.1:352-354 | "Buildings 17 / Research 15+6 / Ships 4+20" | ✓ matches | OK |
+| data-driven-architecture.md | §8.2:358-361 | "Recipes/Elements/ore-specs inline TS, emptyFuelStore hardcode" | ✓ all accurate | OK |
+| 50-ships.md | Header:6-8 | "Изменён: 2026-08-28 R-SHIPS-DATA, v1.1" | ✓ matches | OK |
+| 50-ships.md | §11.1:1479-1481 | hulls.json=4, modules.json=20, fuel-map=4 Records | ✓ matches | OK |
+| 50-ships.md | §11.3:1498 | "10 потребителей" | ~12 external consumers (rg -l) — close | OK-ish (off by 1-2) |
+| 50-ships.md | §11.6:1530 | "tests/ships/data-files.test.ts (26 тестов)" | ✓ 26 tests (rg count) | OK |
+| 50-ships.md | Footer:1563 | "Конец документа 05-ships.md" | Filename is "50-ships.md" not "05-ships.md" | WRONG (typo) |
+| 50-ships.md | §3.1:275 | "Код-реализация: src/ships/fleet-engine.ts:402 содержит inline fuelPriority" | Actual line is 413 (not 402); FUEL_PRIORITY still inline (Pass 2 recommendation not implemented) | STALE (line ref + rec not done) |
+| 40-buildings.md | Header:6 | "Изменён: 2026-06-26" | Should reflect R-BLD-MOD refactoring | STALE (date) |
+| 40-buildings.md | §1.5:96 | "Текущий код (`src/data/buildings.ts`, `src/data/recipes.ts`)" | src/data/buildings.ts DELETED (R-BLD-MOD); now in src/data/buildings/*.json | WRONG (file path) |
+| 40-buildings.md | §10.1:1139 | "MVP ✅ — 15 зданий реализованы в src/data/buildings.ts" | 17 buildings (15 surface+orbit + 2 space stubs); file DELETED | STALE/WRONG (count + path) |
+| 40-buildings.md | §13 TODO:1730 | "Переработать src/data/buildings.ts (код)" | File doesn't exist; done in R-BLD-MOD | STALE |
+| 40-buildings.md | (entire doc) | No mention of R-BLD-MOD, data-driven, surface.json etc. | Refactoring is invisible | STALE (no R-BLD-MOD mention) |
+| 60-research.md | Header:3 | "72 технологии, 6 веток" | techs.json has 15 (MVP), 6 fundamentals | STALE/WRONG (count) |
+| 60-research.md | Header:8 | "Статус: Draft (0% реализации)" | Research IS implemented (Tasks 17, 18, worklog) | STALE/WRONG |
+| 60-research.md | Appendix:1296 | "Всего уникальных уровней ~500 (72 тех. × средний 7 ур.)" | Based on 72 (wrong); actual 15 techs | STALE |
+| 03-project-structure.md | Header:6 | "Изменён: 2026-06-26" | Should reflect R-BLD-MOD/R-SHIPS-DATA update | STALE |
+| 03-project-structure.md | §1:76 | "buildings/ R-BLD-MOD ... (старый buildings.ts удалён)" | ✓ matches (buildings.ts gone, 3 JSON + index.ts) | OK |
+| 03-project-structure.md | §1:89-90 | "ships/ R-SHIPS-DATA, research/ R-RES" | ✓ matches | OK |
+| 03-project-structure.md | §1:91 | chemistry/ list "...bake, validate, baked-types, index" | src/data/chemistry/index.ts does NOT exist (only 7 files; chemistry-generator.ts is the shim at parent level) | WRONG (file 'index' doesn't exist) |
+| 03-project-structure.md | §1:64 | "fleet-engine.ts # processFleetTick + consumeFuel + FUEL_PRIORITY" | FUEL_PRIORITY is NOT exported; inline in fleet-engine.ts:413; was a Pass 2 recommendation | STALE (claim not implemented) |
+| 03-project-structure.md | Principle 3:197 | "Data-driven JSON + тонкие TS-loaders" | ✓ matches | OK |
+| !listing.md | Header:5 | "Всего: 29 документов" | find docs -name '*.md' = 29 ✓ | OK |
+| !listing.md | Header:5 | "~20 560 строк" | Actual: 23 448 (off by ~2 888) | STALE/WRONG |
+| !listing.md | Header:5 | "~384K токенов" | wc-c/3.5 ≈ 407K (off by ~23K) | STALE/WRONG |
+| !listing.md | Quick start:34 | "40-buildings.md | 27 зданий, 12 реализовано" | Actual 17 implemented | STALE/WRONG |
+| !listing.md | 0x:47 | "00-ARCHITECTURE.md | 700 строк" | Actual 708 lines | STALE (off by 8) |
+| !listing.md | 0x:50 | "03-project-structure.md | 175 строк" | Actual 199 | STALE (off by 24) |
+| !listing.md | 0x:53 | "modular-bus.md | 2050 строк" | Actual 2052 | STALE (off by 2) |
+| !listing.md | 0x:54 | "!listing.md | 267 строк" | Actual 305 | STALE (off by 38) |
+| !listing.md | 3x:77 | "35-warehouse-and-logistics.md | 530 строк" | Actual 808 | STALE (off by 278!) |
+| !listing.md | 4x:83 | "40-buildings.md | 1356 | 27 зданий (12 реализовано)" | Actual 1733 lines, 17 buildings implemented | STALE/WRONG (lines + count) |
+| !listing.md | 5x:89 | "50-ships.md | 1466 | Корабли: 7 классов | ❌ 0%" | Actual 1563 lines, ships implemented (MVP) | STALE/WRONG (lines + status) |
+| !listing.md | 6x:95 | "60-research.md | 1350 | 72 техн., 6 веток | ❌ 0%" | 1350 lines ✓, research implemented (15 techs not 72) | STALE/WRONG (status + tech count) |
+| !listing.md | Mgmt:125 | "STATUS.md | 334 строки" | Actual 370 | STALE (off by 36) |
+| !listing.md | Mgmt:127 | "buildings-verification.md | 266 строк" | Actual 284 | STALE (off by 18) |
+| 00-ARCHITECTURE.md | Header:6 | "Изменён: 2026-06-26" | Should reflect data-driven refactoring | STALE |
+| 00-ARCHITECTURE.md | §8:608-613 | src/data tree lists buildings.ts (8 зданий), elements.ts (22), recipes.ts (18) | buildings.ts DELETED; elements.ts=60; recipes.ts=75; actual 17 buildings in JSON | WRONG (paths + all counts) |
+| 00-ARCHITECTURE.md | §8:608-613 | src/data tree omits buildings/, ships/, research/, chemistry/ subdirs | All 4 subdirs exist | WRONG (incomplete) |
+| 00-ARCHITECTURE.md | §8 | src/ships/ + src/research/ entirely missing | Both modules implemented (Block 02/03) | WRONG (missing modules) |
+| 02-dev-process.md | §4:84 | "Etap 2.5 | ⏳ Pending" | P1-P7 stabilization appears done per STATUS.md | STALE |
+| 02-dev-process.md | §5:102 | "Etap 3.0 | ⏳ Pending" | Etap 3.0 (Fleet + Research) COMPLETE per Tasks 4, 17, 18, 19, 20 | STALE/WRONG |
+| STATUS.md | §1:30 | "Lint-ошибок | 0 ✅ (50 warnings)" | Actual 49 warnings (worklog task 20 baseline) | STALE (off by 1) |
+| STATUS.md | §1:31 | "Тестов | 340 / 340 ✅ (0 failing)" | Actual 417/0 (worklog task 20) | STALE/WRONG (off by 77) |
+| STATUS.md | §2.5 header:90 | "Здания (`src/data/buildings.ts`)" | src/data/buildings.ts DELETED; now in JSON | WRONG (path) |
+| STATUS.md | §2.5:92 | "Реализовано 15 из 27 зданий" | Actual 17 (15 surface+orbit + 2 space stubs) | STALE/WRONG (count) |
+| STATUS.md | §2.5:110 | List ends at #15 laboratory | Missing starlift_collector + deep_space_sensor | STALE/WRONG (missing) |
+| STATUS.md | §3.2:159 | "Здания (12 из 27 не реализованы)" | Actual 10 not implemented (27-17) | STALE/WRONG (count) |
+| STATUS.md | §3.2:180 | "Реализованы (15): ..." | Should be 17 (add 2 space stubs) | STALE/WRONG |
+| 10-galaxy/20-stars/30-planets/planet-generation-science/galaxy-generation-audit/galaxy-bake.md | (entire) | No data-driven/R-BLD-MOD/R-RES/R-SHIPS-DATA mentions | Out of scope of buildings/research/ships refactoring — no claims to verify | OK (no inconsistency) |
+
+C) CROSS-DOC CONSISTENCY:
+
+1. **!listing.md vs `find docs -name '*.md'`**:
+   - `find` returns 29 markdown files (28 in docs/ + 1 in docs/architecture/modular-bus.md).
+   - !listing.md lists 31 entries in tables (29 actual + 2 planned: 71-minor-factions.md, 80-combat.md). ✓ Header "29" matches actual file count.
+   - All 29 actual files are listed in !listing.md (no missing entries). ✓
+
+2. **!listing.md token-count claim**: Header "~384K токенов" STALE. Per the doc's own formula (line 303: `wc -c / 3.5`), actual bytes 1 424 561 / 3.5 = ~407K tokens. Off by ~23K tokens. Actual model-token count for Cyrillic text would be much higher (~700K+).
+
+3. **!listing.md line-count claim**: Header "~20 560 строк" STALE. Actual = 23 448 lines (off by ~2 888). Many individual row line counts are also stale (35-warehouse off by 278, 40-buildings off by 377, !listing itself off by 38, 50-ships off by 97, 03-project-structure off by 24, STATUS.md off by 36, buildings-verification off by 18).
+
+4. **03-project-structure.md tree vs `ls -R src/data/`**:
+   - Most entries match (atmosphere-gases, baked-lookups, buildings/, chemistry/, chemistry-generator, crafted-materials, element-helpers, elements, planet-types, processing-chains, processor-categories, processor-recipe-categories, recipes, research/, ships/, star-types, warehouse).
+   - **MISMATCH**: line 91 claims `src/data/chemistry/index` — file does NOT exist (only 7 files: atmospheric-generator, bake, baked-types, ice-generator, ore-generator, ore-specs, validate).
+
+5. **50-ships.md §11.7 catalog tree vs `ls src/data/ships/`**:
+   - Listed: hulls.json, hulls.ts, modules.json, modules.ts, fuel-map.json, fuel-map.ts, shipyard-queue.ts, index.ts = 8 files ✓ matches actual (8 files).
+
+6. **data-driven-architecture.md §2 implemented catalogs vs code**:
+   - Buildings: ✓ (3 JSON files + index.ts thin loader + validator)
+   - Research: ✓ (5 JSON files + 4 thin loaders + index.ts barrel; tech-tree.ts/branch-links.ts/fundamental-branches.ts/tech-unlocks.ts all use direct cast, NOT `as unknown as`)
+   - Ships: ✓ (3 JSON files + 3 thin loaders + shipyard-queue.ts logic + index.ts barrel)
+
+G) FINAL VERDICT — Are docs consistent with code?
+
+**NO — Docs are NOT fully consistent.** Critical inconsistencies:
+
+- **40-buildings.md** has not been updated to reflect R-BLD-MOD: still references
+  `src/data/buildings.ts` (DELETED), still says "15 зданий" (actual 17). The
+  refactoring is invisible to anyone reading this doc.
+- **60-research.md** still says "72 технологии, Draft 0%" — research IS
+  implemented (15 techs in MVP) per worklog Tasks 17-18.
+- **00-ARCHITECTURE.md §8** has an outdated project structure tree with deleted
+  buildings.ts, wrong counts (8/22/18 instead of 17/60/75), and missing entire
+  src/ships/ + src/research/ modules + missing src/data/{buildings,ships,
+  research,chemistry}/ subdirs.
+- **STATUS.md §2.5/§3.2** has stale building list (15 instead of 17; references
+  DELETED src/data/buildings.ts).
+- **!listing.md** has stale line counts (~2 888 lines off total, several rows
+  off by 100-377 lines), stale "❌ 0%" for 50-ships.md and 60-research.md (both
+  implemented).
+- **02-dev-process.md §5** says Etap 3.0 "⏳ Pending" — actually COMPLETE per
+  worklog Tasks 4, 17, 18, 19, 20.
+- **50-ships.md footer typo**: "05-ships.md" → "50-ships.md".
+- **03-project-structure.md line 91**: lists non-existent `src/data/chemistry/index`.
+- **data-driven-architecture.md TOC**: missing §8 entry (Дорожная карта расширений).
+- **data-driven-architecture.md §3.1**: overgeneralizes `as unknown as` cast
+  pattern — research loaders (tech-tree.ts:24, branch-links.ts:19, tech-unlocks.ts:18)
+  use direct `as Type[]` cast.
+- **data-driven-architecture.md Header:8 dependency**: references "40-buildings.md
+  §R-BLD-MOD" — anchor doesn't exist (40-buildings.md has no R-BLD-MOD section).
+- **data-driven-architecture.md §2.2:101**: "tech-unlocks.json | stub" —
+  actually has 9 entries (not empty stub).
+
+The NEW data-driven-architecture.md is ~90% accurate (minor TOC + overgeneralization
+issues). The UPDATED 50-ships.md §11 is ~95% accurate (just footer typo + stale
+line ref). The UPDATED 03-project-structure.md is ~95% accurate (chemistry/index
+phantom + FUEL_PRIORITY claim). The UPDATED !listing.md is ~70% accurate (header
+counts + row counts stale).
+
+The NON-updated docs (40-buildings, 60-research, 00-ARCHITECTURE §8, 02-dev-process
+§5, STATUS.md §1/§2.5/§3.2) are the BIGGEST source of inconsistency — they
+predate the refactoring and now contain contradictory claims.
+
+PRIORITY FIX LIST (Top 5):
+
+1. **STATUS.md §2.5 + §3.2** — update header (src/data/buildings/ instead of
+   src/data/buildings.ts), update count (17/27 instead of 15/27), add
+   starlift_collector + deep_space_sensor to implemented list (line 110, 180),
+   update §1 line 30 (49 warnings), §1 line 31 (417 tests). HIGH (frequently-read).
+
+2. **40-buildings.md** — update header date (2026-08-28 R-BLD-MOD), fix §1.5
+   line 96 (replace src/data/buildings.ts with src/data/buildings/*.json),
+   fix §10.1 line 1139 (17 зданий реализованы в src/data/buildings/*.json),
+   remove §13 line 1730 (Переработать buildings.ts — done), add new §R-BLD-MOD
+   section or cross-link to data-driven-architecture.md. HIGH.
+
+3. **60-research.md** — update header: "15 технологий в MVP (data-driven techs.json),
+   Draft 0%" → "15 технологий в MVP, ✅ Реализовано (R-RES)"; fix appendix line
+   1296 (15 techs × MVP scale, not 72); add §R-RES section or cross-link to
+   data-driven-architecture.md. HIGH.
+
+4. **!listing.md** — recompute all row line counts (35-warehouse +278, 40-buildings
+   +377, 50-ships +97, 03-project-structure +24, STATUS +36, etc.); recompute
+   header totals (23 448 lines, ~407K tokens); update status fields for 50-ships
+   (✅ MVP) and 60-research (✅ MVP); update 4x row "27 зданий (12 реализовано)"
+   → "27 зданий (17 реализовано в MVP, 2 post-MVP stubs)". HIGH.
+
+5. **00-ARCHITECTURE.md §8** — either delete §8 (refer to 03-project-structure.md
+   instead) or update tree to match reality: remove src/data/buildings.ts;
+   update counts (elements 22→60, recipes 18→75, buildings 8→17 in JSON);
+   add src/ships/, src/research/; add src/data/{buildings,ships,research,
+   chemistry}/ subdirs. HIGH (architectural foundation doc).
+
+Also-fix list (secondary):
+- **02-dev-process.md §5:102** — Etap 3.0 "⏳ Pending" → "✅ Complete".
+- **50-ships.md footer:1563** — "05-ships.md" → "50-ships.md".
+- **50-ships.md §3.1:275** — update fleet-engine.ts line ref 402 → 413 (or
+  mark as "Pass 2 recommendation — TODO").
+- **03-project-structure.md §1:91** — remove "index" from chemistry/ file list.
+- **03-project-structure.md §1:64** — fix FUEL_PRIORITY claim (inline in
+  fleet-engine.ts, not exported).
+- **data-driven-architecture.md TOC:14-21** — add §8 entry.
+- **data-driven-architecture.md Header:8** — remove "§R-BLD-MOD" anchor
+  (section doesn't exist in 40-buildings.md).
+- **data-driven-architecture.md §3.1:155** — clarify that `as unknown as`
+  cast is used by buildings/ships loaders, but research loaders use direct
+  `as Type[]` cast (JSON types happen to be compatible).
+- **data-driven-architecture.md §2.2:101** — fix "stub" → "9 entries
+  (fusion_reactor, ion_engine, etc.)".
+
+ВЫВОД: Documentation NOT fully consistent with code. The new/updated docs
+(data-driven-architecture.md, 50-ships.md §11, 03-project-structure.md) are
+mostly accurate (~85-95%). The NON-updated docs that predate the refactoring
+(40-buildings, 60-research, 00-ARCHITECTURE §8, 02-dev-process §5, STATUS.md
+§1/§2.5/§3.2, !listing.md row counts) contain the most impactful stale claims:
+- Wrong file paths (src/data/buildings.ts DELETED, but still referenced)
+- Wrong counts (15 instead of 17 buildings; 72 instead of 15 techs; 12 instead
+  of 17 implemented; 340 instead of 417 tests)
+- Wrong statuses (Draft 0% / ❌ 0% / ⏳ Pending for already-implemented systems)
+- Stale line/token totals in !listing.md header (~2 888 lines off, ~23K tokens off).
+
+Pure research only — no code changes.
+
+---
+Task ID: 21
+Agent: main (audit coordinator)
+Task: После всех изменений провести детальный аудит. После аудита оценить: возможно параметры генерации звёзд и планет также необходимо вынести в файлы.
+
+Work Log:
+- Прочитан worklog (Task IDs: 1,3,5,2,4,6,17,18,19,20,23,26,27 + R-BLD-REF, R-RES, R-BLD-MOD) — полный контекст.
+- Проверен HEAD: f68be41 R-SHIPS-DATA (последний коммит Task 20, working tree clean).
+- Запущены quality gates (параллельно):
+  * bun run lint → 0 errors / 49 warnings (= baseline 49)
+  * bunx tsc --noEmit → 159 errors (= baseline 159); pattern TS18048(114)/TS2532(22)/TS2345(8)/TS2322(8)/TS2741(3)/TS2769(1)/TS2561(1)/TS2538(1)/TS18047(1) идентичен baseline
+  * bun test → 417 pass / 0 fail (391 было до R-SHIPS-DATA, +26 новых ships-data tests)
+  * bun run validate:all → recipes 75/75 + buildings 17/17 + ships 4 hulls+20 modules+4 FuelType — все зелёные
+- Запущен subagent 21-c (Explore) для аудита docs consistency vs репо. Подагент выполнился
+  полностью: проверил 11 docs против фактического репо (data-driven-architecture.md,
+  50-ships.md, 40-buildings.md, 60-research.md, 03-project-structure.md, !listing.md,
+  00-ARCHITECTURE.md, 02-dev-process.md, STATUS.md, 10/20/30-*.md + 3 generation docs).
+  Найдено ~30 inconsistencies, топ-5 priority fixes идентифицированы (см. worklog 21-c).
+- Запуск subagent 21-a (galaxy audit) и 21-b (catalog integrity) сорвался rate_limit_exceeded
+  (429) — оба. Галактический аудит (главный вопрос владельца) выполнен вручную: прочитаны
+  все 9 файлов src/galaxy/*.ts + src/data/{star-types,planet-types,atmosphere-gases,
+  chemistry-generator,elements}.ts + секции 6 docs (10-galaxy, 20-stars, 30-planets,
+  planet-generation-science, galaxy-generation-audit, galaxy-bake).
+- Каталог integrity audit выполнен вручную по данным чтения loaders + JSON (buildings/
+  research/ships) — найдены 2 minor smell:
+  * G1: research/tech-tree.ts:24 использует прямой cast `techsData as Technology[]`
+    вместо документированного `as unknown as { techs: Technology[] }.techs` паттерна
+    (нарушение data-driven-architecture.md §3.1).
+  * G4: нет standalone `validate:research` script (валидатор встроен в engine.ts
+    init-time), в отличие от buildings/ships.
+- Звёздный аудит выявил критичное: docs/20-stars.md §7.2 (line 1258) уже описывает
+  JSON-структуру starTypes + binaryTypes с расширенным набором полей (temperatureRange,
+  massRange, radiusRange, luminosityRange, lifespan, gasGiantMultiplier,
+  asteroidResourceMultiplier, radiationDamage, specialMechanics) — но код фактически
+  TS-inline в src/data/star-types.ts с более узким форматом (single values, не Range).
+  Также цвета звёзд в doc (§7.3) не совпадают с кодом (O=#9bb0ff в доке vs #6e8eff в коде,
+  G=#fff4ea vs #ffe8a0). То есть extraction был запланирован изначально, но не выполнен.
+- Параметры генератора классифицированы по 3 типам (DATA / PHYS / MIXED) для каждого
+  файла: идентифицировано 16 групп tunable-параметров-кандидатов и 7 групп физических
+  формул/констант (Stefan-Boltzmann, Kepler's 3rd law, mass-radius power laws,
+  Kopparapu HZ coefficients, T_SUN, hex grid geometry) — последние НЕ подлежат выносу.
+- Составлена рекомендованная таблица приоритетов выноса (16 групп, 6 подзадач):
+  * Etap 4.1 (HIGH, S, ~4h): Star catalog (STAR_TYPES + SPECIAL_STAR_RANGES →
+    src/data/stars/types.json)
+  * Etap 4.2 (HIGH, M, ~8h): Planet catalog (PLANET_TYPES + density/radius/moon/
+    life tables → src/data/planets/types.json + moons.json)
+  * Etap 4.3 (HIGH, M, ~6h): Atmosphere tables (greenhouse ΔT, pressure, albedo,
+    type-probabilities per planet → src/data/planets/atmosphere-tables.json)
+  * Etap 4.4 (MEDIUM, S, ~3h): Planet zone weights (selectPlanetType →
+    src/data/planets/zone-weights.json)
+  * Etap 4.5 (MEDIUM, S, ~3h): Resource multipliers (CATEGORY_MULTIPLIERS 7×8 →
+    src/data/planets/resource-multipliers.json)
+  * Etap 4.6 (LOW, S each, ~6h total): Galaxy config + names + JP-tunables +
+    orbital-step → src/data/galaxy/config.json + names.json
+- Главный риск для всех 6 подзадач идентифицирован: детерминизм PRNG. Порядок вызовов
+  rng.weightedChoice/nextFloat/nextInt должен быть сохранён идентично, иначе сломаются
+  snapshot-тесты (galaxy-snapshot.test.ts, prng-statistical.test.ts) и сериализованные
+  сейвы. Митигация: TDD с pre-extraction snapshot + дифф-тест на идентичность вывода.
+- Создан checkpoints/audit_2026_08_28_09_post_r_ships_galaxy_eval.md (~12K токенов,
+  ~270 строк) — полный отчёт: quality gates, целостность каталогов, классификация
+  параметров генератора, таблица рекомендаций, итоговый вердикт.
+
+Stage Summary:
+- Все quality gates зелёные (lint 0/49, tsc 159=baseline, tests 417/0, validate:all
+  green). Регрессий от R-BLD-MOD + R-SHIPS-DATA нет.
+- Data-driven catalog system: buildings/research/ships — 3 реализованных каталога,
+  паттерн работает стабильно. 2 minor smell (research loader cast pattern + нет
+  validate:research script), 6 TODO items в roadmap §8.2 (recipes/elements/ores/
+  emptyFuelStore/AI/combat — уже Etap 4).
+- Docs consistency: ~30 stale items в 6 docs (STATUS/40-buildings/60-research/
+  !listing/00-ARCHITECTURE §8/02-dev-process §5), топ-5 priority fixes зафиксированы.
+- ГЛАВНЫЙ ВЕРДИКТ: ДА, параметры генерации звёзд и планет необходимо вынести в JSON,
+  следуя паттерну (JSON + thin loader + validator + tests). docs/20-stars.md §7.2
+  уже описывает целевую JSON-структуру — extraction был запланирован изначально,
+  но не выполнен. Рекомендуемый объём миграции: 6 подзадач (4 HIGH + 2 LOW priority),
+  ~30 часов работы суммарно. Физические формулы и константы (Stefan-Boltzmann, Kepler,
+  mass-radius, Kopparapu, T_SUN=5778K, hex geometry) остаются в коде — это научные
+  законы, не designer-tunable данные.
+- Главный риск для всех подзадач — детерминизм PRNG (порядок вызовов rng.* должен
+  сохраняться идентично). Митигация: TDD с pre-extraction snapshot + дифф-тест.
+- Кода не изменено. Аудит чисто исследовательский. Все recommendations будут
+  выполняться в отдельных задачах (если владелец одобрит).
+
