@@ -1,11 +1,20 @@
 'use client';
 
+/* eslint-disable react-hooks/refs --
+ * Per-tick resource deltas use the well-known `usePrevious` pattern: we read
+ * a ref holding the previous (tick, resources) snapshot inside a useMemo to
+ * derive the net per-tick change. React-hooks v6 flags ref reads during
+ * render, but this is the idiomatic way to display a measured delta (gain /
+ * loss) for a value that the parent re-renders on every tick. Disabling only
+ * here keeps the rule active project-wide. */
+
+import { useEffect, useMemo, useRef } from 'react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { ELEMENT_MAP } from '@/data/elements';
 import { CATEGORY_LABELS, CATEGORY_COLORS } from '@/data/element-helpers';
-import { CRAFTED_MATERIALS, getCraftedMaterial } from '@/data/crafted-materials';
-import { Rocket } from 'lucide-react';
+import { getCraftedMaterial } from '@/data/crafted-materials';
+import { Rocket, ArrowUp, ArrowDown } from 'lucide-react';
 import type { ElementCategory } from '@/core/types';
 
 const CATEGORY_ORDER: ElementCategory[] = [
@@ -23,6 +32,15 @@ interface ResourcePanelProps {
    * «Топливо флотов» section is not rendered.
    */
   fleetFuelSummary?: Array<{ fuelType: string; amount: number }>;
+  /**
+   * Audit-fix (remediation): current simulation tick. When provided, the
+   * panel computes a per-tick delta for every resource by diffing the
+   * `resources` snapshot against the previous render's snapshot and the
+   * tick delta. The delta is shown as a coloured +/− badge next to the
+   * amount, so the player can instantly see which resources are rising
+   * or falling. Optional — omitted in static contexts (no tick).
+   */
+  tick?: number;
 }
 
 interface PanelEntry {
@@ -32,7 +50,47 @@ interface PanelEntry {
   amount: number;
 }
 
-export function ResourcePanel({ resources, className, fleetFuelSummary }: ResourcePanelProps) {
+/**
+ * Threshold below which a delta is treated as "no change" (avoids
+ * rendering +0.0 / -0.0 flicker from floating-point noise).
+ */
+const DELTA_EPSILON = 0.001;
+
+export function ResourcePanel({ resources, className, fleetFuelSummary, tick }: ResourcePanelProps) {
+  // ── Per-tick delta tracker (usePrevious pattern) ────────────────────────
+  // Snapshot of (tick, resources) from the previous committed render. We
+  // read it inside useMemo to derive deltas — delta[id] = (cur - prev) /
+  // (tick - prevTick). The ref is written in a layout effect after render,
+  // so on the NEXT render it holds the value from the render before →
+  // delta = how much changed since the last tick(s). Net change captures
+  // both gains (extraction / crafting output) and losses (consumption /
+  // crafting input) — exactly what the player wants to see.
+  const prevRef = useRef<{ tick: number; resources: Record<string, number> } | null>(null);
+
+  const deltas = useMemo<Record<string, number>>(() => {
+    const prev = prevRef.current;
+    if (!prev || tick == null) return {};
+    const dt = tick - prev.tick;
+    if (dt <= 0) return {};
+    const result: Record<string, number> = {};
+    const allKeys = new Set<string>([
+      ...Object.keys(resources),
+      ...Object.keys(prev.resources),
+    ]);
+    for (const id of allKeys) {
+      const cur = resources[id] ?? 0;
+      const pa = prev.resources[id] ?? 0;
+      const d = (cur - pa) / dt;
+      if (Math.abs(d) > DELTA_EPSILON) result[id] = d;
+    }
+    return result;
+  }, [resources, tick]);
+
+  // Commit the snapshot after render so the next render sees it as prev.
+  useEffect(() => {
+    prevRef.current = { tick: tick ?? 0, resources: { ...resources } };
+  }, [resources, tick]);
+
   const entries = Object.entries(resources).filter(([, amount]) => amount > 0);
 
   // Group by category
@@ -65,9 +123,27 @@ export function ResourcePanel({ resources, className, fleetFuelSummary }: Resour
   // Block 02 (F7): filter fleet fuel summary to non-zero entries
   const fleetFuelEntries = (fleetFuelSummary ?? []).filter(e => e.amount > 0);
 
+  // Has-deltas flag: if we have any delta at all, render the legend once.
+  const hasDeltas = Object.keys(deltas).length > 0;
+
   return (
     <ScrollArea className={className}>
       <div className="space-y-2 pr-2">
+        {/* Delta legend — only when deltas are being tracked */}
+        {hasDeltas && (
+          <div className="flex items-center gap-3 text-[9px] text-slate-500 mb-1">
+            <span className="flex items-center gap-0.5">
+              <ArrowUp className="size-2.5 text-emerald-400" />
+              прирост
+            </span>
+            <span className="flex items-center gap-0.5">
+              <ArrowDown className="size-2.5 text-red-400" />
+              расход
+            </span>
+            <span className="text-slate-600">/ тик</span>
+          </div>
+        )}
+
         {/* Block 02 (F7): Fleet fuel summary section (shown first — strategic resource) */}
         {fleetFuelEntries.length > 0 && (
           <div>
@@ -76,17 +152,23 @@ export function ResourcePanel({ resources, className, fleetFuelSummary }: Resour
               Топливо флотов
             </div>
             <div className="space-y-0.5">
-              {fleetFuelEntries.map((entry) => (
-                <div key={entry.fuelType} className="flex items-center justify-between text-xs">
-                  <span className="text-muted-foreground truncate mr-2">
-                    <span className="text-cyan-400/70 font-mono mr-1">{entry.fuelType.slice(0, 3).toUpperCase()}</span>
-                    {entry.fuelType}
-                  </span>
-                  <span className="font-mono text-cyan-200 whitespace-nowrap">
-                    {formatAmount(entry.amount)}
-                  </span>
-                </div>
-              ))}
+              {fleetFuelEntries.map((entry) => {
+                const d = deltas[entry.fuelType];
+                return (
+                  <div key={entry.fuelType} className="flex items-center justify-between text-xs">
+                    <span className="text-muted-foreground truncate mr-2">
+                      <span className="text-cyan-400/70 font-mono mr-1">{entry.fuelType.slice(0, 3).toUpperCase()}</span>
+                      {entry.fuelType}
+                    </span>
+                    <span className="flex items-center gap-1.5">
+                      {d !== undefined && <DeltaBadge delta={d} />}
+                      <span className="font-mono text-cyan-200 whitespace-nowrap">
+                        {formatAmount(entry.amount)}
+                      </span>
+                    </span>
+                  </div>
+                );
+              })}
             </div>
             <Separator className="my-1.5 bg-cyan-500/15" />
           </div>
@@ -101,19 +183,25 @@ export function ResourcePanel({ resources, className, fleetFuelSummary }: Resour
                 {CATEGORY_LABELS[cat]}
               </div>
               <div className="space-y-0.5">
-                {items.map((item) => (
-                  <div key={item.id} className="flex items-center justify-between text-xs">
-                    <span className="text-muted-foreground truncate mr-2">
-                      {item.symbol && item.symbol !== item.id ? (
-                        <span className="text-foreground/70 font-mono mr-1">{item.symbol}</span>
-                      ) : null}
-                      {item.name}
-                    </span>
-                    <span className="font-mono text-foreground/90 whitespace-nowrap">
-                      {formatAmount(item.amount)}
-                    </span>
-                  </div>
-                ))}
+                {items.map((item) => {
+                  const d = deltas[item.id];
+                  return (
+                    <div key={item.id} className="flex items-center justify-between text-xs">
+                      <span className="text-muted-foreground truncate mr-2">
+                        {item.symbol && item.symbol !== item.id ? (
+                          <span className="text-foreground/70 font-mono mr-1">{item.symbol}</span>
+                        ) : null}
+                        {item.name}
+                      </span>
+                      <span className="flex items-center gap-1.5">
+                        {d !== undefined && <DeltaBadge delta={d} />}
+                        <span className="font-mono text-foreground/90 whitespace-nowrap">
+                          {formatAmount(item.amount)}
+                        </span>
+                      </span>
+                    </div>
+                  );
+                })}
               </div>
               <Separator className="my-1.5 bg-white/5" />
             </div>
@@ -125,19 +213,42 @@ export function ResourcePanel({ resources, className, fleetFuelSummary }: Resour
               Прочие
             </div>
             <div className="space-y-0.5">
-              {uncategorized.map((item) => (
-                <div key={item.id} className="flex items-center justify-between text-xs">
-                  <span className="text-muted-foreground truncate mr-2">{item.name}</span>
-                  <span className="font-mono text-foreground/90 whitespace-nowrap">
-                    {formatAmount(item.amount)}
-                  </span>
-                </div>
-              ))}
+              {uncategorized.map((item) => {
+                const d = deltas[item.id];
+                return (
+                  <div key={item.id} className="flex items-center justify-between text-xs">
+                    <span className="text-muted-foreground truncate mr-2">{item.name}</span>
+                    <span className="flex items-center gap-1.5">
+                      {d !== undefined && <DeltaBadge delta={d} />}
+                      <span className="font-mono text-foreground/90 whitespace-nowrap">
+                        {formatAmount(item.amount)}
+                      </span>
+                    </span>
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}
       </div>
     </ScrollArea>
+  );
+}
+
+/**
+ * DeltaBadge — small inline badge showing per-tick change.
+ * Green ▲ for gain, red ▼ for loss. Shows the absolute value with 1 decimal.
+ */
+function DeltaBadge({ delta }: { delta: number }) {
+  const isGain = delta > 0;
+  const color = isGain ? 'text-emerald-400' : 'text-red-400';
+  const Icon = isGain ? ArrowUp : ArrowDown;
+  const sign = isGain ? '+' : '−';
+  return (
+    <span className={`inline-flex items-center gap-0.5 text-[9px] font-mono ${color}`} title={`${isGain ? '+' : ''}${delta.toFixed(3)} за тик`}>
+      <Icon className="size-2.5" />
+      {sign}{Math.abs(delta).toFixed(delta >= 100 ? 0 : 1)}
+    </span>
   );
 }
 

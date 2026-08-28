@@ -19,7 +19,6 @@ import {
 } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { Hammer, Zap, ArrowUp, Wrench, RotateCcw, ArrowRight, FlaskConical } from 'lucide-react';
 import type { Planet, HexTerrain, BuildingLayer, BuildingDef } from '@/core/types';
@@ -329,7 +328,7 @@ function UpgradeMode({
             </DialogDescription>
           </DialogHeader>
 
-          <ScrollArea className="max-h-[70vh] pr-2">
+          <div className="max-h-[70vh] overflow-y-auto pr-2 custom-scrollbar">
             <div className="space-y-3">
               <div className="text-sm text-slate-300">
                 <span className="text-slate-500">Категория:</span>{' '}
@@ -460,7 +459,7 @@ function UpgradeMode({
                 </div>
               )}
             </div>
-          </ScrollArea>
+          </div>
         </DialogContent>
       </Dialog>
 
@@ -540,7 +539,7 @@ function BuildList({
   };
 
   return (
-    <ScrollArea className="max-h-[55vh] pr-2">
+    <div className="max-h-[55vh] overflow-y-auto pr-2 custom-scrollbar">
       <div className="space-y-3">
         {availableBuildings.map((building) => {
           const canAfford = canAffordBuilding(planet, building);
@@ -614,7 +613,7 @@ function BuildList({
           );
         })}
       </div>
-    </ScrollArea>
+    </div>
   );
 }
 

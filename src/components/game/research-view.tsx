@@ -225,18 +225,10 @@ export function ResearchView() {
               </div>
             </CardHeader>
             <CardContent className="pt-0">
-              <ScrollArea className="max-h-[calc(100vh-220px)] pr-2">
-                <div className="space-y-4">
-                  {(['power', 'materials', 'weapons', 'computing', 'biology'] as SpecializedBranchId[]).map((branch) => (
-                    <TechBranchGroup
-                      key={branch}
-                      branchId={branch}
-                      researchState={researchState}
-                      onSelectTech={setSelectedTechId}
-                    />
-                  ))}
-                </div>
-              </ScrollArea>
+              <TechTreeGraph
+                researchState={researchState}
+                onSelectTech={setSelectedTechId}
+              />
             </CardContent>
           </Card>
         </main>
@@ -416,7 +408,7 @@ function FundamentalBranchCard({
   );
 }
 
-// ============ Tech branch group ============
+// ============ Tech tree graph (horizontal, scroll-right) ============
 
 const BRANCH_LABELS: Record<SpecializedBranchId, string> = {
   power: 'Энергия',
@@ -427,39 +419,229 @@ const BRANCH_LABELS: Record<SpecializedBranchId, string> = {
   xenoarch: 'Ксеноархеология',
 };
 
-function TechBranchGroup({
-  branchId,
+// Layout constants — fixed node size lets us compute pixel coordinates
+// for SVG bezier connectors without measuring DOM nodes.
+const NODE_W = 188;
+const NODE_H = 92;
+const INTRA_GAP = 8;       // vertical gap between stacked nodes in same (branch, depth) cell
+const COL_GAP = 76;        // horizontal gap between depth columns (room for bezier curves)
+const BRANCH_GAP = 22;     // vertical gap between branch lanes
+const LEFT_PAD = 60;       // left padding (room for branch lane labels)
+const TOP_PAD = 22;        // top padding (room for tier headers)
+const RIGHT_PAD = 14;
+const BOTTOM_PAD = 12;
+
+const TREE_BRANCHES: SpecializedBranchId[] = [
+  'power', 'materials', 'weapons', 'computing', 'biology',
+];
+
+interface NodePos { x: number; y: number; col: number; rowIdx: number; }
+interface TreeLink { path: string; color: string; met: boolean; }
+interface BranchRowInfo { branch: SpecializedBranchId; yOffset: number; height: number; }
+interface TreeLayout {
+  positions: Map<string, NodePos>;
+  links: TreeLink[];
+  branchRows: BranchRowInfo[];
+  totalWidth: number;
+  totalHeight: number;
+  maxDepth: number;
+}
+
+// Depth (longest path from roots) — memoized once per tech.
+// Tech tree is a DAG (no cycles by design), but we set a tentative 0
+// before recursing to break any accidental cycle.
+const depthMemo = new Map<string, number>();
+function techDepth(techId: string): number {
+  const cached = depthMemo.get(techId);
+  if (cached !== undefined) return cached;
+  const tech = TECH_MAP.get(techId);
+  if (!tech) return 0;
+  depthMemo.set(techId, 0); // cycle guard
+  let d = 0;
+  if (tech.prerequisites.length > 0) {
+    let max = 0;
+    for (const p of tech.prerequisites) {
+      const pd = techDepth(p.techId);
+      if (pd > max) max = pd;
+    }
+    d = max + 1;
+  }
+  depthMemo.set(techId, d);
+  return d;
+}
+
+/**
+ * Compute a static layout for the tech-tree graph.
+ * - Rows = specialized branches (5 lanes, top→bottom).
+ * - Columns = depth (longest prerequisite path). Roots at col 0, dependants
+ *   open to the right → horizontal scroll reveals deeper tiers.
+ * - Within a (branch, depth) cell, multiple techs stack vertically.
+ * - Connectors are cubic-bezier S-curves from each prereq's right-center
+ *   to its dependant's left-center. Cross-branch prereqs draw curves that
+ *   span multiple lanes — visually showing the inter-branch dependency.
+ *
+ * Only `links[].met` depends on researchState; positions are topology-only.
+ * For 15 MVP techs this is trivial to recompute on each state change.
+ */
+function buildTreeLayout(researchState: ResearchState): TreeLayout {
+  // Group techs by (branch, depth). Skip xenoarch (Etape 4).
+  const cells = new Map<string, Technology[]>();
+  let maxDepth = 0;
+  for (const tech of TECH_TREE) {
+    if (tech.branch === 'xenoarch') continue;
+    const d = techDepth(tech.id);
+    if (d > maxDepth) maxDepth = d;
+    const key = `${tech.branch}:${d}`;
+    let arr = cells.get(key);
+    if (!arr) { arr = []; cells.set(key, arr); }
+    arr.push(tech);
+  }
+  for (const arr of cells.values()) arr.sort((a, b) => a.sortOrder - b.sortOrder);
+
+  // Branch lane: yOffset + height (height = tallest cell in that branch).
+  const branchRows: BranchRowInfo[] = [];
+  let yCursor = TOP_PAD;
+  for (const branch of TREE_BRANCHES) {
+    let maxCellCount = 1;
+    for (let d = 0; d <= maxDepth; d++) {
+      const arr = cells.get(`${branch}:${d}`);
+      if (arr && arr.length > maxCellCount) maxCellCount = arr.length;
+    }
+    const height = maxCellCount * NODE_H + (maxCellCount - 1) * INTRA_GAP;
+    branchRows.push({ branch, yOffset: yCursor, height });
+    yCursor += height + BRANCH_GAP;
+  }
+  const totalHeight = yCursor - BRANCH_GAP + BOTTOM_PAD;
+
+  // Node positions.
+  const positions = new Map<string, NodePos>();
+  for (const branch of TREE_BRANCHES) {
+    const row = branchRows.find((r) => r.branch === branch);
+    if (!row) continue;
+    const rIdx = TREE_BRANCHES.indexOf(branch);
+    for (let d = 0; d <= maxDepth; d++) {
+      const arr = cells.get(`${branch}:${d}`);
+      if (!arr) continue;
+      arr.forEach((tech, i) => {
+        const x = LEFT_PAD + d * (NODE_W + COL_GAP);
+        const y = row.yOffset + i * (NODE_H + INTRA_GAP);
+        positions.set(tech.id, { x, y, col: d, rowIdx: rIdx });
+      });
+    }
+  }
+
+  const totalWidth = LEFT_PAD + (maxDepth + 1) * NODE_W + maxDepth * COL_GAP + RIGHT_PAD;
+
+  // Bezier connectors.
+  const links: TreeLink[] = [];
+  for (const tech of TECH_TREE) {
+    if (tech.branch === 'xenoarch') continue;
+    const depPos = positions.get(tech.id);
+    if (!depPos) continue;
+    const dx = depPos.x;
+    const dy = depPos.y + NODE_H / 2;
+    for (const p of tech.prerequisites) {
+      const pp = positions.get(p.techId);
+      if (!pp) continue;
+      const px = pp.x + NODE_W;
+      const py = pp.y + NODE_H / 2;
+      const midX = (px + dx) / 2;
+      const path = `M ${px},${py} C ${midX},${py} ${midX},${dy} ${dx},${dy}`;
+      const curLevel = researchState.researched[p.techId] ?? 0;
+      const met = curLevel >= p.minLevel;
+      links.push({ path, color: BRANCH_COLORS[tech.branch], met });
+    }
+  }
+
+  return { positions, links, branchRows, totalWidth, totalHeight, maxDepth };
+}
+
+function TechTreeGraph({
   researchState,
   onSelectTech,
 }: {
-  branchId: SpecializedBranchId;
   researchState: ResearchState;
   onSelectTech: (techId: string) => void;
 }) {
-  const techs = TECH_TREE.filter((t) => t.branch === branchId).sort((a, b) => a.sortOrder - b.sortOrder);
-  const color = BRANCH_COLORS[branchId];
-  const label = BRANCH_LABELS[branchId];
+  const layout = useMemo(() => buildTreeLayout(researchState), [researchState]);
 
   return (
-    <div>
-      <div className="flex items-center gap-2 mb-2 px-1">
-        <span className="size-2 rounded-full" style={{ backgroundColor: color }} />
-        <span className="text-xs uppercase tracking-wider font-medium" style={{ color }}>
-          {label}
-        </span>
-        <span className="text-[10px] text-slate-600">({techs.length} техн.)</span>
-        <div className="flex-1 h-px bg-white/5 ml-2" />
-      </div>
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-        {techs.map((tech) => (
-          <TechCard
-            key={tech.id}
-            tech={tech}
-            researchState={researchState}
-            branchColor={color}
-            onClick={() => onSelectTech(tech.id)}
-          />
+    <div className="overflow-x-auto overflow-y-auto custom-scrollbar max-h-[calc(100vh-220px)] rounded-md border border-white/5 bg-black/20">
+      <div
+        className="relative"
+        style={{ width: layout.totalWidth, height: layout.totalHeight, minWidth: '100%' }}
+      >
+        {/* SVG connector layer — drawn behind nodes */}
+        <svg
+          className="absolute inset-0 pointer-events-none"
+          width={layout.totalWidth}
+          height={layout.totalHeight}
+          style={{ overflow: 'visible' }}
+          aria-hidden="true"
+        >
+          {layout.links.map((link, i) => (
+            <path
+              key={i}
+              d={link.path}
+              stroke={link.color}
+              strokeWidth={link.met ? 1.8 : 1.2}
+              fill="none"
+              strokeDasharray={link.met ? undefined : '5 4'}
+              opacity={link.met ? 0.55 : 0.22}
+            />
+          ))}
+        </svg>
+
+        {/* Tier (depth) column headers — top gutter */}
+        {Array.from({ length: layout.maxDepth + 1 }, (_, d) => (
+          <div
+            key={d}
+            className="absolute text-[9px] text-slate-600 select-none uppercase tracking-wider"
+            style={{ left: LEFT_PAD + d * (NODE_W + COL_GAP), top: 4 }}
+          >
+            {d === 0 ? 'Tier I · базы' : d === 1 ? 'Tier II' : d === 2 ? 'Tier III' : `Tier ${d + 1}`}
+          </div>
         ))}
+
+        {/* Branch lane labels — left gutter */}
+        {layout.branchRows.map((row) => (
+          <div
+            key={row.branch}
+            className="absolute flex items-center gap-1 select-none"
+            style={{ left: 6, top: row.yOffset + row.height / 2, transform: 'translateY(-50%)' }}
+          >
+            <span
+              className="size-2 rounded-full shrink-0"
+              style={{ backgroundColor: BRANCH_COLORS[row.branch] }}
+            />
+            <span
+              className="text-[9px] uppercase tracking-wider font-medium whitespace-nowrap"
+              style={{ color: BRANCH_COLORS[row.branch] }}
+            >
+              {BRANCH_LABELS[row.branch]}
+            </span>
+          </div>
+        ))}
+
+        {/* Tech nodes */}
+        {TECH_TREE.filter((t) => t.branch !== 'xenoarch').map((tech) => {
+          const pos = layout.positions.get(tech.id);
+          if (!pos) return null;
+          return (
+            <div
+              key={tech.id}
+              className="absolute"
+              style={{ left: pos.x, top: pos.y, width: NODE_W, height: NODE_H }}
+            >
+              <TechCard
+                tech={tech}
+                researchState={researchState}
+                branchColor={BRANCH_COLORS[tech.branch]}
+                onClick={() => onSelectTech(tech.id)}
+              />
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -491,25 +673,23 @@ function TechCard({
   return (
     <button
       onClick={onClick}
-      className="text-left rounded-lg border p-2 transition-all hover:bg-white/5"
+      className="h-full w-full flex flex-col text-left rounded-lg border p-2 transition-all hover:bg-white/5 overflow-hidden"
       style={{ borderColor }}
     >
-      <div className="flex items-start justify-between mb-1">
-        <div className="flex items-center gap-1.5 min-w-0">
-          <span className="text-sm font-medium truncate" style={{ color: branchColor }}>
-            {tech.name}
-          </span>
-        </div>
-        <span style={{ color: statusColor }}>{statusIcon}</span>
+      <div className="flex items-start justify-between gap-1 mb-0.5">
+        <span className="text-xs font-medium truncate min-w-0" style={{ color: branchColor }} title={tech.name}>
+          {tech.name}
+        </span>
+        <span style={{ color: statusColor }} className="shrink-0">{statusIcon}</span>
       </div>
-      <div className="flex items-center gap-2 text-[10px] text-slate-500 mb-1">
+      <div className="flex items-center gap-2 text-[10px] text-slate-500">
         <span>Ур. {currentLevel}/{tech.maxLevel}</span>
         {ceiling !== Infinity && ceiling < tech.maxLevel && (
           <span className="text-amber-500/70">↑≤{ceiling}</span>
         )}
       </div>
       {activeSlot && (
-        <div className="space-y-0.5 mb-1">
+        <div className="space-y-0.5 mt-1">
           <Progress value={progress} className="h-1.5" style={{ backgroundColor: 'rgba(255,255,255,0.05)' }} />
           <div className="flex justify-between text-[10px] text-slate-500">
             <span>{invested.toFixed(0)}/{cost}</span>
@@ -517,11 +697,18 @@ function TechCard({
           </div>
         </div>
       )}
-      {tech.prerequisites.length > 0 && (
-        <div className="text-[10px] text-slate-600">
-          Прекурсоры: {tech.prerequisites.map((p) => `${p.techId}≥${p.minLevel}`).join(', ')}
-        </div>
-      )}
+      {tech.prerequisites.length > 0 && (() => {
+        const metCount = tech.prerequisites.filter(
+          (p) => (researchState.researched[p.techId] ?? 0) >= p.minLevel,
+        ).length;
+        const total = tech.prerequisites.length;
+        const allMet = metCount === total;
+        return (
+          <div className={`text-[10px] mt-auto pt-0.5 ${allMet ? 'text-emerald-500/70' : 'text-slate-500'}`}>
+            Прекурсоры: {metCount}/{total}{allMet ? ' ✓' : ''}
+          </div>
+        );
+      })()}
     </button>
   );
 }

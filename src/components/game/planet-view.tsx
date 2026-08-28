@@ -1057,6 +1057,7 @@ function WarehousePanel({ planet }: { planet: Planet }) {
                   resources={planet.resources}
                   className="h-48"
                   fleetFuelSummary={fleetFuelSummary}
+                  tick={gameState.time.tick}
                 />
               </CardContent>
             </Card>

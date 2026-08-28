@@ -4,7 +4,7 @@ import { useEffect, useState, useMemo, useCallback } from 'react';
 import { useGameStore, type SaveInfo } from '@/stores/game-store';
 import { GameLayout } from '@/components/game/game-layout';
 import { Button } from '@/components/ui/button';
-import { Rocket, Save, Trash2, Loader2, FolderOpen } from 'lucide-react';
+import { Rocket, Save, Trash2, Loader2, FolderOpen, Dices } from 'lucide-react';
 import { getGameMediator } from '@/core/game-mediator';
 
 /**
@@ -26,7 +26,13 @@ export default function Home() {
   const loadSaveList = useGameStore((s) => s.loadSaveList);
   const deleteSave = useGameStore((s) => s.deleteSave);
 
-  const [seed, setSeed] = useState('42');
+  // Random galaxy seed by default — each new visit to the main menu rolls a
+  // fresh galaxy. Player can still type a known seed to reproduce a galaxy.
+  const [seed, setSeed] = useState(() =>
+    String(Math.floor(Math.random() * 1_000_000) + 1),
+  );
+  const rollSeed = () =>
+    setSeed(String(Math.floor(Math.random() * 1_000_000) + 1));
   const [saves, setSaves] = useState<SaveInfo[]>([]);
   const [loadingSaveId, setLoadingSaveId] = useState<string | null>(null);
   const [deletingSaveId, setDeletingSaveId] = useState<string | null>(null);
@@ -171,14 +177,27 @@ export default function Home() {
 
             <div className="space-y-2">
               <label className="text-xs text-slate-400 block">Galaxy Seed</label>
-              <input
-                type="number"
-                value={seed}
-                onChange={(e) => setSeed(e.target.value)}
-                className="w-full bg-black/40 border border-white/10 rounded-md px-3 py-2 text-sm font-mono text-white focus:outline-none focus:border-cyan-600/50 focus:ring-1 focus:ring-cyan-600/30"
-                placeholder="Enter seed number"
-              />
-              <p className="text-[10px] text-slate-600">Same seed generates the same galaxy</p>
+              <div className="flex gap-2">
+                <input
+                  type="number"
+                  value={seed}
+                  onChange={(e) => setSeed(e.target.value)}
+                  className="flex-1 bg-black/40 border border-white/10 rounded-md px-3 py-2 text-sm font-mono text-white focus:outline-none focus:border-cyan-600/50 focus:ring-1 focus:ring-cyan-600/30"
+                  placeholder="Enter seed number"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="shrink-0 border-white/10 hover:bg-white/5 hover:text-cyan-300"
+                  onClick={rollSeed}
+                  aria-label="Случайный seed"
+                  title="Случайный seed"
+                >
+                  <Dices className="size-4" />
+                </Button>
+              </div>
+              <p className="text-[10px] text-slate-600">Случайный seed по умолчанию. Тот же seed — та же галактика.</p>
             </div>
 
             <Button
