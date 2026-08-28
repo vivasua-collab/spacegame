@@ -40,6 +40,7 @@ import {
   createDefaultResearchState,
 } from '@/research/engine';
 import { TECH_TREE } from '@/data/research/tech-tree';
+import { resolveBonuses } from '@/research/bonus-resolver';
 
 export class ResearchModule implements IGameModule {
   readonly manifest: ModuleManifest = {
@@ -53,6 +54,9 @@ export class ResearchModule implements IGameModule {
       'tech:unlocked',
       'tech:fundamental-leveled',
       'tech:tree-validated',
+      'tech:queue-advanced',
+      'tech:queue-added',
+      'tech:queue-removed',
       'core:state-changed',
     ],
     subscribes: [
@@ -172,7 +176,11 @@ export class ResearchModule implements IGameModule {
     const planets = currentState.galaxy.systems
       .flatMap((s) => s.planets)
       .filter((p) => p.owner != null);
-    const totalRPPerSec = getTotalRPPerSec(planets);
+    // R-RES §E: применяем research_rate bonus (от лабораторий и других
+    // источников). resolveBonuses чистая функция; если state не ready —
+    // множитель = 1 (нет бонусов).
+    const researchMultiplier = resolveBonuses(currentState, 'research_rate');
+    const totalRPPerSec = getTotalRPPerSec(planets, researchMultiplier);
 
     // deltaSeconds = speed (1 tick = 1 sec at speed=1; ×5 at speed=5; etc.)
     const deltaSeconds = currentState.speed;
@@ -209,8 +217,26 @@ export class ResearchModule implements IGameModule {
     // Commit new state to mediator → emits 'core:state-changed' → store sync.
     this.commitState?.(newState);
 
-    // Emit tech:research-completed for each completed level
+    // R-RES §B: detect queue auto-advancements (compare before/after).
+    // If we started a new active slot from the queue (slotId starts with
+    // "slot_q_"), emit tech:queue-advanced so UI can react.
     const playerFactionId = currentState.playerFactionId;
+    const newActiveSlots = newState.researchState.activeSlots;
+    const oldActiveSlots = currentState.researchState.activeSlots;
+    const oldSlotIds = new Set(oldActiveSlots.map((s) => s.slotId));
+    const newSlots = newActiveSlots.filter((s) => !oldSlotIds.has(s.slotId));
+    for (const slot of newSlots) {
+      if (slot.slotId.startsWith('slot_q_')) {
+        this.bus.emit('tech:queue-advanced', {
+          factionId: playerFactionId,
+          techId: slot.techId,
+          targetLevel: slot.targetLevel,
+          remainingQueue: newState.researchState.researchQueue.length,
+        });
+      }
+    }
+
+    // Emit tech:research-completed for each completed level
     for (const completed of completedLevels) {
       const unlockEntry = allUnlocks.find(
         (u) => u.techId === completed.techId && u.level === completed.level,

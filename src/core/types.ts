@@ -264,6 +264,37 @@ export interface BuildingDef {
   specializeCost?: Partial<Record<string, number>>;
   /** Стоимость повышения уровня специализации (×specializationLevel) */
   upgradeSpecializationCost?: Partial<Record<string, number>>;
+  // ─── R-RES §E: бонусы здания (data-driven) ─────────────────────────
+  /**
+   * Список бонусов, применяемых к расчётам (energy_output, research_rate, …).
+   * Каждый бонус описывает target (id метрики), operation (add/multiply/
+   * threshold), value, и флаг perLevel — умножается ли value на уровень
+   * здания (для add). Источник: docs/60-research.md §9 (effects) extended.
+   */
+  bonuses?: Bonus[];
+}
+
+/**
+ * R-RES §E: универсальное описание бонуса (для зданий и модулей кораблей).
+ *
+ * - target: ключ метрики, к которой применяется бонус
+ *   (например 'energy_output', 'research_rate', 'ship_thrust').
+ * - operation: тип операции:
+ *     - 'add' — добавить `value` (×level, если perLevel) к базовому показателю.
+ *     - 'multiply' — умножить базовый показатель на `value` (×level для perLevel,
+ *       но обычно 1.10 за уровень для мультипликативных бонусов).
+ *     - 'threshold' — бонус применяется только если уровень >= value.
+ * - value: численное значение операции.
+ * - perLevel: если true — value умножается на текущий уровень источника
+ *   (уровень здания или уровень технологии).
+ * - source: опционально — id источника (buildingId/techId), для отладки.
+ */
+export interface Bonus {
+  target: string;
+  operation: 'add' | 'multiply' | 'threshold';
+  value: number;
+  perLevel?: boolean;
+  source?: string;
 }
 
 // ============ Переработчики (Block 05) ============
@@ -436,12 +467,20 @@ export interface ShipModule {
   hpPerHS?: number; // броня: HP на 1 HS
   massPerHS?: number; // броня: масса на 1 HS
 
-  // ─── Auxiliary category ────────────────────────────
+  // ─── Auxiliary category ────────────────────────────────────
   auxiliaryType?: 'cargo' | 'fuel_tank' | 'scanner' | 'sensor_array'
     | 'repair' | 'mining' | 'colony' | 'jump_drive' | 'reactor';
   capacity?: number; // груз/топливо/колонисты
   maxJumpMass?: number; // т — jump drive
   energyOutput?: number; // МВт — реактор (> 0)
+
+  // ─── R-RES §E: бонусы модуля (data-driven) ─────────────────
+  /**
+   * Список бонусов, применяемых при расчёте статов корабля/флота.
+   * Например, двигатель может давать multiply к ship_thrust, реактор —
+   * add к energy_output и т.д.
+   */
+  bonuses?: Bonus[];
 }
 
 /**
@@ -882,7 +921,13 @@ export interface ResearchSlot {
  * - fundamentalRpInvested — сколько RP уже вложено в каждую ветку.
  * - researched — карта techId → текущий уровень (0 = не изучена).
  * - activeSlots — активные слоты очереди (не более getMaxResearchSlots).
- * - totalRpGenerated — монотонный счётчик для отладки.
+ *   Первый слот — «активное исследование».
+ * - researchQueue — упорядоченный список techId, ожидающих старта
+ *   (R-RES task §B). Когда активный слот завершается (достигает maxLevel),
+ *   первый элемент очереди автоматически становится активным (shift+create).
+ *   Элементы очереди не занимают слотов до старта.
+ * - totalRpGenerated — монотонный lifetime-счётчик RP (для отладки и
+ *   «банка» фундаменталов). Не уменьшается при списаниях в слоты/фундаменталы.
  *
  * Используем Record/Partial вместо Map для нативной JSON-сериализации
  * (без Array.from(entries)). T-R8 (serialization round-trip) работает
@@ -893,5 +938,7 @@ export interface ResearchState {
   fundamentalRpInvested: Partial<Record<FundamentalBranchId, number>>;
   researched: Record<string, number>;
   activeSlots: ResearchSlot[];
+  /** R-RES §B: ordered queue of techIds waiting to become active research. */
+  researchQueue: string[];
   totalRpGenerated: number;
 }

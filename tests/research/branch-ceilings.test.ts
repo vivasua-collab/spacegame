@@ -160,18 +160,23 @@ describe('Block 03 T-R6 — Branch ceilings', () => {
     });
   });
 
-  describe('getTechCeiling — min(tech.maxLevel, branch ceiling)', () => {
-    test('fusion_reactor (power, max 10) with physics=5 → 5', () => {
+  describe('getTechCeiling — R-RES §A: always returns tech.maxLevel', () => {
+    // R-RES refactor: fundamentals no longer cap specialized techs.
+    // The ceiling is now always tech.maxLevel (10 for MVP techs).
+    // Fundamentals still give partial RP bonus (see getPartialBonus tests).
+
+    test('fusion_reactor (power, max 10) with physics=5 → 10 (uncapped)', () => {
       const tech = TECH_MAP.get('fusion_reactor')!;
       const state = createDefaultResearchState();
       state.fundamentalLevels.physics = 5;
-      expect(getTechCeiling(tech, state)).toBe(5);
+      expect(getTechCeiling(tech, state)).toBe(10);
     });
 
-    test('fusion_reactor with physics=0 → 0', () => {
+    test('fusion_reactor with physics=0 → 10 (uncapped — was 0 before R-RES)', () => {
       const tech = TECH_MAP.get('fusion_reactor')!;
       const state = createDefaultResearchState();
-      expect(getTechCeiling(tech, state)).toBe(0);
+      // R-RES §A fix: 0 fundamentals no longer blocks starter techs.
+      expect(getTechCeiling(tech, state)).toBe(10);
     });
 
     test('fusion_reactor with physics=20 → capped at tech.maxLevel=10', () => {
@@ -184,17 +189,26 @@ describe('Block 03 T-R6 — Branch ceilings', () => {
     test('microelectronics (computing — free branch) → tech.maxLevel=10', () => {
       const tech = TECH_MAP.get('microelectronics')!;
       const state = createDefaultResearchState();
-      // free branch — no primary/secondary → Infinity → returns tech.maxLevel
+      // free branch — no primary/secondary → returns tech.maxLevel
       expect(getTechCeiling(tech, state)).toBe(10);
     });
 
-    test('steel_processing (materials) with chemistry=3, engineering=2 → 3', () => {
+    test('steel_processing (materials) with chemistry=0, engineering=0 → 10 (uncapped)', () => {
+      const tech = TECH_MAP.get('steel_processing')!;
+      const state = createDefaultResearchState();
+      // R-RES §A fix: materials branch is no longer blocked by fundamentals
+      // at the start of the game. Player can research steel_processing level 1
+      // immediately (was previously blocked because ceiling=0 at fund=0).
+      expect(getTechCeiling(tech, state)).toBe(10);
+    });
+
+    test('steel_processing (materials) with chemistry=3, engineering=2 → 10 (uncapped)', () => {
       const tech = TECH_MAP.get('steel_processing')!;
       const state = createDefaultResearchState();
       state.fundamentalLevels.chemistry = 3;
       state.fundamentalLevels.engineering = 2;
-      // ceiling = min(3, floor(2×1.5)=3) = 3
-      expect(getTechCeiling(tech, state)).toBe(3);
+      // R-RES §A: ceiling is always tech.maxLevel regardless of fund levels.
+      expect(getTechCeiling(tech, state)).toBe(10);
     });
   });
 });

@@ -75,8 +75,10 @@ import {
   countLaboratories,
   getTotalRPPerSec,
   getEffectiveRPPerSec,
+  getAvailableRP,
   type TechStatus,
 } from '@/research/engine';
+import { resolveBonuses } from '@/research/bonus-resolver';
 import type {
   Technology,
   FundamentalBranchId,
@@ -114,6 +116,10 @@ export function ResearchView() {
   const setAllocation = useGameStore((s) => s.setAllocation);
   const levelUpFundamental = useGameStore((s) => s.levelUpFundamental);
   const autoAllocateSlots = useGameStore((s) => s.autoAllocateSlots);
+  const addToResearchQueue = useGameStore((s) => s.addToResearchQueue);
+  const removeFromResearchQueue = useGameStore((s) => s.removeFromResearchQueue);
+  const reorderResearchQueue = useGameStore((s) => s.reorderResearchQueue);
+  const clearResearchQueue = useGameStore((s) => s.clearResearchQueue);
 
   const [selectedTechId, setSelectedTechId] = useState<string | null>(null);
 
@@ -127,9 +133,11 @@ export function ResearchView() {
       .flatMap((s) => s.planets)
       .filter((p) => p.owner != null);
     const { count } = countLaboratories(planets);
+    // R-RES §E: применяем research_rate bonus (data-driven).
+    const mult = resolveBonuses(gameState, 'research_rate');
     return {
       labCount: count,
-      totalRPPerSec: getTotalRPPerSec(planets),
+      totalRPPerSec: getTotalRPPerSec(planets, mult),
     };
   }, [gameState]);
 
@@ -233,7 +241,7 @@ export function ResearchView() {
           </Card>
         </main>
 
-        {/* Right: Research queue */}
+        {/* Right: Research queue + queue list */}
         <aside className="lg:w-80 shrink-0">
           <ResearchQueuePanel
             researchState={researchState}
@@ -242,6 +250,9 @@ export function ResearchView() {
             onCancelSlot={cancelResearch}
             onSetAllocation={setAllocation}
             onAutoAllocate={autoAllocateSlots}
+            onRemoveFromQueue={removeFromResearchQueue}
+            onReorderQueue={reorderResearchQueue}
+            onClearQueue={clearResearchQueue}
           />
         </aside>
       </div>
@@ -267,7 +278,24 @@ export function ResearchView() {
               const tech = TECH_MAP.get(techId);
               toast({
                 title: 'Нельзя начать исследование',
-                description: `${tech?.name}: проверьте прекурсоры / потолок / свободный слот.`,
+                description: `${tech?.name}: проверьте прекурсоры / свободный слот.`,
+                variant: 'destructive',
+              });
+            }
+          }}
+          onAddToQueue={(techId) => {
+            const ok = addToResearchQueue(techId);
+            const tech = TECH_MAP.get(techId);
+            if (ok) {
+              toast({
+                title: 'Добавлено в очередь',
+                description: `${tech?.name} поставлен в очередь исследований.`,
+              });
+              setSelectedTechId(null);
+            } else {
+              toast({
+                title: 'Нельзя добавить в очередь',
+                description: `${tech?.name}: уже в очереди / исследован / прекурсоры не готовы.`,
                 variant: 'destructive',
               });
             }
@@ -294,6 +322,7 @@ function ResearchStatsBar({
   onAutoAllocate: () => void;
 }) {
   const activeSlots = researchState.activeSlots.length;
+  const availableRP = getAvailableRP(researchState);
   return (
     <div className="flex items-center gap-4 px-4 py-2 bg-[#0d0d24] border border-white/10 rounded-lg text-xs text-slate-300">
       <div className="flex items-center gap-1.5">
@@ -304,7 +333,7 @@ function ResearchStatsBar({
       <Separator orientation="vertical" className="h-4 bg-white/10" />
       <div className="flex items-center gap-1.5">
         <TrendingUp className="size-3.5 text-green-400" />
-        <span className="text-slate-500">RP/сек:</span>
+        <span className="text-slate-500">RP/День:</span>
         <span className="font-mono text-cyan-300">{totalRPPerSec.toFixed(1)}</span>
       </div>
       <Separator orientation="vertical" className="h-4 bg-white/10" />
@@ -315,10 +344,21 @@ function ResearchStatsBar({
         </span>
       </div>
       <Separator orientation="vertical" className="h-4 bg-white/10" />
+      {/* R-RES §C: available RP — what player can actually spend on
+          fundamentals. Equals totalRpGenerated - sum(fundamentalRpInvested)
+          - sum(activeSlots.rpInvested). Displayed prominently; total
+          lifetime RP shown as secondary. */}
       <div className="flex items-center gap-1.5">
-        <span className="text-slate-500">RP всего:</span>
-        <span className="font-mono text-amber-300">
-          {researchState.totalRpGenerated.toFixed(0)}
+        <span className="text-slate-500">Доступно:</span>
+        <span className="font-mono text-amber-300 font-semibold">
+          {availableRP.toFixed(0)} RP
+        </span>
+      </div>
+      <Separator orientation="vertical" className="h-4 bg-white/10" />
+      <div className="flex items-center gap-1.5">
+        <span className="text-slate-500">Всего:</span>
+        <span className="font-mono text-slate-400">
+          {researchState.totalRpGenerated.toFixed(0)} RP
         </span>
       </div>
       <div className="flex-1" />
@@ -431,11 +471,14 @@ const TOP_PAD = 24;        // top padding (room for tier headers)
 const RIGHT_PAD = 28;
 const BOTTOM_PAD = 14;
 
-// Minimum canvas width — guarantees horizontal scroll on common viewports
-// (Task 4 spec: ~5 levels × 240px + gaps ≈ 1264px). Our MVP tree only has 3
-// depth tiers today, so we pad the canvas to leave room for future tiers
-// and make the "scroll right to discover" UX obvious.
-const MIN_TREE_WIDTH = 1264;
+// R-RES §F: minimum canvas width — computed dynamically from tech count
+// to auto-scale the tree window when new techs are added to techs.json.
+// Formula: LEFT_PAD + (maxDepth + 1) × (NODE_W + COL_GAP) + RIGHT_PAD.
+// The canvas grows naturally as more techs are added; on small trees we
+// still enforce a minimum of 1 viewport of horizontal scroll so the
+// "scroll right to discover" UX is visible. 1024 ≈ typical mobile/tablet
+// landscape width; desktop will fit more columns without scroll.
+const MIN_TREE_WIDTH_FLOOR = 1024;
 
 // Colors for edge states (Task 4 spec: bright vs dim by prerequisite status).
 // Met edges use the source branch color (bright); unmet edges use slate-600.
@@ -590,16 +633,18 @@ function TechTreeGraph({
   onSelectTech: (techId: string) => void;
 }) {
   const layout = useMemo(() => buildTreeLayout(researchState), [researchState]);
-  // Force min canvas width — guarantees horizontal scroll on common viewports
-  // (Task 4 spec: ≥1264px so user sees "scroll right to discover deeper tiers").
-  const canvasWidth = Math.max(layout.totalWidth, MIN_TREE_WIDTH);
+  // R-RES §F: auto-scale canvas width from tech count + layout.
+  // totalWidth is computed in buildTreeLayout from maxDepth × NODE_W + gaps,
+  // so adding techs to techs.json automatically widens the canvas.
+  // Floor at MIN_TREE_WIDTH_FLOOR to keep horizontal scroll on small trees.
+  const canvasWidth = Math.max(layout.totalWidth, MIN_TREE_WIDTH_FLOOR);
   const canvasHeight = layout.totalHeight;
 
   return (
     <div className="overflow-x-auto overflow-y-auto custom-scrollbar max-h-[calc(100vh-220px)] rounded-md border border-white/5 bg-black/20">
       <div
         className="relative"
-        style={{ width: canvasWidth, height: canvasHeight, minWidth: MIN_TREE_WIDTH }}
+        style={{ width: canvasWidth, height: canvasHeight, minWidth: MIN_TREE_WIDTH_FLOOR }}
       >
         {/* SVG connector layer — drawn behind nodes */}
         <svg
@@ -815,6 +860,9 @@ function ResearchQueuePanel({
   onCancelSlot,
   onSetAllocation,
   onAutoAllocate,
+  onRemoveFromQueue,
+  onReorderQueue,
+  onClearQueue,
 }: {
   researchState: ResearchState;
   totalRPPerSec: number;
@@ -822,10 +870,14 @@ function ResearchQueuePanel({
   onCancelSlot: (slotId: string) => boolean;
   onSetAllocation: (slotId: string, percent: number) => boolean;
   onAutoAllocate: () => void;
+  onRemoveFromQueue: (index: number) => boolean;
+  onReorderQueue: (from: number, to: number) => boolean;
+  onClearQueue: () => void;
 }) {
   const activeSlots = researchState.activeSlots;
   const activeSlotsCount = activeSlots.length;
   const focusBonus = activeSlotsCount === 1 && activeSlots[0]?.allocationPercent === 100;
+  const queue = researchState.researchQueue;
 
   return (
     <Card className="bg-[#0d0d24] border-white/10 text-white h-full flex flex-col">
@@ -840,7 +892,7 @@ function ResearchQueuePanel({
           </Badge>
         </div>
         <div className="flex items-center gap-1 text-[10px] text-slate-500">
-          <span>RP/сек: {totalRPPerSec.toFixed(1)}</span>
+          <span>RP/День: {totalRPPerSec.toFixed(1)}</span>
           {focusBonus && (
             <Badge className="ml-1 text-[9px] h-3.5 px-1 bg-cyan-900/50 text-cyan-300 border-cyan-800">
               Фокус ×1.2
@@ -848,15 +900,19 @@ function ResearchQueuePanel({
           )}
         </div>
       </CardHeader>
-      <CardContent className="pt-0 flex-1 min-h-0">
-        {activeSlots.length === 0 ? (
-          <div className="text-center text-xs text-slate-600 py-8 italic">
-            Нет активных исследований.
-            <br />
-            Выберите технологию в дереве и нажмите «Начать».
+      <CardContent className="pt-0 flex-1 min-h-0 overflow-y-auto custom-scrollbar max-h-[calc(100vh-220px)]">
+        {/* Active research (top) */}
+        <div className="mb-2">
+          <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">
+            Активное исследование
           </div>
-        ) : (
-          <ScrollArea className="max-h-[calc(100vh-260px)] pr-2">
+          {activeSlots.length === 0 ? (
+            <div className="text-center text-xs text-slate-600 py-4 italic rounded border border-dashed border-white/10">
+              Нет активного исследования.
+              <br />
+              Выберите технологию в дереве и нажмите «В очередь».
+            </div>
+          ) : (
             <div className="space-y-2">
               {activeSlots.map((slot) => (
                 <ResearchSlotRow
@@ -870,21 +926,138 @@ function ResearchQueuePanel({
                 />
               ))}
             </div>
-          </ScrollArea>
-        )}
-        {activeSlots.length > 0 && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="w-full mt-2 text-[10px] text-slate-500 hover:bg-white/5"
-            onClick={onAutoAllocate}
-          >
-            <Scale className="size-3 mr-1" />
-            Распределить поровну
-          </Button>
-        )}
+          )}
+          {activeSlots.length > 0 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="w-full mt-2 text-[10px] text-slate-500 hover:bg-white/5"
+              onClick={onAutoAllocate}
+            >
+              <Scale className="size-3 mr-1" />
+              Распределить поровну
+            </Button>
+          )}
+        </div>
+
+        {/* Queue (below) — R-RES §B */}
+        <div className="border-t border-white/10 pt-2">
+          <div className="flex items-center justify-between mb-1">
+            <div className="text-[10px] uppercase tracking-wider text-slate-500">
+              Очередь ({queue.length})
+            </div>
+            {queue.length > 0 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-5 text-[10px] text-slate-500 hover:text-red-300 hover:bg-white/5 px-1"
+                onClick={onClearQueue}
+                title="Очистить очередь"
+              >
+                <X className="size-3" />
+              </Button>
+            )}
+          </div>
+          {queue.length === 0 ? (
+            <div className="text-center text-[11px] text-slate-600 py-3 italic">
+              Очередь пуста.
+            </div>
+          ) : (
+            <div className="space-y-1">
+              {queue.map((techId, idx) => (
+                <QueueRow
+                  key={`${techId}_${idx}`}
+                  techId={techId}
+                  index={idx}
+                  queueLength={queue.length}
+                  researchState={researchState}
+                  onRemove={onRemoveFromQueue}
+                  onReorder={onReorderQueue}
+                />
+              ))}
+            </div>
+          )}
+        </div>
       </CardContent>
     </Card>
+  );
+}
+
+function QueueRow({
+  techId,
+  index,
+  queueLength,
+  researchState,
+  onRemove,
+  onReorder,
+}: {
+  techId: string;
+  index: number;
+  queueLength: number;
+  researchState: ResearchState;
+  onRemove: (index: number) => boolean;
+  onReorder: (from: number, to: number) => boolean;
+}) {
+  const tech = TECH_MAP.get(techId);
+  if (!tech) {
+    return (
+      <div className="rounded border border-red-500/30 p-1.5 text-[11px] text-red-400 flex items-center justify-between">
+        Неизв. {techId}
+        <button onClick={() => onRemove(index)} className="text-slate-500 hover:text-red-400">
+          <X className="size-3" />
+        </button>
+      </div>
+    );
+  }
+  const currentLevel = researchState.researched[techId] ?? 0;
+  const targetLevel = currentLevel + 1;
+  return (
+    <div
+      className="rounded border bg-white/[0.02] p-1.5 flex items-center gap-1.5 hover:bg-white/5 transition-colors"
+      style={{ borderColor: `${BRANCH_COLORS[tech.branch]}30` }}
+    >
+      <span className="text-[10px] font-mono text-slate-600 w-4 shrink-0">{index + 1}.</span>
+      <span
+        className="size-1.5 rounded-full shrink-0"
+        style={{ backgroundColor: BRANCH_COLORS[tech.branch] }}
+      />
+      <div className="flex-1 min-w-0">
+        <div className="text-[11px] truncate" style={{ color: BRANCH_COLORS[tech.branch] }} title={tech.name}>
+          {tech.name}
+        </div>
+        <div className="text-[10px] text-slate-600">
+          цель ур. {targetLevel} (из {tech.maxLevel})
+        </div>
+      </div>
+      <div className="flex items-center gap-0.5 shrink-0">
+        <button
+          onClick={() => index > 0 && onReorder(index, index - 1)}
+          disabled={index === 0}
+          className="text-slate-500 hover:text-cyan-300 disabled:opacity-30 disabled:cursor-not-allowed"
+          aria-label="Переместить вверх"
+          title="Переместить вверх"
+        >
+          <ChevronUp className="size-3" />
+        </button>
+        <button
+          onClick={() => index < queueLength - 1 && onReorder(index, index + 1)}
+          disabled={index === queueLength - 1}
+          className="text-slate-500 hover:text-cyan-300 disabled:opacity-30 disabled:cursor-not-allowed rotate-180"
+          aria-label="Переместить вниз"
+          title="Переместить вниз"
+        >
+          <ChevronUp className="size-3" />
+        </button>
+        <button
+          onClick={() => onRemove(index)}
+          className="text-slate-500 hover:text-red-400"
+          aria-label="Удалить из очереди"
+          title="Удалить из очереди"
+        >
+          <X className="size-3" />
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -923,7 +1096,8 @@ function ResearchSlotRow({
     activeSlotsCount,
   ) * partialBonus;
   const etaSec = effectiveRP > 0 ? remaining / effectiveRP : Infinity;
-  const etaText = etaSec === Infinity ? '∞' : `${etaSec.toFixed(0)}с`;
+  // R-RES §C: 1 tick = 1 day → ETA in days. Was "сек" before.
+  const etaText = etaSec === Infinity ? '∞' : `${etaSec.toFixed(0)} дн`;
 
   return (
     <div
@@ -987,6 +1161,7 @@ function ResearchDetailDialog({
   maxSlots,
   onClose,
   onStartResearch,
+  onAddToQueue,
 }: {
   techId: string;
   researchState: ResearchState;
@@ -994,6 +1169,7 @@ function ResearchDetailDialog({
   maxSlots: number;
   onClose: () => void;
   onStartResearch: (techId: string, targetLevel: number) => void;
+  onAddToQueue: (techId: string) => void;
 }) {
   const tech = TECH_MAP.get(techId);
   if (!tech) return null;
@@ -1005,9 +1181,13 @@ function ResearchDetailDialog({
   const branchCeiling = getEffectiveMaxLevel(tech.branch, researchState.fundamentalLevels);
   const partialBonus = getPartialBonus(tech.branch, researchState.fundamentalLevels);
   const isMaxed = currentLevel >= tech.maxLevel;
+  // R-RES §A: ceiling is now always = tech.maxLevel, so this never blocks
+  // for non-maxed techs. Kept for safety.
   const ceilingBlocked = !isMaxed && ceiling < targetLevel;
   const activeSlotsCount = researchState.activeSlots.length;
   const noFreeSlot = activeSlotsCount >= maxSlots;
+  const alreadyInQueue = researchState.researchQueue.includes(techId);
+  const hasActiveSlot = researchState.activeSlots.some((s) => s.techId === techId);
 
   // Проверка через canStartResearch — нужна totalLabCount, считаем её налету.
   // Для UI мы делаем упрощённую проверку: показываем reason tooltip если нельзя.
@@ -1028,6 +1208,12 @@ function ResearchDetailDialog({
     allPrereqMet &&
     !noFreeSlot &&
     status !== 'in_progress';
+
+  // R-RES §B: queue eligibility — prerequisites must be met (or tech will
+  // wait at the front of the queue until prerequisites are researched).
+  // Disable button if tech is already maxed, already in queue, or has
+  // an active slot.
+  const canAddToQueue = !isMaxed && !alreadyInQueue && !hasActiveSlot && allPrereqMet;
 
   const effectiveRP = getEffectiveRPPerSec(totalRPPerSec, 100, 1) * partialBonus;
   const etaSec = effectiveRP > 0 ? cost / effectiveRP : Infinity;
@@ -1099,11 +1285,12 @@ function ResearchDetailDialog({
             </div>
 
             {/* ETA */}
-            {canStart && effectiveRP > 0 && (
+            {(canStart || canAddToQueue) && effectiveRP > 0 && (
               <div className="text-xs text-slate-300">
                 <span className="text-slate-500">ETA на 100% аллокации:</span>{' '}
                 <span className="text-cyan-300 font-mono">
-                  {etaSec === Infinity ? '∞' : `${etaSec.toFixed(0)} сек`}
+                  {/* R-RES §C: 1 tick = 1 day → ETA in days */}
+                  {etaSec === Infinity ? '∞' : `${etaSec.toFixed(0)} дн`}
                 </span>
                 <span className="text-slate-500 ml-2">
                   (×1.2 фокус-бонус на 1-м слоте)
@@ -1145,11 +1332,11 @@ function ResearchDetailDialog({
             )}
 
             {/* Block reasons */}
-            {!canStart && (
+            {!canStart && !canAddToQueue && (
               <div className="rounded border border-amber-500/30 bg-amber-950/20 p-2 text-xs text-amber-300 space-y-1">
                 <div className="font-medium flex items-center gap-1">
                   <AlertTriangle className="size-3" />
-                  Нельзя начать:
+                  Нельзя начать / добавить в очередь:
                 </div>
                 {isMaxed && <div>• Достигнут максимальный уровень ({tech.maxLevel}).</div>}
                 {ceilingBlocked && (
@@ -1159,15 +1346,19 @@ function ResearchDetailDialog({
                   </div>
                 )}
                 {!allPrereqMet && <div>• Не выполнены все прекурсоры.</div>}
-                {noFreeSlot && (
+                {noFreeSlot && !alreadyInQueue && (
                   <div>• Нет свободного слота. Постройте больше лабораторий (1 слот на 10 лаб).</div>
                 )}
-                {status === 'in_progress' && <div>• Уже в очереди.</div>}
+                {status === 'in_progress' && <div>• Уже в активном слоте.</div>}
+                {alreadyInQueue && <div>• Уже в очереди.</div>}
               </div>
             )}
           </div>
         </ScrollArea>
 
+        {/* R-RES §B: action buttons — prefer "Add to queue" (works without
+            a free slot, queues up). "Начать" is immediate-start (needs a
+            free active slot). Both close the dialog on success. */}
         <div className="flex gap-2 pt-2">
           <Button
             variant="outline"
@@ -1176,10 +1367,22 @@ function ResearchDetailDialog({
           >
             Закрыть
           </Button>
+          {canAddToQueue && (
+            <Button
+              className="flex-1"
+              variant="secondary"
+              onClick={() => onAddToQueue(tech.id)}
+              title="Поставить технологию в очередь. Если активного слота нет — начнётся немедленно."
+            >
+              <Plus className="size-4 mr-1" />
+              В очередь
+            </Button>
+          )}
           {canStart && (
             <Button
               className="flex-1"
               onClick={() => onStartResearch(tech.id, targetLevel)}
+              title="Начать немедленно (требуется свободный слот)"
             >
               <Plus className="size-4 mr-1" />
               Начать (ур. {targetLevel})

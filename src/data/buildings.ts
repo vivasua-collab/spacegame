@@ -68,7 +68,11 @@ export const BUILDINGS: BuildingDef[] = [
     description: 'Универсальная переработка любого сырья (руды, льда, газов, химии). Низкий коэф. выхода (×0.75), штраф за мульти-рецепт. Можно специализировать под конкретную цепочку.',
     category: 'processing',
     layer: ['surface'],
-    size: ['small', 'medium', 'large'],
+    // R-BLD-REF: доступен на старте на ВСЕХ размерах планет (включая tiny/huge),
+    // т.к. это здание первичной переработки — первый этаж цепочки.
+    // Ранее `['small', 'medium', 'large']` исключало карликовые (tiny) планеты,
+    // где игрок не мог построить ни одного переработчика с первого хода.
+    size: ['tiny', 'small', 'medium', 'large', 'huge'],
     energyConsumption: 5,
     baseProductionTime: 10,
     levels: 10,
@@ -242,6 +246,12 @@ export const BUILDINGS: BuildingDef[] = [
     costPerLevel: { Fe: 30, Si: 20, Cu: 5 }, // из 40-buildings §10.1: 30/20/5
     terrainBonus: {},
     requiresAtmosphere: false,
+    // R-RES §E: data-driven bonus — лаборатория уровня N даёт
+    // +(N × 0.02) к research_rate (т.е. +2% за уровень) для всех
+    // расчётов RP. Бонус cumulative, применяется через resolveBonuses.
+    bonuses: [
+      { target: 'research_rate', operation: 'add', value: 0.02, perLevel: true, source: 'laboratory' },
+    ],
   },
 ];
 

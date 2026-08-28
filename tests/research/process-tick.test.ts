@@ -143,20 +143,22 @@ describe('Block 03 T-R7 — processResearchTick (tickResearch)', () => {
     });
   });
 
-  describe('tickResearch — fundamental ceiling', () => {
-    test('Slot reaches fundamental ceiling → slot removed, last level recorded', () => {
+  describe('tickResearch — fundamental ceiling (R-RES §A: ceiling now always = maxLevel)', () => {
+    test('Slot reaches maxLevel → slot removed, all levels recorded', () => {
       const state = makeStateWithSlot('fusion_reactor');
-      // physics=2 → ceiling=2 → can reach level 1 and 2, but not 3
+      // R-RES §A: ceiling now = tech.maxLevel = 10. Fundamentals no longer cap.
+      // Setting physics=2 has no effect on the ceiling — only maxLevel matters.
       state.fundamentalLevels.physics = 2;
-      // Pre-set level 1 done, target level 2
-      state.activeSlots[0]!.targetLevel = 2;
-      state.researched['fusion_reactor'] = 1;
+      // Pre-set level 8 done, target level 9 (not at maxLevel=10 yet)
+      state.activeSlots[0]!.targetLevel = 9;
+      state.researched['fusion_reactor'] = 8;
       // Big RP injection: 10000 RP/сек × 10 = 100000 × 1.2 = 120000
-      // Level 2 cost = 500×1.5=750 → completes, slot.targetLevel=3
-      // Level 3 > ceiling=2 → slot removed
+      // Level 9 cost = 500×1.5^8 = 12814 → completes (120000 - 12814 = 107186 left)
+      // Level 10 cost = 500×1.5^9 = 19221 → completes (107186 - 19221 = 87965 left)
+      // targetLevel becomes 11 → > maxLevel=10 → slot removed
       const result = tickResearch(state, 10000, 10);
-      expect(state.researched['fusion_reactor']).toBe(2);
-      // Slot should be removed (ceiling reached)
+      expect(state.researched['fusion_reactor']).toBe(10);
+      // Slot removed after reaching maxLevel
       expect(state.activeSlots.length).toBe(0);
       expect(result.completed.length).toBeGreaterThanOrEqual(1);
     });
@@ -164,8 +166,8 @@ describe('Block 03 T-R7 — processResearchTick (tickResearch)', () => {
     test('Slot at maxLevel → slot removed when level maxes out', () => {
       const tech = TECH_MAP.get('fusion_reactor')!;
       const state = makeStateWithSlot('fusion_reactor');
-      // Set physics high enough — no ceiling issue
-      state.fundamentalLevels.physics = 15; // ceiling=10 (capped by tech.maxLevel)
+      // Set physics high enough — no ceiling issue (always uncapped now)
+      state.fundamentalLevels.physics = 15; // ceiling = maxLevel = 10 (R-RES §A)
       // Pre-set level 9 done, target level 10 (max)
       state.activeSlots[0]!.targetLevel = 10;
       state.researched['fusion_reactor'] = 9;
@@ -272,14 +274,15 @@ describe('Block 03 — R4 canStartResearch + canAllocate', () => {
       expect(result.reasons.some(r => r.includes('prerequisites not met'))).toBe(true);
     });
 
-    test('REJECT: ceiling exceeded (fusion_reactor targetLevel=11, physics=10 → ceiling=10)', () => {
+    test('REJECT: targetLevel > maxLevel (fusion_reactor targetLevel=11)', () => {
       const tech = TECH_MAP.get('fusion_reactor')!;
       const state = createDefaultResearchState();
-      state.fundamentalLevels.physics = 10; // ceiling=10
+      state.fundamentalLevels.physics = 10;
       state.researched['fusion_reactor'] = 10; // already at maxLevel
       const result = canStartResearch(tech, 11, state, 0);
       expect(result.ok).toBe(false);
-      expect(result.reasons.some(r => r.includes('maxLevel') || r.includes('ceiling'))).toBe(true);
+      // R-RES §A: ceiling is now tech.maxLevel=10, so the only reason is maxLevel.
+      expect(result.reasons.some(r => r.includes('maxLevel'))).toBe(true);
     });
 
     test('REJECT: slot overflow (1 slot max with 0 labs, already 1 active)', () => {
@@ -309,10 +312,11 @@ describe('Block 03 — R4 canStartResearch + canAllocate', () => {
       expect(result.reasons.some(r => r.includes('maxLevel'))).toBe(true);
     });
 
-    test('OK: can start P2 ion_engine if P1=1, slot free, physics ceiling OK', () => {
+    test('OK: can start P2 ion_engine if P1=1, slot free (R-RES §A: no ceiling check)', () => {
       const tech = TECH_MAP.get('ion_engine')!;
       const state = createDefaultResearchState();
       state.researched['fusion_reactor'] = 1;
+      // R-RES §A: physics level doesn't matter for ceiling — only for partial bonus.
       state.fundamentalLevels.physics = 5;
       const result = canStartResearch(tech, 1, state, 0);
       expect(result.ok).toBe(true);
@@ -489,16 +493,15 @@ describe('Block 03 — createDefaultResearchState', () => {
 
 // ============ Phase 3.4: getTechCeiling in canStartResearch context ============
 
-describe('Block 03 — getTechCeiling integration', () => {
-  test('techCeiling=0 → no research possible (canStartResearch rejects)', () => {
+describe('Block 03 — getTechCeiling integration (R-RES §A)', () => {
+  test('R-RES §A: ceiling always = tech.maxLevel — starter techs uncapped at fund=0', () => {
     const tech = TECH_MAP.get('fusion_reactor')!;
     const state = createDefaultResearchState();
-    // physics=0 → ceiling=0
-    // targetLevel=1 (currentLevel+1=0+1=1) — that's OK numerically
-    // But targetLevel > ceiling (1 > 0) → reject
+    // physics=0 → previously ceiling=0, blocking fusion_reactor at game start.
+    // R-RES §A fix: ceiling = tech.maxLevel = 10, so starter techs are uncapped.
+    expect(getTechCeiling(tech, state)).toBe(10);
     const result = canStartResearch(tech, 1, state, 0);
-    expect(result.ok).toBe(false);
-    expect(result.reasons.some(r => r.includes('ceiling'))).toBe(true);
+    expect(result.ok).toBe(true);
   });
 
   test('Free branch (computing) — canStartResearch OK even with all fund=0', () => {
@@ -506,31 +509,38 @@ describe('Block 03 — getTechCeiling integration', () => {
     const state = createDefaultResearchState();
     const result = canStartResearch(tech, 1, state, 0);
     expect(result.ok).toBe(true);
-    // ceiling = Infinity, targetLevel=1 ≤ Infinity → OK
+    // ceiling = tech.maxLevel always
     expect(getTechCeiling(tech, state)).toBe(tech.maxLevel);
   });
 
-  test('Materials: chemistry=2, engineering=2 → ceiling=2, targetLevel=1 OK, targetLevel=3 REJECTED', () => {
+  test('R-RES §A: materials techs uncapped at fund=0 — starter techs available', () => {
+    const tech = TECH_MAP.get('steel_processing')!;
+    const state = createDefaultResearchState();
+    // Previously: chemistry=0, engineering=0 → ceiling=0 → targetLevel=1 REJECTED
+    // R-RES §A: ceiling = tech.maxLevel = 10 — starter techs always available.
+    expect(getTechCeiling(tech, state)).toBe(10);
+    expect(canStartResearch(tech, 1, state, 0).ok).toBe(true);
+  });
+
+  test('Materials tech level 2 available after level 1 (R-RES §A: no ceiling check)', () => {
     const tech = TECH_MAP.get('steel_processing')!;
     const state = createDefaultResearchState();
     state.fundamentalLevels.chemistry = 2;
     state.fundamentalLevels.engineering = 2;
-    // ceiling = min(2, floor(2×1.5)=3) = 2
-    expect(getTechCeiling(tech, state)).toBe(2);
+    // R-RES §A: ceiling = maxLevel = 10 (was min(2, floor(3))=2 before)
+    expect(getTechCeiling(tech, state)).toBe(10);
 
-    // targetLevel=1 (currentLevel+1=0+1=1) — OK
+    // targetLevel=1 — OK
     state.researched['steel_processing'] = 0;
     expect(canStartResearch(tech, 1, state, 0).ok).toBe(true);
 
-    // targetLevel=2 (currentLevel+1=1+1=2) — OK (≤ ceiling=2)
+    // targetLevel=2 — OK (≤ maxLevel=10)
     state.researched['steel_processing'] = 1;
     expect(canStartResearch(tech, 2, state, 0).ok).toBe(true);
 
-    // targetLevel=3 (currentLevel+1=2+1=3) — REJECTED (> ceiling=2)
+    // targetLevel=3 — OK (≤ maxLevel=10). Was REJECTED before R-RES §A.
     state.researched['steel_processing'] = 2;
-    const result = canStartResearch(tech, 3, state, 0);
-    expect(result.ok).toBe(false);
-    expect(result.reasons.some(r => r.includes('ceiling'))).toBe(true);
+    expect(canStartResearch(tech, 3, state, 0).ok).toBe(true);
   });
 });
 

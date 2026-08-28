@@ -52,6 +52,7 @@ import {
   createResearchSlot as createResearchSlotFn,
   canStartResearch as canStartResearchFn,
   getTechCost as getTechCostFn,
+  arePrerequisitesMet as arePrerequisitesMetFn,
 } from '@/research'; // Block 03 R6/R7 — research engine helpers
 // Note: ResearchState type is already imported above from '@/core/types' (line 22).
 
@@ -233,6 +234,18 @@ export interface GameStore {
   levelUpFundamental: (branchId: import('@/core/types').FundamentalBranchId) => boolean;
   /** Распределить аллокации поровну между всеми активными слотами. */
   autoAllocateSlots: () => void;
+  /**
+   * R-RES §B: добавить techId в очередь исследований. Если активных слотов
+   * нет — сразу стартует; иначе кладёт в хвост очереди.
+   * Возвращает true, если добавлено.
+   */
+  addToResearchQueue: (techId: string) => boolean;
+  /** R-RES §B: убрать элемент из очереди по индексу. */
+  removeFromResearchQueue: (index: number) => boolean;
+  /** R-RES §B: переместить элемент очереди с индекса from на to. */
+  reorderResearchQueue: (from: number, to: number) => boolean;
+  /** R-RES §B: очистить очередь. */
+  clearResearchQueue: () => void;
   /** Получить текущее ResearchState (sync lookup). */
   getResearchState: () => import('@/core/types').ResearchState | null;
 
@@ -475,6 +488,8 @@ function migrateResearchState(raw: unknown): ResearchState {
     fundamentalRpInvested: r.fundamentalRpInvested ?? {},
     researched: r.researched ?? {},
     activeSlots: Array.isArray(r.activeSlots) ? r.activeSlots : [],
+    // R-RES §B: researchQueue migration — pre-R-RES saves had no queue.
+    researchQueue: Array.isArray(r.researchQueue) ? r.researchQueue : [],
     totalRpGenerated: typeof r.totalRpGenerated === 'number' ? r.totalRpGenerated : 0,
   };
 }
@@ -1518,6 +1533,81 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
         // Give the remainder to the last slot
         const sumSoFar = equal * rs.activeSlots.length;
         rs.activeSlots[rs.activeSlots.length - 1]!.allocationPercent += 100 - sumSoFar;
+      });
+      syncMediatorState();
+    },
+
+    // ─── R-RES §B: queue actions ────────────────────────────
+    addToResearchQueue: (techId) => {
+      let ok = false;
+      set((state) => {
+        if (!state.gameState) return;
+        const rs = state.gameState.researchState;
+        const tech = TECH_MAP_FN.get(techId);
+        if (!tech) return;
+        // Don't add if already fully researched
+        const currentLevel = rs.researched[techId] ?? 0;
+        if (currentLevel >= tech.maxLevel) return;
+        // Don't add if already in queue
+        if (rs.researchQueue.includes(techId)) return;
+        // Don't add if already has an active slot for this techId
+        if (rs.activeSlots.some((s) => s.techId === techId)) return;
+        // Prerequisites check — silently skip if not met (UI shows why).
+        const prereq = arePrerequisitesMetFn(tech, rs.researched);
+        if (!prereq.met) return;
+        // If no active slots and queue is empty → start immediately
+        if (rs.activeSlots.length === 0 && rs.researchQueue.length === 0) {
+          const slotId = `slot_${state.gameState.time.tick}_${researchSlotCounter++}`;
+          const newSlot = createResearchSlotFn(slotId, techId, currentLevel + 1, 100);
+          rs.activeSlots.push(newSlot);
+        } else {
+          rs.researchQueue.push(techId);
+        }
+        ok = true;
+      });
+      syncMediatorState();
+      return ok;
+    },
+
+    removeFromResearchQueue: (index) => {
+      let ok = false;
+      set((state) => {
+        if (!state.gameState) return;
+        const rs = state.gameState.researchState;
+        if (index < 0 || index >= rs.researchQueue.length) return;
+        rs.researchQueue.splice(index, 1);
+        ok = true;
+      });
+      syncMediatorState();
+      return ok;
+    },
+
+    reorderResearchQueue: (from, to) => {
+      let ok = false;
+      set((state) => {
+        if (!state.gameState) return;
+        const rs = state.gameState.researchState;
+        const q = rs.researchQueue;
+        if (from < 0 || from >= q.length) return;
+        if (to < 0 || to >= q.length) return;
+        if (from === to) {
+          ok = true;
+          return;
+        }
+        const [moved] = q.splice(from, 1);
+        if (moved === undefined) return;
+        q.splice(to, 0, moved);
+        ok = true;
+      });
+      syncMediatorState();
+      return ok;
+    },
+
+    clearResearchQueue: () => {
+      set((state) => {
+        if (!state.gameState) return;
+        const rs = state.gameState.researchState;
+        rs.researchQueue = [];
       });
       syncMediatorState();
     },

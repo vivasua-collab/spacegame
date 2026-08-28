@@ -396,16 +396,24 @@ export function getPartialBonus(
 }
 
 /**
- * Потолок конкретной технологии: min(tech.maxLevel, getEffectiveMaxLevel(branch)).
+ * Потолок конкретной технологии.
+ *
+ * R-RES task §A: MVP-упрощение — фундаменталы больше НЕ ограничивают
+ * специализированные ветки сверху (это блокировало стартовые технологии
+ * при fund=0). Теперь потолок всегда = `tech.maxLevel`.
+ *
+ * Фундаменталы по-прежнему дают partial-бонус к RP/сек (getPartialBonus),
+ * то есть их развитие ускоряет исследование — но не запирает ветку.
+ *
+ * `getEffectiveMaxLevel` сохранён для будущих Etap 4 сценариев (т.е. это
+ * по-прежнему чистая функция, пригодная для UI-индикаторов), но в
+ * `getTechCeiling` больше не используется как ограничитель.
  */
 export function getTechCeiling(
   tech: Technology,
-  state: ResearchState,
+  _state: ResearchState,
 ): number {
-  const branchCeiling = getEffectiveMaxLevel(tech.branch, state.fundamentalLevels);
-  // Infinity-safe Math.min
-  if (branchCeiling === Infinity) return tech.maxLevel;
-  return Math.min(tech.maxLevel, branchCeiling);
+  return tech.maxLevel;
 }
 
 // ============ R3: research rate (planet-level) ============
@@ -464,9 +472,14 @@ export function countLaboratories(planets: Planet[]): { count: number; totalLeve
  * Формула: Σ по всем лабораториям getResearchRate(level).
  *
  * В MVP habitability = 0 для всех планет (TODO Etap 4).
+ *
+ * R-RES §E: optional `multiplier` arg — применяется к итоговому значению
+ * как финальный множитель. Источник: `resolveBonuses(state, 'research_rate')`
+ * (сумма бонусов от лабораторий и других источников). По умолчанию 1.0
+ * (нет бонусов) — backward compat.
  */
-export function getTotalRPPerSec(planets: Planet[]): number {
-  return planets.reduce((acc, planet) => {
+export function getTotalRPPerSec(planets: Planet[], multiplier = 1): number {
+  const base = planets.reduce((acc, planet) => {
     if (planet.owner == null) return acc;
     let sum = acc;
     for (const hex of planet.hexes) {
@@ -486,6 +499,7 @@ export function getTotalRPPerSec(planets: Planet[]): number {
     }
     return sum;
   }, 0);
+  return base * multiplier;
 }
 
 // ============ R3: slot + tick ============
@@ -514,6 +528,95 @@ export function createResearchSlot(
     allocationPercent: Math.max(5, Math.min(100, allocationPercent)),
     rpInvested: 0,
   };
+}
+
+/**
+ * R-RES §B: Продвинуть очередь исследований — берёт первый techId из
+ * state.researchQueue, создаёт для него активный слот и удаляет из очереди.
+ *
+ * Детерминированный slotId: `slot_q_${techId}_${targetLevel}` — гарантированно
+ * уникален для (techId, targetLevel). Без Math.random (gap-3).
+ *
+ * Проверки (silent skip, без toast — это внутренняя функция):
+ *   - очередь пуста → no-op
+ *   - techId уже в activeSlots → пропустить (защита от дублей)
+ *   - techId не найден в дереве → удалить из очереди, recurse к следующему
+ *   - все уровни уже исследованы (currentLevel ≥ maxLevel) → пропустить
+ *   - prerequisites не выполнены → пропустить (останется в очереди для
+ *     следующей попытки после того, как прекурсоры будут исследованы)
+ *
+ * ПРИМЕЧАНИЕ: функция мутирует draft (immer) — caller'у нужно вызвать
+ * внутри produce().
+ *
+ * Возвращает true если создан новый активный слот.
+ */
+export function advanceQueue(state: ResearchState): boolean {
+  // Защита от рекурсии: если уже есть активные слоты — не продвигаем.
+  if (state.activeSlots.length > 0) return false;
+
+  while (state.researchQueue.length > 0) {
+    const techId = state.researchQueue[0];
+    if (!techId) {
+      state.researchQueue.shift();
+      continue;
+    }
+    // Проверка: tech в дереве?
+    const tech = TECH_MAP.get(techId);
+    if (!tech) {
+      // Нет в дереве (data изменился?) — выбросить из очереди.
+      state.researchQueue.shift();
+      continue;
+    }
+    // Проверка: уже полностью исследован?
+    const currentLevel = state.researched[techId] ?? 0;
+    if (currentLevel >= tech.maxLevel) {
+      // Уже макс — выбросить из очереди, перейти к следующему.
+      state.researchQueue.shift();
+      continue;
+    }
+    // Проверка: prerequisites?
+    const prereq = arePrerequisitesMet(tech, state.researched);
+    if (!prereq.met) {
+      // Прекурсоры ещё не готовы — оставим в очереди, попробуем следующий тик.
+      // Но мы не хотим блокировать очередь, если за ним стоят techId с
+      // готовыми прекурсорами. MVP-решение: пропустить (shift) и положить
+      // в конец очереди — чтобы избежать бесконечного spin.
+      state.researchQueue.shift();
+      state.researchQueue.push(techId);
+      // Если вернулись к этому же элементу (один элемент в очереди) — выходим.
+      if (state.researchQueue.length <= 1) break;
+      continue;
+    }
+    // Создать слот.
+    const targetLevel = currentLevel + 1;
+    const slotId = `slot_q_${techId}_${targetLevel}`;
+    const slot = createResearchSlot(slotId, techId, targetLevel, 100);
+    state.activeSlots.push(slot);
+    state.researchQueue.shift();
+    return true;
+  }
+  return false;
+}
+
+/**
+ * R-RES §C: «Доступные RP» = totalRpGenerated (lifetime-банк)
+ *  − sum(fundamentalRpInvested) (RP, потраченные на фундаменталы)
+ *  − sum(activeSlots.rpInvested) (RP, вложенные в активные слоты).
+ *
+ * Это «банк» игрока, который он может потратить на новые фундаменталы.
+ * Не путать с totalRpGenerated — это lifetime-счётчик, который только
+ * растёт. UI показывает оба: «Доступно» (главное) и «Всего» (secondary).
+ */
+export function getAvailableRP(state: ResearchState): number {
+  const fundamentalInvested = Object.values(state.fundamentalRpInvested).reduce(
+    (sum, v) => sum + (v ?? 0),
+    0,
+  );
+  const slotsInvested = state.activeSlots.reduce(
+    (sum, s) => sum + s.rpInvested,
+    0,
+  );
+  return state.totalRpGenerated - fundamentalInvested - slotsInvested;
 }
 
 /**
@@ -548,7 +651,9 @@ export function tickResearch(
   const completed: Array<{ techId: string; level: number }> = [];
 
   if (state.activeSlots.length === 0) {
-    // Нечего делать — но всё равно увеличиваем счётчик
+    // Нет активных слотов — но если есть очередь, попытаемся стартануть
+    // первый элемент (R-RES §B auto-advance).
+    advanceQueue(state);
     state.totalRpGenerated += totalRPPerSec * deltaSeconds;
     return { completed };
   }
@@ -605,6 +710,14 @@ export function tickResearch(
       }
     }
     void levelFinished; // для будущего лога
+  }
+
+  // R-RES §B: если после тика активных слотов не осталось, а очередь
+  // непуста — продвигаем первый элемент в активный слот. Это позволяет
+  // игроку поставить цепочку технологий в очередь один раз, и они будут
+  // исследоваться автоматически без ручного старта каждого следующего.
+  if (state.activeSlots.length === 0) {
+    advanceQueue(state);
   }
 
   state.totalRpGenerated += totalRPPerSec * deltaSeconds;
@@ -778,7 +891,8 @@ export function applyTechUnlock(
 
 /**
  * Создать ResearchState по умолчанию (новая игра).
- * Все фундаменталы = 0, researched = {}, activeSlots = [], rpGenerated = 0.
+ * Все фундаменталы = 0, researched = {}, activeSlots = [], researchQueue = [],
+ * rpGenerated = 0.
  *
  * Используется в game-store.newGame() и migrateGameState.
  */
@@ -795,6 +909,7 @@ export function createDefaultResearchState(): ResearchState {
     fundamentalRpInvested: {},
     researched: {},
     activeSlots: [],
+    researchQueue: [],
     totalRpGenerated: 0,
   };
 }

@@ -1,0 +1,258 @@
+[
+  {
+    "id": "fusion_reactor",
+    "name": "Термоядерный реактор",
+    "nameEn": "Fusion reactor",
+    "branch": "power",
+    "baseCost": 500,
+    "maxLevel": 10,
+    "improvementType": "linear",
+    "improvementPerLevel": 0.10,
+    "prerequisites": [],
+    "effects": [
+      { "target": "energy_output", "operation": "multiply", "value": 1.10, "perLevel": true }
+    ],
+    "description": "+10% к выходу энергии на ур. Открывает здание «Термояд. реактор» (по §8.3 40-buildings).",
+    "icon": "fusion",
+    "sortOrder": 1
+  },
+  {
+    "id": "ion_engine",
+    "name": "Ионный двигатель",
+    "nameEn": "Ion engine",
+    "branch": "power",
+    "baseCost": 800,
+    "maxLevel": 10,
+    "improvementType": "linear",
+    "improvementPerLevel": 0.15,
+    "prerequisites": [
+      { "techId": "fusion_reactor", "minLevel": 1 }
+    ],
+    "effects": [
+      { "target": "ship_thrust", "operation": "multiply", "value": 1.15, "perLevel": true }
+    ],
+    "description": "+15% к тяге двигателей на ур. Открывает модуль «Ионный двигатель» (для верфи).",
+    "icon": "ion",
+    "sortOrder": 2
+  },
+  {
+    "id": "power_systems",
+    "name": "Силовые системы",
+    "nameEn": "Power systems",
+    "branch": "power",
+    "baseCost": 600,
+    "maxLevel": 10,
+    "improvementType": "linear",
+    "improvementPerLevel": 0.08,
+    "prerequisites": [
+      { "techId": "fusion_reactor", "minLevel": 1 }
+    ],
+    "effects": [
+      { "target": "energy_storage", "operation": "multiply", "value": 1.08, "perLevel": true }
+    ],
+    "description": "+8% к ёмкости накопителей энергии. Основа для P3-P12 (Etap 4).",
+    "icon": "power",
+    "sortOrder": 3
+  },
+  {
+    "id": "steel_processing",
+    "name": "Обработка стали",
+    "nameEn": "Steel processing",
+    "branch": "materials",
+    "baseCost": 300,
+    "maxLevel": 10,
+    "improvementType": "linear",
+    "improvementPerLevel": 0.05,
+    "prerequisites": [],
+    "effects": [],
+    "description": "Открывает рецепт «Стальной сплав» (steel) в синтезаторе. Базовая ветка материаловедения.",
+    "icon": "steel",
+    "sortOrder": 11
+  },
+  {
+    "id": "light_alloys",
+    "name": "Лёгкие сплавы",
+    "nameEn": "Light alloys",
+    "branch": "materials",
+    "baseCost": 500,
+    "maxLevel": 10,
+    "improvementType": "linear",
+    "improvementPerLevel": 0.05,
+    "prerequisites": [
+      { "techId": "steel_processing", "minLevel": 1 }
+    ],
+    "effects": [],
+    "description": "Открывает рецепт «Титановый сплав» (titanium_alloy). Снижает массу конструкций.",
+    "icon": "alloy",
+    "sortOrder": 12
+  },
+  {
+    "id": "composites",
+    "name": "Композиты",
+    "nameEn": "Composites",
+    "branch": "materials",
+    "baseCost": 800,
+    "maxLevel": 10,
+    "improvementType": "progressive",
+    "improvementPerLevel": 0.07,
+    "prerequisites": [
+      { "techId": "steel_processing", "minLevel": 2 },
+      { "techId": "light_alloys", "minLevel": 1 }
+    ],
+    "effects": [],
+    "description": "Открывает рецепт «Композитная пластина» (composite_plate). Каскадный прекурсор для M5.",
+    "icon": "composite",
+    "sortOrder": 13
+  },
+  {
+    "id": "superconductors",
+    "name": "Сверхпроводники",
+    "nameEn": "Superconductors",
+    "branch": "materials",
+    "baseCost": 1500,
+    "maxLevel": 10,
+    "improvementType": "threshold",
+    "improvementPerLevel": 0.10,
+    "prerequisites": [
+      { "techId": "steel_processing", "minLevel": 2 },
+      { "techId": "microelectronics", "minLevel": 1 }
+    ],
+    "effects": [],
+    "description": "Открывает рецепт «Сверхпроводник» (superconductor). Кросс-веточный преквизит (computing).",
+    "icon": "super",
+    "sortOrder": 14
+  },
+  {
+    "id": "ballistic_weapons",
+    "name": "Баллистическое оружие",
+    "nameEn": "Ballistic weapons",
+    "branch": "weapons",
+    "baseCost": 400,
+    "maxLevel": 10,
+    "improvementType": "linear",
+    "improvementPerLevel": 0.10,
+    "prerequisites": [],
+    "effects": [],
+    "description": "Открывает модуль «Баллистическая турель» для кораблей.",
+    "icon": "ballistic",
+    "sortOrder": 21
+  },
+  {
+    "id": "laser_weapons",
+    "name": "Лазерное оружие",
+    "nameEn": "Laser weapons",
+    "branch": "weapons",
+    "baseCost": 700,
+    "maxLevel": 10,
+    "improvementType": "linear",
+    "improvementPerLevel": 0.12,
+    "prerequisites": [
+      { "techId": "ballistic_weapons", "minLevel": 2 },
+      { "techId": "microelectronics", "minLevel": 1 }
+    ],
+    "effects": [],
+    "description": "Открывает модуль «Лазерная пушка». Кросс-веточный преквизит (computing).",
+    "icon": "laser",
+    "sortOrder": 22
+  },
+  {
+    "id": "fleet_tactics",
+    "name": "Флотская тактика",
+    "nameEn": "Fleet tactics",
+    "branch": "weapons",
+    "baseCost": 600,
+    "maxLevel": 10,
+    "improvementType": "linear",
+    "improvementPerLevel": 0.05,
+    "prerequisites": [
+      { "techId": "ballistic_weapons", "minLevel": 1 }
+    ],
+    "effects": [
+      { "target": "fleet_combat_bonus", "operation": "add", "value": 0.05, "perLevel": true }
+    ],
+    "description": "+5% к боевой эффективности флота на ур. Эффект применяется в Etap 4 (тактический бой).",
+    "icon": "tactics",
+    "sortOrder": 23
+  },
+  {
+    "id": "microelectronics",
+    "name": "Микроэлектроника",
+    "nameEn": "Microelectronics",
+    "branch": "computing",
+    "baseCost": 300,
+    "maxLevel": 10,
+    "improvementType": "linear",
+    "improvementPerLevel": 0.08,
+    "prerequisites": [],
+    "effects": [],
+    "description": "Открывает рецепт «Микрочип» (microchip). Свободная ветка — потолка нет, только partial-бонус от Химии.",
+    "icon": "chip",
+    "sortOrder": 31
+  },
+  {
+    "id": "short_range_sensors",
+    "name": "Сенсоры ближнего радиуса",
+    "nameEn": "Short-range sensors",
+    "branch": "computing",
+    "baseCost": 500,
+    "maxLevel": 10,
+    "improvementType": "linear",
+    "improvementPerLevel": 0.10,
+    "prerequisites": [
+      { "techId": "microelectronics", "minLevel": 1 }
+    ],
+    "effects": [],
+    "description": "+10% к дальности сканеров. Основа для C2-C12 (Etap 4).",
+    "icon": "sensor",
+    "sortOrder": 32
+  },
+  {
+    "id": "communication_systems",
+    "name": "Системы связи",
+    "nameEn": "Communication systems",
+    "branch": "computing",
+    "baseCost": 600,
+    "maxLevel": 10,
+    "improvementType": "linear",
+    "improvementPerLevel": 0.10,
+    "prerequisites": [
+      { "techId": "microelectronics", "minLevel": 1 }
+    ],
+    "effects": [],
+    "description": "+10% к дальности связи флотов. Каскадный прекурсор для C3-C12.",
+    "icon": "comm",
+    "sortOrder": 33
+  },
+  {
+    "id": "hydroponics",
+    "name": "Гидропоника",
+    "nameEn": "Hydroponics",
+    "branch": "biology",
+    "baseCost": 300,
+    "maxLevel": 10,
+    "improvementType": "linear",
+    "improvementPerLevel": 0.10,
+    "prerequisites": [],
+    "effects": [],
+    "description": "+10% к выходу еды (заглушка в MVP — эффект Etap 4 с терраформированием).",
+    "icon": "hydro",
+    "sortOrder": 41
+  },
+  {
+    "id": "ecological_adaptation",
+    "name": "Экологическая адаптация",
+    "nameEn": "Ecological adaptation",
+    "branch": "biology",
+    "baseCost": 500,
+    "maxLevel": 10,
+    "improvementType": "linear",
+    "improvementPerLevel": 0.05,
+    "prerequisites": [
+      { "techId": "hydroponics", "minLevel": 1 }
+    ],
+    "effects": [],
+    "description": "+5% к габитабельности планеты (заглушка в MVP).",
+    "icon": "eco",
+    "sortOrder": 42
+  }
+]

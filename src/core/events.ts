@@ -200,6 +200,15 @@ export interface TechEvents {
   'tech:tree-validated': { ok: boolean; errors: string[] };
   /** StartResearch отклонён (причины для UI). */
   'tech:research-rejected': { techId: string; factionId: EntityId; reasons: string[] };
+  /**
+   * R-RES §B: очередь исследований продвинута — предыдущий активный слот
+   * завершился, и первый элемент очереди auto-started как новый активный.
+   */
+  'tech:queue-advanced': { factionId: EntityId; techId: string; targetLevel: number; remainingQueue: number };
+  /** R-RES §B: techId добавлен в очередь исследований игроком. */
+  'tech:queue-added': { factionId: EntityId; techId: string; queueLength: number };
+  /** R-RES §B: элемент удалён из очереди (manual или auto-cleanup). */
+  'tech:queue-removed': { factionId: EntityId; index: number; techId?: string };
 }
 
 // ─── Diplomacy ────────────────────────────────────────────

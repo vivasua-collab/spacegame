@@ -60,6 +60,13 @@ export const SHIP_MODULES: ShipModule[] = [
     thrust: 800,
     fuelType: 'xenon',
     fuelPerThrust: 0.0008,
+    // R-RES §E: data-driven bonus — ионный двигатель даёт +10% multiply
+    // к ship_thrust (демонстрация бонус-системы; реальный ship_thrust
+    // берётся из поля thrust, но бонус показывает, как модули могут
+    // давать дополнительные стат-модификаторы).
+    bonuses: [
+      { target: 'ship_thrust', operation: 'multiply', value: 1.10, source: 'engine_ion_mk1' },
+    ],
   },
 
   // ═════════════ ЦПУ (control) ═════════════════════════════════════════

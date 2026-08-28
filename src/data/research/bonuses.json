@@ -1,0 +1,5 @@
+{
+  "version": "1.0.0",
+  "description": "Registry of bonus definitions that buildings/ship parts can reference. Reserved for future expansion — currently each building/part declares its bonuses inline.",
+  "bonuses": {}
+}

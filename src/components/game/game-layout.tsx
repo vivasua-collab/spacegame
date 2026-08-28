@@ -38,7 +38,9 @@ import {
   Wrench,
   Ship,
   FlaskConical,
+  BookOpen,
 } from 'lucide-react';
+import { ReferenceDialog } from './reference-dialog';
 
 export function GameLayout() {
   const gameState = useGameStore((s) => s.gameState);
@@ -125,6 +127,9 @@ export function GameLayout() {
 
         {/* Save button */}
         <SaveButton />
+
+        {/* R-BLD-REF: Reference / help dialog — справочное меню рядом с Save */}
+        <ReferenceButton />
 
         {/* New game button — uses AlertDialog instead of native confirm() (C9, gap-10) */}
         <AlertDialog>
@@ -469,5 +474,30 @@ function SaveButton() {
       )}
       {isSaving ? 'Сохранение...' : justSaved ? 'Сохранено' : 'Save'}
     </Button>
+  );
+}
+
+/**
+ * R-BLD-REF: Reference / help button — открывает справочное меню
+ * (легенда гексов по размерам планет + описание игровых подсистем).
+ * Расположен в top bar рядом с SaveButton.
+ */
+function ReferenceButton() {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <Button
+        variant="ghost"
+        size="sm"
+        className="h-7 text-xs text-slate-400 hover:text-cyan-200"
+        onClick={() => setOpen(true)}
+        aria-label="Справка"
+        title="Справка: легенда гексов и описание подсистем"
+      >
+        <BookOpen className="size-3 mr-1" />
+        Справка
+      </Button>
+      <ReferenceDialog open={open} onOpenChange={setOpen} />
+    </>
   );
 }

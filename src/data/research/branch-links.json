@@ -1,0 +1,10 @@
+[
+  { "fundamentalId": "chemistry", "specializedId": "materials", "linkType": "primary" },
+  { "fundamentalId": "engineering", "specializedId": "materials", "linkType": "secondary" },
+  { "fundamentalId": "physics", "specializedId": "power", "linkType": "primary" },
+  { "fundamentalId": "chemistry", "specializedId": "computing", "linkType": "partial" },
+  { "fundamentalId": "military_science", "specializedId": "weapons", "linkType": "primary" },
+  { "fundamentalId": "engineering", "specializedId": "weapons", "linkType": "partial" },
+  { "fundamentalId": "biology_fund", "specializedId": "biology", "linkType": "primary" },
+  { "fundamentalId": "xenoarchaeology", "specializedId": "xenoarch", "linkType": "primary" }
+]

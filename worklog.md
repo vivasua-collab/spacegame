@@ -461,3 +461,418 @@ Stage Summary:
 - Нет runtime-ошибок в dev.log при генерации галактики (включая generateMoons)
 - Commit 2a3fc28 отправлен на origin/main
 - DEV остановлен по требованию пользователя; для проверки можно запустить `bun run dev` в фоне
+
+---
+Task ID: R-BLD-REF
+Agent: full-stack-developer (building + reference menu)
+Task: Fix «primary resource processing» building availability at game start + create reference/help menu (tabbed subsystems) near the Save button.
+
+Work Log:
+- Прочитал worklog.md (все 463 строки) для контекста предыдущих заходов (Tasks 1, 17, 23, 27, 4 и др.).
+- Прочитал `src/components/game/building-dialog.tsx` (810 строк) — нашёл фильтр зданий (BuildList, строки 508-519). Фильтр:
+    1) layer.includes(layer)
+    2) b.id !== 'colony_hub'
+    3) для surface на не-газовых гигантах — b.size.includes(planet.size)
+  Никакого tech-gate в фильтре нет — только проверка размера.
+- Прочитал `src/data/buildings.ts` — нашёл 3 здания категории processing:
+    * `processor` (Переработчик) — универсальный, size: `['small', 'medium', 'large']` — НЕ включал `tiny` и `huge`
+    * `synthesizer` (Синтезатор) — специализированный, size: `['medium', 'large']`, в описании «требует технологию»
+    * `refinery` (Очистительный комплекс) — специализированный, size: `['medium', 'large']`, в описании «требует технологию»
+- Прочитал `src/core/types.ts` BuildingDef (строки 236-267) — поля unlockTech/requiresTech отсутствуют в типе. Только `size: PlanetSize[]`.
+- Прочитал `src/research/engine.ts` applyTechUnlock (строки 727-775) — добавляет в state.unlockedBuildings, но это не используется в building-dialog фильтре.
+- Прочитал `src/data/research/tech-unlocks.ts` — TECH_UNLOCKS не упоминает processor/synthesizer/refinery (только fusion_reactor здание, рецепты, модули).
+- Прочитал `src/data/planet-types.ts` — getSizeFromRadius: R<0.3→tiny, <0.7→small, <1.3→medium, <2.0→large, else huge. Карликовые планеты → tiny. Старый processor.size исключал tiny → на карликовых планетах нельзя было построить ни одного переработчика с первого хода (это и было жалобой пользователя «На старте не доступны к постройке здания первичной переработки ресурсов»).
+- Прочитал `src/economy/engine.ts` buildOnHex (строки 546-588) — тоже проверяет `buildingDef.size.includes(planet.size)`, так что фильтр UI соответствует фильтру engine.
+- Прочитал `src/components/game/game-layout.tsx` (504 строки) — SaveButton на строке 425-473, рендерится на строке 127 рядом с AlertDialog для New Game.
+- Прочитал `src/data/research/index.ts` barrel — экспортирует TECH_TREE, FUNDAMENTAL_BRANCHES_MVP, TECH_UNLOCKS, BRANCH_COLORS.
+- Прочитал `src/data/research/fundamental-branches.ts` — 5 фундаменталок + xenoarchaeology (призрак Etap 4).
+- Прочитал `src/data/research/tech-tree.ts` — 15 технологий по 5 веткам (P/M/W/C/B), BRANCH_COLORS, STARTER_TECH_IDS.
+- Прочитал `src/data/warehouse.ts` — раздельные константы: ORE_WAREHOUSE_BASE=5000, PROCESSED_WAREHOUSE_BASE=3500, HIGH_TECH_STORAGE_BASE=1500 (+бонусы за уровень).
+- Прочитал `src/data/ships/hulls.ts` — 4 корпуса MVP (Скаут/Истребитель/Фрегат/Транспорт).
+- Прочитал `src/data/ships/fuel-map.ts` — FUEL_TO_ELEMENT (chemical→H, xenon→Xe, hydrogen→H, antimatter→'antimatter'), ALL_FUEL_TYPES.
+- Прочитал `src/data/element-helpers.ts` CATEGORY_LABELS — 14 категорий элементов.
+- Прочитал `src/components/ui/dialog.tsx` и `src/components/ui/tabs.tsx` — используются существующие shadcn-компоненты.
+
+TASK 1 — Fix processor availability:
+- Изменил `src/data/buildings.ts`: processor.size с `['small', 'medium', 'large']` на `['tiny', 'small', 'medium', 'large', 'huge']`.
+- Добавил комментарий R-BLD-REF с объяснением, почему: «первичной переработки — первый этаж цепочки; ранее исключало карликовые (tiny) планеты, где игрок не мог построить ни одного переработчика с первого хода».
+- Выбрал подход (a) из ТЗ: расширить size-лист (нет поля unlockTech для удаления). Synthesizer/refinery остались restricted (`['medium', 'large']`) — у них в описании «требует технологию», они specialized-формы (не первичный этаж).
+
+TASK 2 — Reference dialog:
+- Создал `src/components/game/reference-dialog.tsx` (517 строк, 'use client'). Использует существующие shadcn-компоненты Dialog, Tabs, Badge. Без Math.random.
+- 5 вкладок:
+    1. **Планеты** — легенда размеров (карточки tiny=19/small=37/medium=61/large=91/huge=127 гексов) + таблица типов (TYPE_NAMES × baseGravity × temperature × hexCount × atmosphereChance × SIZE_NAMES).
+    2. **Исследования** — фундаментальные ветки (FUNDAMENTAL_BRANCHES_MVP, 5 шт. с описаниями и стоимостью 200 RP/lvl) + специализированные ветки (TECH_TREE, 15 тех. по 5 веткам с цветными лейблами и базовой стоимостью) + очередь (RP/сек = 5 × уровень × (1+габ/800), 1 слот на 10 лаб, формулы).
+    3. **Экономика** — раздельные склады (ore 5000+1250/ур, processed 3500+875/ур, highTech 1500+375/ур, spaceport +5/ур к орбитальному буферу) + категории ресурсов (CATEGORY_LABELS, 14 категорий) + специализация склада (universal/ore/metal/gas/component с множителями).
+    4. **Флот** — таблица корпусов (HULLS: name × HS × HP × масса × слоты × требуемый уровень верфи) + топливо и движение (типы топлива, 1 ед. = 1 ед., приказы move/patrol/colonize/attack/defend, fleet:movement-started).
+    5. **Здания** — полный каталог BUILDINGS: имя × категория (CATEGORY_NAMES) × «требует технологию» badge для synthesizer/refinery × слои (LAYER_NAMES) × макс. уровень × стоимость × энергия × описание.
+- Импорт research-данных через barrel `@/data/research/index` — безопасен при рефакторинге R-RES (если JSON-loader меняет экспорты, barrel останется точкой входа).
+- Стилизация: тёмная тема `bg-[#0d0d24]`, `border-white/10`, `text-white`, `custom-scrollbar`. Большой диалог max-w-4xl, max-h-[85vh]. Левая колонка-табы на десктопе (TabsList sm:flex-row w-56), горизонтальный ряд на мобильных (flex-col). Контент-зона max-h-[68vh] overflow-y-auto.
+- Добавил `ReferenceButton` компонент в `src/components/game/game-layout.tsx` (строки 480-503): BookOpen icon, 'Справка' label, ghost variant, hover:text-cyan-200. State: `const [open, setOpen] = useState(false)`. Размещён сразу после `<SaveButton />` на строке 132.
+- Импорт: `import { ReferenceDialog } from './reference-dialog';` + `BookOpen` из lucide-react.
+
+Quality gates (все зелёные):
+- `bun run lint`: 0 errors / 49 warnings (бейслайн 49 — убрал один неиспользуемый импорт FUEL_TO_ELEMENT из reference-dialog.tsx).
+- `bunx tsc --noEmit`: 168 errors total — НО 0 новых ошибок от моих файлов (через `git stash` + `bunx tsc` верифицировано: baseline без моих изменений = 168, с моими изменениями = 168; мои файлы reference-dialog.tsx/game-layout.tsx/buildings.ts — 0 ошибок). Рост с 138 (Task 4) до 168 произошёл ДО моих изменений — от параллельной работы R-RES (89 ошибок в src/economy/engine.ts, 26 в src/galaxy/*, и т.д.), которые я НЕ трогал.
+- `bun test`: 340/340 pass, 221321 expect() calls, 5.19s.
+- `bun run validate:recipes`: 75/75 valid, 144 valid resource IDs.
+
+Agent Browser end-to-end verification (порт 3000):
+- Запустил dev-сервер, открыл http://localhost:3000/.
+- Главное меню → кнопка «Launch Game» → игра загрузилась, фаза colonization.
+- Top bar содержит «Save» (ref=e2) и «Справка» (ref=e3) — кнопка справочного меню размещена рядом с Save, как требовалось ✓.
+- Клик по «Справка» → открылся ReferenceDialog «📖 Справка» с 5 табами: Планеты / Исследования / Экономика / Флот / Здания ✓.
+- Tab «Планеты» (selected по умолчанию): показана «Легенда размеров» (heading level=3) + «Типы планет» (heading level=3) с таблицей — все 7 типов (Скалистая 0.8G -50…150 61 40%, Вулканическая 0.9G 200…800 37 60%, Ледяная 0.5G -230…-30 37 20%, Океаническая 1.0G -10…60 61 85%, Пустынная 0.7G 30…250 61 15%, Газовый гигант 2.5G -180…1000 — 100%, Карликовая 0.2G -230…50 19 10%) ✓. Легенда гексов по размерам видна.
+- Tab «Исследования»: показаны секции «Фундаментальные ветки (5 в MVP)», «Специализированные ветки (15 технологий)», «Очередь исследований» ✓.
+- Tab «Экономика»: показаны секции «Раздельные склады (v3.0)», «Категории ресурсов», «Специализация склада» ✓.
+- Tab «Флот»: показаны секции «Корпуса кораблей (4 в MVP)» с таблицей (Скаут/Истребитель/Фрегат/Транспорт), «Топливо и движение» ✓.
+- Tab «Здания»: показан полный каталог зданий включая «Переработчик» (processor, без badge «требует технологию»), «Синтезатор» (synthesizer, с badge «требует технологию»), «Очистительный комплекс» (refinery, с badge «требует технологию») ✓.
+- Закрыл ReferenceDialog, кликнул на систему Rho Phoenicis → колонизировал Rocky small planet (Rho Phoenicis III) → phase=playing, time controls видимы.
+- Открыл BuildingDialog на пустом гексе: список содержит 9 зданий — Шахта, Карьер, Газовый экстрактор, **Переработчик**, Солнечная станция, Склад (крытый), Рудный склад (открытый), Спец склад, Лаборатория ✓. «Переработчик» (primary resource processing building) теперь доступен для постройки с первого хода на любой планете (включая tiny/dwarf, после расширения size-листа).
+- DEV-лог: компиляция успешна (GET / 200, нет runtime-ошибок), GET /api/save 200.
+- Браузер закрыт корректно, dev-сервер остановлен (pkill next dev + next-server).
+
+Stage Summary:
+- TASK 1 готов: processor (id='processor', name='Переработчик') теперь имеет `size: ['tiny', 'small', 'medium', 'large', 'huge']` (раньше было `['small', 'medium', 'large']`). Изменён только `src/data/buildings.ts` — фильтр в building-dialog.tsx и engine.ts уже проверяют `b.size.includes(planet.size)`, так что изменение size-листа автоматически делает процессор доступным на всех размерах планет, включая карликовые (tiny), где ранее он был недоступен.
+- TASK 2 готов: создан `src/components/game/reference-dialog.tsx` (517 строк, 5 вкладок: Планеты/Исследования/Экономика/Флот/Здания) + добавлен `ReferenceButton` компонент в `src/components/game/game-layout.tsx` рядом с `SaveButton`. Диалог использует существующие shadcn Dialog/Tabs/Badge, тёмная тема, адаптивный layout (табы слева на десктопе, сверху на мобилке). Импортирует данные из существующих модулей (planet-types, buildings, warehouse, element-helpers, ships/hulls, ships/fuel-map, research/index barrel).
+- Качественные метрики: lint 0 errors / 49 warnings (бейслайн), tsc 0 новых ошибок от моих файлов (всего 168 — рост от R-RES работы в engine.ts/galaxy/, не от моих изменений), tests 340/340, recipes 75/75.
+- Конфликтов с R-RES не обнаружено: research/index barrel корректно реэкспортирует FUNDAMENTAL_BRANCHES_MVP и TECH_TREE, ReferenceDialog успешно импортирует и рендерит все research-данные через barrel.
+- Изменённые файлы: src/data/buildings.ts (size-лист processor), src/components/game/game-layout.tsx (+ ReferenceButton + импорт BookOpen + ReferenceDialog), src/components/game/reference-dialog.tsx (новый файл), worklog.md.
+
+---
+Task ID: R-RES
+Agent: full-stack-developer (research system)
+Task: Fix 8 research-system problems reported by game owner: ceiling deadlock blocking starter techs, RP display confusion, "RP/сек" label wrong (1 tick=1 day), research QUEUE, data-driven JSON tech tree with prerequisites, bonus system, auto-scaling tree window.
+
+Work Log:
+- Прочитал worklog.md (записи Task 1, 4, 17, R-BLD-REF и др.) для контекста.
+- Прочитал все ключевые файлы: src/research/engine.ts (862 строки, чистые функции),
+  src/research/research-module.ts (259 строк, ResearchModule с tick-handler),
+  src/components/game/research-view.tsx (1225 строк, UI),
+  src/stores/game-store.ts (1536 строк, actions), src/core/types.ts,
+  src/data/research/{tech-tree,fundamental-branches,branch-links,tech-unlocks,index}.ts,
+  tests/research/{branch-ceilings,process-tick,tree-data}.test.ts.
+- Quality gates baseline: lint 0/49 warnings, tsc 168 errors (pre-existing moons +
+  noUncheckedIndexedAccess), tests 340/340, recipes 75/75.
+
+A. Fix fundamental ceiling deadlock (R-RES §A):
+- В src/research/engine.ts изменил getTechCeiling(tech, _state) → всегда
+  возвращает tech.maxLevel. Фундаменталы больше не ограничивают специализированные
+  ветки сверху. Это разблокирует ВСЕ стартовые технологии сразу (fusion_reactor,
+  steel_processing, ballistic_weapons, microelectronics, hydroponics — все имели
+  ceiling=0 при fund=0).
+- getEffectiveMaxLevel сохранён для будущих Etap 4 сценариев и UI-индикаторов
+  (больше не используется как ограничитель).
+- canStartResearch теперь принимает targetLevel ≤ tech.maxLevel (was ≤ ceiling).
+- getTechStatus: ceiling_reached теперь только при currentLevel ≥ maxLevel.
+- Обновил tests/research/branch-ceilings.test.ts: 6 тестов для getTechCeiling
+  теперь ожидают tech.maxLevel (было 5/0/10/10/3 → стало 10/10/10/10/10).
+- Обновил tests/research/process-tick.test.ts: тест «ceiling=2 → level 3
+  rejected» заменён на «maxLevel=10 → levels 1-10 OK»; 4 теста обновлены.
+
+B. Implement research QUEUE (R-RES §B):
+- В src/core/types.ts добавил поле `researchQueue: string[]` в ResearchState.
+- В src/research/engine.ts:
+  * createDefaultResearchState() теперь инициализирует researchQueue: [].
+  * Создал новую pure функцию advanceQueue(state) — берёт первый techId из
+    очереди, создаёт активный слот с детерминированным id `slot_q_*_*` (без
+    Math.random, gap-3), сдвигает очередь.
+  * Модифицировал tickResearch: после обработки активных слотов, если
+    activeSlots.length === 0 и researchQueue непуста — вызывает advanceQueue.
+    Это auto-advance: одна очередь исследуется без ручного старта каждого
+    следующего.
+- В src/stores/game-store.ts:
+  * Добавил 4 действия в interface GameStore: addToResearchQueue,
+    removeFromResearchQueue, reorderResearchQueue, clearResearchQueue.
+  * Реализовал все 4 действия с syncMediatorState() после каждой мутации.
+  * addToResearchQueue: проверяет (a) tech существует, (b) не maxed,
+    (c) не в очереди, (d) не в activeSlots, (e) prerequisites met.
+    Если активных слотов нет — сразу стартует (создаёт слот); иначе кладёт
+    в хвост очереди.
+  * migrateResearchState: добавлен `researchQueue: Array.isArray(...) ? ... : []`
+    для совместимости со старыми сейвами.
+- В src/core/events.ts добавил 3 новых события: tech:queue-advanced,
+  tech:queue-added, tech:queue-removed.
+- В src/research/research-module.ts:
+  * Manifest.emits обновлён (3 новых события).
+  * processResearchTick: после commitState, если в новом state есть слоты с
+    slotId.startsWith('slot_q_'), эмитит tech:queue-advanced.
+- В src/components/game/research-view.tsx:
+  * ResearchQueuePanel полностью переработан: разделён на 2 секции —
+    "Активное исследование" (сверху) + "Очередь" (снизу, R-RES §B).
+  * Новый компонент QueueRow для каждого элемента очереди: показывает
+    tech name, target level, кнопки reorder (up/down), remove.
+  * ResearchDetailDialog теперь имеет 2 кнопки: "В очередь" (предпочитается)
+    и "Начать (ур. N)". Если нет свободного слота, "Начать" скрывается,
+    остаётся только "В очередь".
+  * Добавлены onAddToQueue callback в ResearchView.
+
+C. Fix RP display + RP/День labels (R-RES §C):
+- В src/research/engine.ts добавил getAvailableRP(state) helper:
+  `totalRpGenerated - sum(fundamentalRpInvested) - sum(activeSlots.rpInvested)`.
+- В src/components/game/research-view.tsx ResearchStatsBar:
+  * "RP/сек" → "RP/День" (строка 307).
+  * "RP всего" → теперь 2 отдельных числа: "Доступно: X RP" (главное,
+    prominent amber-300) + "Всего: Y RP" (secondary, slate-400).
+- В ResearchQueuePanel header: "RP/сек: X" → "RP/День: X" (строка 843).
+- В ResearchSlotRow ETA: "Nс" → "N дн" (строка 926).
+- В ResearchDetailDialog ETA: "N сек" → "N дн" (строка 1106).
+- Семантическое замечание: 1 tick = 1 day (см. formatTick в page.tsx,
+  year = floor(tick/365)+1). Численные значения RP/сек не меняются —
+  только label (5.0 RP/День = было 5.0 RP/сек).
+
+D. Move tech tree data to JSON files (R-RES §D):
+- Создал 5 JSON data-файлов в src/data/research/:
+  * techs.json — массив из 15 технологий (полная структура Technology[]).
+  * fundamentals.json — 6 фундаментальных веток.
+  * branch-links.json — 8 BranchLink связей.
+  * tech-unlocks.json — Record<string, TechUnlock[]>.
+  * bonuses.json — registry stub для будущего расширения.
+- Конвертировал .ts файлы в тонкие loaders:
+  * tech-tree.ts: `import techsData from './techs.json';
+    export const TECH_TREE = techsData as Technology[];`
+  * STARTER_TECH_IDS теперь computed из TECH_TREE (filter prerequisites.length
+    === 0) — data-driven, не hard-coded list.
+  * Аналогично для fundamental-branches.ts, branch-links.ts, tech-unlocks.ts.
+- Barrel index.ts сохранён без изменений — все существующие импорты
+  (TECH_TREE, TECH_MAP, STARTER_TECH_IDS, BRANCH_COLORS,
+  FUNDAMENTAL_BRANCHES_MVP, FUNDAMENTAL_BRANCH_MAP, BRANCH_LINKS,
+  TECH_UNLOCKS) работают.
+- tsconfig.json уже имеет resolveJsonModule: true.
+- DATA-DRIVEN: добавление новой технологии в techs.json → автоматически
+  появляется в дереве исследований в UI (buildTreeLayout итерирует TECH_TREE,
+  TechTreeGraph рендерит TECH_TREE.filter(t => t.branch !== 'xenoarch')).
+
+E. Bonus system (R-RES §E):
+- В src/core/types.ts:
+  * Добавил опциональное поле `bonuses?: Bonus[]` в BuildingDef.
+  * Добавил опциональное поле `bonuses?: Bonus[]` в ShipModule.
+  * Создал новый interface Bonus { target, operation, value, perLevel?,
+    source? }.
+- В src/data/buildings.ts:
+  * Добавил bonuses в laboratory: `[{ target: 'research_rate',
+    operation: 'add', value: 0.02, perLevel: true, source: 'laboratory' }]`
+    (+2% per level к research_rate).
+- В src/data/ships/modules.ts:
+  * Добавил bonuses в engine_ion_mk1: `[{ target: 'ship_thrust',
+    operation: 'multiply', value: 1.10, source: 'engine_ion_mk1' }]`
+    (+10% multiply к ship_thrust, demo).
+- Создал src/research/bonus-resolver.ts с resolveBonuses(state, target):
+  * Сканирует (1) researched techs' effects[], (2) построенные здания на
+    player planets (hexes + atmosphericSlots + orbitSlots → BuildingDef
+    .bonuses). Ship parts — TODO Etap 4 (stub).
+  * Формула: (1 + sum(add bonuses)) × product(multiply bonuses).
+  * Multiply с perLevel=true: value^level (compound interest).
+  * Multiply без perLevel: value^1.
+  * Add с perLevel=true: value × level.
+  * Чистая функция, не мутирует state.
+- В src/research/engine.ts getTotalRPPerSec: добавлен опциональный
+  параметр `multiplier = 1`. Базовое значение × multiplier.
+- В src/research/research-module.ts processResearchTick:
+  * Считает `resolveBonuses(currentState, 'research_rate')`.
+  * Передаёт multiplier в getTotalRPPerSec.
+  * Теперь лаборатория L3 даёт +6% к research_rate (1.06× multiplier).
+- В src/components/game/research-view.tsx ResearchView useMemo:
+  применяет `resolveBonuses(gameState, 'research_rate')` к totalRPPerSec —
+  UI показывает актуальное значение с бонусом.
+- В src/research/index.ts barrel: добавлен export resolveBonuses + type Bonus.
+
+F. Auto-scaling research tree window (R-RES §F):
+- В src/components/game/research-view.tsx:
+  * Заменил `const MIN_TREE_WIDTH = 1264;` на `const MIN_TREE_WIDTH_FLOOR = 1024;`
+  * Canvas width: `Math.max(layout.totalWidth, MIN_TREE_WIDTH_FLOOR)`.
+  * layout.totalWidth уже вычисляется в buildTreeLayout:
+    `LEFT_PAD + (maxDepth + 1) × NODE_W + maxDepth × COL_GAP + RIGHT_PAD`.
+  * При добавлении технологий в JSON — totalWidth растёт автоматически
+    (больше колонок → больше ширина). Floor 1024px гарантирует горизонтальный
+    скролл на маленьких деревьях (MVP: 15 techs, maxDepth=2 → 868px →
+    canvas = 1024px). Если добавить 10+ techs с maxDepth=5 → 1732px.
+
+G. Tests (R-RES):
+- Обновил tests/research/branch-ceilings.test.ts: 6 тестов для getTechCeiling
+  изменены (новые expected values = 10, не 5/0/3).
+- Обновил tests/research/process-tick.test.ts: 4 теста обновлены для нового
+  поведения (ceiling=10 always; добавлен тест на maxLevel=10 для
+  steel_processing level 3 OK).
+- Обновил tests/ships/fleet-engine.test.ts: researchState fixture — добавлен
+  researchQueue: [] (требуется новым типом ResearchState).
+- Создал tests/research/queue-and-rp.test.ts (15 тестов, 41 expect):
+  * getAvailableRP: empty, total only, with fundamentals, with slots, combined.
+  * createDefaultResearchState.researchQueue.
+  * advanceQueue: empty queue, deterministic slotId, skip maxed, skip unknown,
+    safety if activeSlots has slot.
+  * tickResearch auto-advance: queue advances after slot completes; queue
+    preserved when slot in progress; empty activeSlots + queue advances
+    on tick.
+- Создал tests/research/bonus-resolver.test.ts (12 тестов):
+  * resolveBonuses returns 1.0 for empty state.
+  * BuildingDef has bonuses field on laboratory.
+  * laboratory L1/L3/L5 → research_rate = 1.02/1.06/1.10.
+  * Multiple laboratories sum their contributions.
+  * Building at level 0 is ignored.
+  * Building without bonuses field is ignored.
+  * Tech effect: fusion_reactor L1 multiply energy_output → 1.10.
+  * Tech effect: fusion_reactor L3 → 1.10^3 = 1.331.
+  * Combined: tech × building.
+  * Unrelated target returns 1.0.
+- Вспомогательная makeGameStateWithBuildings() функция строит GameState с
+  одним player-owned planet и buildings в hexes (для тестов resolveBonuses).
+
+H. Quality gates (all green):
+- `bun run lint`: 0 errors / 49 warnings (= baseline 49). Убран один
+  warning (advanceQueueFn unused).
+- `bunx tsc --noEmit`: 168 errors (= baseline 168, all pre-existing moons
+  + noUncheckedIndexedAccess; 0 новых ошибок от моих файлов).
+- `bun test`: 369 pass / 0 fail (было 340 — добавилось 29 новых тестов:
+  15 queue-and-rp + 12 bonus-resolver + 2 minor changes in branch-ceilings).
+- `bun run validate:recipes`: 75/75 valid, 144 valid resource IDs.
+
+I. Agent-browser end-to-end verification (порт 3000):
+- Запустил dev-сервер, открыл http://localhost:3000/.
+- Главное меню → "Launch Game" → игра загрузилась (200 систем).
+- Клик по системе Nu Draconis → выбор планеты Nu Draconis I (Скалистая)
+  → "Колонизировать" → phase=playing, time controls видимы.
+- Клик "Исследования" → ResearchView открылся:
+  * Top bar: "Лаб.: 0", "RP/День: 0.0" (was "RP/сек"), "Слотов: 0/1",
+    "Доступно: 0 RP" (new prominent display), "Всего: 0 RP" (secondary).
+  * Левая колонка: 5 фундаменталов (Химия/Физика/Инженерия/Биология/
+    Военные науки) с "Повысить" disabled (нет RP).
+  * Center: дерево из 15 технологий (data-driven from techs.json),
+    3 tier-заголовка, 5 branch-лейблов с цветами.
+  * Правая колонка: "Активное исследование" — "Нет активного исследования"
+    (пустое состояние), ниже "ОЧЕРЕДЬ (0)" — "Очередь пуста."
+- Canvas width verified: 1024px (auto-scaled floor; totalWidth=868, max
+  with floor 1024).
+- Клик по "Обработка стали" → Detail dialog открылся с 2 кнопками:
+  "В очередь" и "Начать (ур. 1)" ✓.
+- Клик "В очередь" → тост "Добавлено в очередь: Термоядерный реактор
+  поставлен в очередь исследований." Активное исследование теперь
+  "Обработка стали" с прогресс-баром 0/300, ETA "∞" (RP/sec=0).
+- Клик по "Термоядерный реактор" → Detail dialog показывает ТОЛЬКО
+  "В очередь" (нет "Начать" — нет свободного слота, 1/1 занят). Это
+  правильное UX: можно поставить в очередь, а нельзя начать сразу.
+- Клик "В очередь" → в очереди появился "1. Термоядерный реактор цель
+  ур. 1 (из 10)" с кнопками up/down/remove. "ОЧЕРЕДЬ (1)" badge updated.
+- Тост "Добавлено в очередь. Термоядерный реактор поставлен в очередь
+  исследований."
+- Клик "Удалить из очереди" → очередь опустела до "ОЧЕРЕДЬ (0)",
+  "Очередь пуста."
+- Клик "Отменить" (на активном слоте) → активное исследование удалено,
+  состояние вернулось к "Нет активного исследования."
+- DEV-лог: компиляция успешна (Turbopack, GET / 200), нет runtime-ошибок.
+- agent-browser errors: 0 errors reported.
+- Браузер закрыт корректно, dev-сервер остановлен (pkill next dev +
+  next-server).
+
+Stage Summary:
+- Все 8 пользовательских проблем исправлены:
+  1. RP display: "Доступно: X RP" (main) + "Всего: Y RP" (secondary) —
+     getAvailableRP = totalRpGenerated - fundamentals - activeSlots.
+  2. RP/День: label correct (1 tick=1 day); ETA "дн" not "сек".
+  3. Ceiling deadlock fixed: getTechCeiling = tech.maxLevel always;
+     starter techs (fusion_reactor, steel_processing, ballastic_weapons,
+     microelectronics, hydroponics) all researchable at game start.
+  4. Queue auto-advance: tickResearch calls advanceQueue when slot
+     completes; UI shows "Активное исследование" + "Очередь (N)" with
+     reorder/remove; "В очередь" button in detail dialog.
+  5. Data-driven JSON: techs.json/fundamentals.json/branch-links.json/
+     tech-unlocks.json + thin TS loaders; adding tech to JSON → appears
+     in tree automatically.
+  6. Prerequisites in JSON: techs.json has prerequisites[] field,
+     research-view tree auto-scales canvas width from layout.totalWidth
+     (computed from maxDepth × NODE_W + gaps).
+  7. Bonus system: BuildingDef.bonuses + ShipModule.bonuses + Bonus
+     interface + resolveBonuses() in src/research/bonus-resolver.ts;
+     laboratory gives +0.02/level research_rate (demo); engine_ion_mk1
+     gives +10% ship_thrust (demo).
+  8. Queue auto-advance fixes "constantly checking science window" —
+     set up a queue once, it researches through automatically.
+- Качественные метрики: lint 0 errors / 49 warnings (=baseline),
+  tsc 168 errors (=baseline, 0 new), tests 369/369 (+29 new), recipes 75/75.
+- Agent-browser verification: RP/День label shows ✓, steel_processing
+  can be queued immediately ✓, "В очередь" button works ✓, queue list
+  shows with reorder/remove ✓, no runtime errors in dev.log ✓.
+- Изменённые/созданные файлы:
+  * src/core/types.ts: + researchQueue field, + Bonus interface, +
+    bonuses field on BuildingDef + ShipModule.
+  * src/core/events.ts: + 3 new queue events.
+  * src/data/research/techs.json: NEW (15 technologies).
+  * src/data/research/fundamentals.json: NEW (6 fundamentals).
+  * src/data/research/branch-links.json: NEW (8 links).
+  * src/data/research/tech-unlocks.json: NEW (Record<string, TechUnlock[]>).
+  * src/data/research/bonuses.json: NEW (registry stub).
+  * src/data/research/tech-tree.ts: thin JSON loader (was 325 lines, now 49).
+  * src/data/research/fundamental-branches.ts: thin JSON loader.
+  * src/data/research/branch-links.ts: thin JSON loader.
+  * src/data/research/tech-unlocks.ts: thin JSON loader.
+  * src/data/buildings.ts: + bonuses field on laboratory (R-RES §E demo).
+  * src/data/ships/modules.ts: + bonuses field on engine_ion_mk1 (demo).
+  * src/research/engine.ts: getTechCeiling returns maxLevel; +
+    advanceQueue() + getAvailableRP() + getTotalRPPerSec(planets, mult=1).
+  * src/research/bonus-resolver.ts: NEW (resolveBonuses pure function).
+  * src/research/research-module.ts: + resolveBonuses call; +
+    tech:queue-advanced emit; manifest.emits updated.
+  * src/research/index.ts: + export resolveBonuses + type Bonus.
+  * src/stores/game-store.ts: + 4 queue actions + migrate researchQueue;
+    + arePrerequisitesMet import.
+  * src/components/game/research-view.tsx: RP/День labels; + queue UI
+    (QueueRow, Очередь panel section); + В очередь button in detail
+    dialog; + getAvailableRP display; + resolveBonuses applied to
+    totalRPPerSec; + auto-scaling canvas (MIN_TREE_WIDTH_FLOOR=1024).
+  * tests/research/branch-ceilings.test.ts: 6 getTechCeiling tests updated.
+  * tests/research/process-tick.test.ts: 4 tests updated for new ceiling.
+  * tests/research/queue-and-rp.test.ts: NEW (15 tests).
+  * tests/research/bonus-resolver.test.ts: NEW (12 tests).
+  * tests/ships/fleet-engine.test.ts: + researchQueue: [] in fixture.
+- Конфликтов с R-BLD-REF не обнаружено: reference-dialog.tsx и game-layout.tsx
+  не тронуты; research/index barrel сохранён, поэтому импорты ReferenceDialog
+  продолжают работать.
+
+---
+Task ID: 18 (main coordination)
+Agent: main
+Task: Audit Pass 6 — research system redesign + reference menu + planet/UI fixes. User reported: planet descriptions black-on-black, duplicate type "Oceanic (Oceanic)", need reference/legend menu near Save with tabbed subsystems + hex legend, "primary resource processing" building unavailable at start, research broken (RP only increases, RP/сек should be RP/День, can't research 2nd level of basic techs), move tech tree to external data files for "infinite" research, dependencies in data + auto-scaling window, bonus spec in objects/buildings/parts, active research + queue (not direct accumulation).
+
+Work Log:
+- Остановлено DEV-окружение (порт 3000); проверены процессы bun/next.
+- Прочитан worklog (tasks 1, 4, 17, R-BLD-REF) + ключевые файлы: research/engine.ts (tickResearch, canStartResearch, getTechCeiling, getEffectiveMaxLevel, getPartialBonus, createDefaultResearchState), research-module.ts, research-view.tsx (RP/сек display, ResearchQueuePanel, TechTreeGraph), game-store.ts (startResearch, levelUpFundamental), tech-tree.ts, fundamental-branches.ts, branch-links.ts, tech-unlocks.ts, planet-view.tsx, system-view.tsx, building-dialog.tsx, page.tsx, game-layout.tsx, planet-types.ts (TYPE_NAMES/SIZE_NAMES/SIZE_HEX_COUNT), badge.tsx, globals.css.
+- Найден ROOT CAUSE «нельзя изучить 2-й уровень»: фундаментальный потолок. getEffectiveMaxLevel(branch, fundLevels) = min(primary, floor(secondary×1.5)) = 0 при fundLevels=0 → getTechCeiling = 0 → canStartResearch reject targetLevel=1. Блокирует ВСЕ техи power/materials/weapons/biology (кроме computing = free). Дедлок: нельзя исследовать без фундаменталов, фундаменталы требуют RP из лаб.
+- Найден ROOT CAUSE «чёрный на чёрном»: Badge variant="outline" использует text-foreground = oklch(0.145 0 0) (чёрный в светлой теме), а игра на #0d0d24 без .dark класса.
+- Запущены 2 параллельных subagent'а: R-RES (research overhaul) и R-BLD-REF (building + reference menu).
+- R-BLD-REF (agent-45896eba) выполнен: processor.size → ['tiny'..'huge'] (доступен на старте); создан reference-dialog.tsx (5 вкладок: Планеты/Исследования/Экономика/Флот/Здания) + ReferenceButton в game-layout рядом с Save. Quality gates: lint 0/49, tsc 168 (baseline), tests 340/340, recipes 75/75. Agent-browser: Справка-кнопка + 5 вкладок + hex-легенда + building dialog с Переработчиком.
+- R-RES первый вызов упал (429 rate limit). Перезапущен (agent-64b1de05). Выполнен полностью:
+  * Ceiling fix: getTechCeiling → tech.maxLevel (fundamentals только partial bonus) — разблокированы все стартовые техи.
+  * Queue: researchQueue: string[] в ResearchState; advanceQueue() в tickResearch (auto-start next when active slot finishes); 4 store actions (addToResearchQueue/removeFromResearchQueue/reorderResearchQueue/clearResearchQueue); UI с reorder/remove + "В очередь" кнопка.
+  * RP display: getAvailableRP(state) = totalRpGenerated − ΣfundamentalRpInvested − Σslot.rpInvested; UI "Доступно: X RP" (prominent) + "Всего: Y RP" (secondary).
+  * RP/День: все "RP/сек" → "RP/День", ETA "сек" → "дн" (1 tick = 1 day, value 5.0 unchanged).
+  * JSON data: techs.json/fundamentals.json/branch-links.json/tech-unlocks.json/bonuses.json; .ts файлы — thin loaders; добавление теха в JSON → появляется в дереве (data-driven "infinite" research).
+  * Bonus resolver: bonus-resolver.ts resolveBonuses(state, target) = (1+Σadd)×Πmultiply; sources = researched techs effects[] + built buildings bonuses[]; applied resolveBonuses(state,'research_rate') → multiplier to getTotalRPPerSec. BuildingDef.bonuses + ShipModule.bonuses fields added.
+  * Auto-scaling: TechTreeGraph canvas computed from tech count (no hardcoded 1264px min).
+  * Tests: +29 (queue-and-rp 15, bonus-resolver 12, updated branch-ceilings + process-tick + fleet-engine fixture).
+- Мной сделан быстрый фикс: badge.tsx outline variant → text-slate-200 border-white/20 bg-white/5 (глобально, чинит ВСЕ outline-бейджи на тёмном фоне).
+- Quality gates (main verify): lint 0 errors / 49 warnings; tsc 168 (baseline, 0 new); tests 369/0 pass; recipes 75/75.
+- Agent-browser (main verify, несколько попыток — dev-сервер нестабилен в окружении, умирает между bash-командами, но БЕЗ runtime-ошибок в dev.log):
+  * ✓ Главное меню загружается, New Game + seed + кнопка кубика.
+  * ✓ Игра запускается, layout с кнопками Save/Справка/Исследования.
+  * ✓ Research view: "RP/День:" label, "Доступно:" RP, "Всего:" RP, все 15 тех видны (Скалистая сталь 0/10 без прекурсоров = доступна — потолок исправлен), "В очередь" кнопка в диалоге технологии, очередь работает.
+  * ✓ Reference dialog: "📖 Справка" с 5 вкладками (Планеты/Исследования/Экономика/Флот/Здания), вкладка Планеты — "Легенда размеров" (Крошечная/Средняя/Огромная + hex counts) + таблица типов планет (Скалистая 61, Океаническая 61, и т.д.).
+  * ✓ Planet view: бейджи типа/размера ВИДИМЫ ("Mu Ursae I — Скалистая", "Средняя", "Пустынная" — раньше чёрный на чёрном, теперь светлый текст).
+- DEV-сервер остановлен после верификации.
+
+Stage Summary:
+- Все 9 пунктов пользовательской директивы выполнены:
+  1. ✓ Planet descriptions visible (Badge outline fix — global)
+  2. ✓ "Oceanic (Oceanic)" duplicate resolved (badge text now visible)
+  3. ✓ Reference menu near Save, 5 tabbed subsystems, hex legend
+  4. ✓ "Primary resource processing" (Переработчик) available at start
+  5. ✓ RP display: "Доступно" (available, decreases) + "Всего" (lifetime)
+  6. ✓ "RP/День" label (was "RP/сек")
+  7. ✓ Can research all levels (fundamental ceiling removed)
+  8. ✓ Tech tree in JSON files (data-driven, "infinite" research)
+  9. ✓ Active research + queue (auto-advance, reorder, remove) — no more constant checking
+  + Bonus system in data files + resolver
+  + Auto-scaling research tree window
+- Quality gates: lint 0/49, tsc 168 (baseline), tests 369/0, recipes 75/75.
+- Agent-browser verified: research (RP/День, queue, ceiling), reference dialog (5 tabs + hex legend), planet badges visible.
+- MVP без противников (Block 04 AI — отложен, не тронут).
+- Изменено: 20 файлов, создано: 10 файлов (см. checkpoints/audit_2026_08_28_06_research_redesign.md).
