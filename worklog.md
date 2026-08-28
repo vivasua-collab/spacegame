@@ -453,3 +453,11 @@ Stage Summary:
   - Цвет ребра = цвет ветки-источника (например, microelectronics → superconductors = cyan,Materials→Computing cross-branch edge).
 - Quality gates: lint 0/49, tsc 138 baseline, tests 340/340.
 - Изменён только один файл: /home/z/my-project/src/components/game/research-view.tsx.
+
+Stage Summary:
+- Все 7 UX-правок пользователя выполнены + чекпоинт + commit + push
+- Качественные метрики: lint 0 errors / 49 warnings, tsc 138 (=baseline), tests 340/340, recipes 75/75
+- Agent-browser verification: главное меню → игра → research-view (44 SVG, 125 paths, 2 markers) → system-view (монотонные орбиты I<II) → planet-view (отображается «61 гексов на размер Средняя») → склад (текст светлый lab(84.77))
+- Нет runtime-ошибок в dev.log при генерации галактики (включая generateMoons)
+- Commit 2a3fc28 отправлен на origin/main
+- DEV остановлен по требованию пользователя; для проверки можно запустить `bun run dev` в фоне
