@@ -156,8 +156,8 @@ export function ResourcePanel({ resources, className, fleetFuelSummary, tick }: 
                 const d = deltas[entry.fuelType];
                 return (
                   <div key={entry.fuelType} className="flex items-center justify-between text-xs">
-                    <span className="text-muted-foreground truncate mr-2">
-                      <span className="text-cyan-400/70 font-mono mr-1">{entry.fuelType.slice(0, 3).toUpperCase()}</span>
+                    <span className="text-slate-400 truncate mr-2">
+                      <span className="text-cyan-300 font-mono mr-1">{entry.fuelType.slice(0, 3).toUpperCase()}</span>
                       {entry.fuelType}
                     </span>
                     <span className="flex items-center gap-1.5">
@@ -187,15 +187,15 @@ export function ResourcePanel({ resources, className, fleetFuelSummary, tick }: 
                   const d = deltas[item.id];
                   return (
                     <div key={item.id} className="flex items-center justify-between text-xs">
-                      <span className="text-muted-foreground truncate mr-2">
+                      <span className="text-slate-300 truncate mr-2">
                         {item.symbol && item.symbol !== item.id ? (
-                          <span className="text-foreground/70 font-mono mr-1">{item.symbol}</span>
+                          <span className="text-slate-200 font-mono mr-1">{item.symbol}</span>
                         ) : null}
                         {item.name}
                       </span>
                       <span className="flex items-center gap-1.5">
                         {d !== undefined && <DeltaBadge delta={d} />}
-                        <span className="font-mono text-foreground/90 whitespace-nowrap">
+                        <span className="font-mono text-white/95 whitespace-nowrap">
                           {formatAmount(item.amount)}
                         </span>
                       </span>
@@ -217,10 +217,10 @@ export function ResourcePanel({ resources, className, fleetFuelSummary, tick }: 
                 const d = deltas[item.id];
                 return (
                   <div key={item.id} className="flex items-center justify-between text-xs">
-                    <span className="text-muted-foreground truncate mr-2">{item.name}</span>
+                    <span className="text-slate-300 truncate mr-2">{item.name}</span>
                     <span className="flex items-center gap-1.5">
                       {d !== undefined && <DeltaBadge delta={d} />}
-                      <span className="font-mono text-foreground/90 whitespace-nowrap">
+                      <span className="font-mono text-white/95 whitespace-nowrap">
                         {formatAmount(item.amount)}
                       </span>
                     </span>

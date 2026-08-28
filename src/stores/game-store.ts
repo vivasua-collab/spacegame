@@ -119,8 +119,20 @@ export interface GameStore {
   isSaving: boolean;
   saveError: string | null;
   isLoading: boolean;
+  /**
+   * Audit 2026-08-28: случайный seed галактики для нового меню.
+   * Хранится в Zustand store (НЕ в локальном useState компонента page.tsx),
+   * чтобы не «прыгал» при перерисовке/перемонтировании компонента. Если бы
+   * seed хранился в useState, при каждом возврате в главное менюlazy
+   * initializer `useState(() => Math.random()...)` вызывался бы заново и
+   * пользователь получал новый seed — часто (раз в 20-30 секунд при активной
+   * игре). Теперь seed стабилен до явного roll.
+   */
+  galaxySeed: number;
 
   // === Действия ===
+  /** Сгенерировать новый случайный seed (для кнопки «кости» в главном меню). */
+  rollGalaxySeed: () => void;
   newGame: (config?: Partial<import('@/galaxy').GalaxyGenConfig>) => void;
   setSpeed: (speed: GameSpeed) => void;
   togglePause: () => void;
@@ -555,6 +567,13 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
     isSaving: false,
     saveError: null,
     isLoading: false,
+    // Audit 2026-08-28: стабильный seed в store (не прыгает при перемонтировании).
+    // Ленивая инициализация один раз при загрузке страницы.
+    galaxySeed: Math.floor(Math.random() * 1_000_000) + 1,
+
+    rollGalaxySeed: () => {
+      set({ galaxySeed: Math.floor(Math.random() * 1_000_000) + 1 });
+    },
 
     newGame: (config = {}) => {
       // Audit Pass 4 §7.4: cap MVP galaxy at 200 systems. Default
@@ -563,8 +582,13 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
       // and x50 tick processing freezes the UI. Override to 200 unless the
       // caller explicitly asks for more (e.g., stress tests).
       const MVP_SYSTEM_COUNT = 200;
+      // Audit 2026-08-28: если seed не передан явно, используем стабильный
+      // galaxySeed из store (а не DEFAULT_CONFIG.seed = 42 — это давало
+      // одинаковую галактику при каждом «New Game» из game-layout).
+      const seed = config.seed ?? get().galaxySeed;
       const mergedConfig = {
         ...config,
+        seed,
         systemCount: config.systemCount ?? MVP_SYSTEM_COUNT,
       };
       const state = createInitialState(mergedConfig);

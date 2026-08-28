@@ -421,22 +421,37 @@ const BRANCH_LABELS: Record<SpecializedBranchId, string> = {
 
 // Layout constants — fixed node size lets us compute pixel coordinates
 // for SVG bezier connectors without measuring DOM nodes.
-const NODE_W = 188;
-const NODE_H = 92;
+const NODE_W = 200;
+const NODE_H = 96;
 const INTRA_GAP = 8;       // vertical gap between stacked nodes in same (branch, depth) cell
-const COL_GAP = 76;        // horizontal gap between depth columns (room for bezier curves)
-const BRANCH_GAP = 22;     // vertical gap between branch lanes
-const LEFT_PAD = 60;       // left padding (room for branch lane labels)
-const TOP_PAD = 22;        // top padding (room for tier headers)
-const RIGHT_PAD = 14;
-const BOTTOM_PAD = 12;
+const COL_GAP = 88;        // horizontal gap between depth columns (room for bezier curves + arrowheads)
+const BRANCH_GAP = 26;     // vertical gap between branch lanes
+const LEFT_PAD = 64;       // left padding (room for branch lane labels)
+const TOP_PAD = 24;        // top padding (room for tier headers)
+const RIGHT_PAD = 28;
+const BOTTOM_PAD = 14;
+
+// Minimum canvas width — guarantees horizontal scroll on common viewports
+// (Task 4 spec: ~5 levels × 240px + gaps ≈ 1264px). Our MVP tree only has 3
+// depth tiers today, so we pad the canvas to leave room for future tiers
+// and make the "scroll right to discover" UX obvious.
+const MIN_TREE_WIDTH = 1264;
+
+// Colors for edge states (Task 4 spec: bright vs dim by prerequisite status).
+// Met edges use the source branch color (bright); unmet edges use slate-600.
+const EDGE_COLOR_UNMET = '#475569'; // slate-600 — visible but muted on #0d0d24
 
 const TREE_BRANCHES: SpecializedBranchId[] = [
   'power', 'materials', 'weapons', 'computing', 'biology',
 ];
 
 interface NodePos { x: number; y: number; col: number; rowIdx: number; }
-interface TreeLink { path: string; color: string; met: boolean; }
+interface TreeLink {
+  path: string;
+  color: string;      // source-branch color (BRANCH_COLORS[fromTech.branch])
+  met: boolean;       // whether `from` tech has reached the required minLevel
+  fromBranch: SpecializedBranchId;
+}
 interface BranchRowInfo { branch: SpecializedBranchId; yOffset: number; height: number; }
 interface TreeLayout {
   positions: Map<string, NodePos>;
@@ -532,7 +547,11 @@ function buildTreeLayout(researchState: ResearchState): TreeLayout {
 
   const totalWidth = LEFT_PAD + (maxDepth + 1) * NODE_W + maxDepth * COL_GAP + RIGHT_PAD;
 
-  // Bezier connectors.
+  // Bezier connectors — one per prerequisite edge.
+  // Path: cubic-bezier S-curve from source's right-center to dest's left-center.
+  // Color: source-branch color (BRANCH_COLORS[fromTech.branch]) per Task 4 spec.
+  // met: whether source tech has reached the prerequisite's required minLevel.
+  // Arrowhead (markerEnd) is added in the SVG render layer below.
   const links: TreeLink[] = [];
   for (const tech of TECH_TREE) {
     if (tech.branch === 'xenoarch') continue;
@@ -543,13 +562,20 @@ function buildTreeLayout(researchState: ResearchState): TreeLayout {
     for (const p of tech.prerequisites) {
       const pp = positions.get(p.techId);
       if (!pp) continue;
+      const fromTech = TECH_MAP.get(p.techId);
+      if (!fromTech) continue;
       const px = pp.x + NODE_W;
       const py = pp.y + NODE_H / 2;
       const midX = (px + dx) / 2;
       const path = `M ${px},${py} C ${midX},${py} ${midX},${dy} ${dx},${dy}`;
       const curLevel = researchState.researched[p.techId] ?? 0;
       const met = curLevel >= p.minLevel;
-      links.push({ path, color: BRANCH_COLORS[tech.branch], met });
+      links.push({
+        path,
+        color: BRANCH_COLORS[fromTech.branch],
+        met,
+        fromBranch: fromTech.branch,
+      });
     }
   }
 
@@ -564,32 +590,69 @@ function TechTreeGraph({
   onSelectTech: (techId: string) => void;
 }) {
   const layout = useMemo(() => buildTreeLayout(researchState), [researchState]);
+  // Force min canvas width — guarantees horizontal scroll on common viewports
+  // (Task 4 spec: ≥1264px so user sees "scroll right to discover deeper tiers").
+  const canvasWidth = Math.max(layout.totalWidth, MIN_TREE_WIDTH);
+  const canvasHeight = layout.totalHeight;
 
   return (
     <div className="overflow-x-auto overflow-y-auto custom-scrollbar max-h-[calc(100vh-220px)] rounded-md border border-white/5 bg-black/20">
       <div
         className="relative"
-        style={{ width: layout.totalWidth, height: layout.totalHeight, minWidth: '100%' }}
+        style={{ width: canvasWidth, height: canvasHeight, minWidth: MIN_TREE_WIDTH }}
       >
         {/* SVG connector layer — drawn behind nodes */}
         <svg
           className="absolute inset-0 pointer-events-none"
-          width={layout.totalWidth}
-          height={layout.totalHeight}
+          width={canvasWidth}
+          height={canvasHeight}
           style={{ overflow: 'visible' }}
           aria-hidden="true"
         >
-          {layout.links.map((link, i) => (
-            <path
-              key={i}
-              d={link.path}
-              stroke={link.color}
-              strokeWidth={link.met ? 1.8 : 1.2}
-              fill="none"
-              strokeDasharray={link.met ? undefined : '5 4'}
-              opacity={link.met ? 0.55 : 0.22}
-            />
-          ))}
+          {/* Arrowhead markers — one per edge state (met uses source color via
+              context-stroke; unmet uses slate-600 via context-stroke). */}
+          <defs>
+            <marker
+              id="tech-edge-arrow-met"
+              viewBox="0 0 10 10"
+              refX="9"
+              refY="5"
+              markerWidth="5"
+              markerHeight="5"
+              orient="auto"
+              markerUnits="strokeWidth"
+            >
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="context-stroke" />
+            </marker>
+            <marker
+              id="tech-edge-arrow-unmet"
+              viewBox="0 0 10 10"
+              refX="9"
+              refY="5"
+              markerWidth="4"
+              markerHeight="4"
+              orient="auto"
+              markerUnits="strokeWidth"
+            >
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="context-stroke" />
+            </marker>
+          </defs>
+          {layout.links.map((link, i) => {
+            const stroke = link.met ? link.color : EDGE_COLOR_UNMET;
+            return (
+              <path
+                key={i}
+                d={link.path}
+                stroke={stroke}
+                strokeWidth={link.met ? 2.2 : 1.2}
+                fill="none"
+                strokeDasharray={link.met ? undefined : '5 4'}
+                opacity={link.met ? 0.85 : 0.55}
+                strokeLinecap="round"
+                markerEnd={link.met ? 'url(#tech-edge-arrow-met)' : 'url(#tech-edge-arrow-unmet)'}
+              />
+            );
+          })}
         </svg>
 
         {/* Tier (depth) column headers — top gutter */}

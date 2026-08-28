@@ -14,8 +14,8 @@
  */
 
 import type { Xoshiro256 } from '@/core/prng';
-import type { Star, Planet, PlanetSize, BinaryType, Atmosphere, AtmosphereType, PlanetLife, LifeLevel, AtmosphericSlot, OrbitalSlot } from '@/core/types';
-import { PLANET_TYPES, ORBIT_SLOTS, ORBIT_SLOTS_BY_SIZE, GAS_GIANT_ATMOSPHERE_SLOTS, PLANET_DENSITY, PLANET_TYPE_RADIUS, getSizeFromRadius, LIFE_LEVEL_WEIGHTS, TYPE_NAMES } from '@/data/planet-types';
+import type { Star, Planet, Moon, PlanetSize, BinaryType, Atmosphere, AtmosphereType, PlanetLife, LifeLevel, AtmosphericSlot, OrbitalSlot } from '@/core/types';
+import { PLANET_TYPES, ORBIT_SLOTS, ORBIT_SLOTS_BY_SIZE, GAS_GIANT_ATMOSPHERE_SLOTS, PLANET_DENSITY, PLANET_TYPE_RADIUS, getSizeFromRadius, LIFE_LEVEL_WEIGHTS, TYPE_NAMES, GAS_GIANT_MOON_COUNT, MOON_RADIUS, MOON_DENSITY, MOON_ORBIT_RADIUS_KM, MOON_TYPE_WEIGHTS } from '@/data/planet-types';
 import { genId } from './gen-context';
 import { generateHexGrid } from './hex-grid';
 import { assignResourceDeposits, aggregateResourceDeposits } from './generate-resources';
@@ -441,7 +441,23 @@ export function generatePlanet(
   // the cap forced planets to be unrealistically close, producing extreme temperatures.
   // The habitable zone center is the physically correct scale for orbital distances.
   const orbitalScale = hzCenter;
-  let orbitalRadius = orbitalScale * (0.3 + orbit * (0.5 + rng.nextFloat() * 0.3));
+  // Audit 2026-08-28: СТРОГАЯ МОНОТОННОСТЬ орбитальных радиусов по номеру орбиты.
+  // Прежняя формула `orbitalScale * (0.3 + orbit * (0.5 + rng.nextFloat() * 0.3))`
+  // использовала независимый rng.nextFloat() для каждой планеты → диапазоны
+  // соседних орбит перекрывались (orbit=4 мог дать 3.5, orbit=5 — 2.8),
+  // что приводило к P[orbit+1] < P[orbit] (нарушение 3-го закона Кеплера):
+  // например, «Epsilon Tauri IV» имел больший период, чем «Epsilon Tauri V».
+  //
+  // Новая формула: детерминированный шаг 0.5 AU × (orbit-1) + малый случайный
+  // jitter (0..0.25), который СТРОГО МЕНЬШЕ шага → гарантирует
+  // r[orbit+1] - r[orbit] = 0.5 + (j2 - j1) ∈ [0.25, 0.75] > 0.
+  // Это соответствует эмпирическому расположению планет Солнечной системы
+  // (Меркурий 0.39, Венера 0.72, Земля 1.0, Марс 1.52 — шаги 0.3-0.5 AU
+  // для внутренних планет; газовые гиганты дальше).
+  const BASE_STEP_AU = 0.5;
+  const MAX_JITTER_AU = 0.25; // строго меньше BASE_STEP_AU
+  const jitter = rng.nextFloat() * MAX_JITTER_AU;
+  let orbitalRadius = orbitalScale * (0.3 + (orbit - 1) * BASE_STEP_AU + jitter);
 
   if (binaryType === 'BINARY_CLOSE') {
     orbitalRadius = Math.max(1.0, orbitalRadius);
@@ -523,6 +539,12 @@ export function generatePlanet(
   // Сводная таблица ресурсов
   const resourceDeposits = aggregateResourceDeposits(hexes, planetDef.type, rng.derive('ultra'));
 
+  // Луны (только для газовых гигантов — Audit 2026-08-28)
+  // Юпитер=95, Сатурн=146, Уран=28, Нептун=16. Для MVP — 2-7 лун.
+  const moons = planetDef.type === 'gas_giant'
+    ? generateMoons(systemId, planetId, planetName, orbit, rng.derive('moons'))
+    : [];
+
   return {
     id: planetId,
     systemId,
@@ -541,9 +563,125 @@ export function generatePlanet(
     hexes,
     atmosphericSlots,
     orbitSlots,
+    moons,
     resourceDeposits,
     resources: {},
     energyBalance: 0,
     owner: null,
   };
+}
+
+// ============ Луны газовых гигантов (Audit 2026-08-28) ============
+
+/**
+ * Генерация лун для газового гиганта.
+ *
+ * Реалистичные параметры (из Солнечной системы):
+ * - Радиус: 250-3500 км (Луна=1737, Ганимед=2634, Энцелад=252).
+ * - Плотность: 1.0-3.5 г/см³ (ледяные/скальные).
+ * - Орбитальный радиус вокруг планеты: 80 000-3 000 000 км.
+ * - Орбитальный период: P = 2π√(a³/(G·Mпланеты)) — упрощённо через формулу
+ *   Кеплера относительно массы Юпитера (M_J = 1.898e27 кг).
+ *
+ * Луны упорядочены по возрастанию орбитального радиуса вокруг планеты
+ * (строгая монотонность, как и у планет — чтобы Moon II всегда была дальше
+ * чем Moon I).
+ *
+ * @param systemId — ID системы-владельца
+ * @param planetId — ID планеты-владельца
+ * @param planetName — имя планеты (для имени луны: «Epsilon Tauri IV-a»)
+ * @param orbit — номер орбиты планеты (для суффикса)
+ * @param rng — детерминированный ГПСЧ
+ */
+function generateMoons(
+  systemId: string,
+  planetId: string,
+  planetName: string,
+  orbit: number,
+  rng: Xoshiro256,
+): Moon[] {
+  const count = rng.nextInt(GAS_GIANT_MOON_COUNT.min, GAS_GIANT_MOON_COUNT.max);
+
+  // Строгая монотонность орбитальных радиусов лун — тот же подход, что и у
+  // планет: детерминированный шаг + малый jitter (строго меньше шага).
+  const totalWeight = MOON_TYPE_WEIGHTS.reduce((s, w) => s + w.weight, 0);
+  const moonStep = (MOON_ORBIT_RADIUS_KM.max - MOON_ORBIT_RADIUS_KM.min) / Math.max(1, count);
+  const maxJitter = moonStep * 0.4; // строго меньше moonStep
+
+  const moons: Moon[] = [];
+
+  for (let i = 0; i < count; i++) {
+    const moonRng = rng.derive(`moon_${i}`);
+
+    // Тип луны — взвешенный выбор
+    const typeRoll = moonRng.nextInt(0, totalWeight - 1);
+    let acc = 0;
+    let moonType: 'rocky' | 'ice' | 'dwarf' = 'rocky';
+    for (const w of MOON_TYPE_WEIGHTS) {
+      acc += w.weight;
+      if (typeRoll < acc) {
+        moonType = w.type;
+        break;
+      }
+    }
+
+    // Радиус и плотность
+    const radiusKm = MOON_RADIUS.min + moonRng.nextFloat() * (MOON_RADIUS.max - MOON_RADIUS.min);
+    const densityRange = MOON_DENSITY[moonType];
+    const density = densityRange.min + moonRng.nextFloat() * (densityRange.max - densityRange.min);
+    const gravity = (radiusKm / 6371) * (density / 5.51);
+
+    // Размер (по радиусу в R_Earth)
+    const R_Earth = radiusKm / 6371;
+    let size: PlanetSize;
+    if (R_Earth < 0.15) size = 'tiny';
+    else if (R_Earth < 0.4) size = 'small';
+    else size = 'medium';
+
+    // Орбитальный радиус вокруг планеты — строго монотонный
+    const jitter = moonRng.nextFloat() * maxJitter;
+    const orbitRadiusKm = Math.round(
+      MOON_ORBIT_RADIUS_KM.min + i * moonStep + jitter,
+    );
+
+    // Орбитальный период вокруг планеты (упрощённый 3-й закон Кеплера,
+    // относительно Юпитера: P_Jup_io = 1.77 days при a=421700 км).
+    // P = 1.77 × (a/421700)^(3/2) дней.
+    const orbitPeriodDays = Math.round(1.77 * Math.pow(orbitRadiusKm / 421700, 1.5));
+
+    // Гекс-сетка (для будущей колонизации)
+    const terrainWeights = moonType === 'ice'
+      ? { plains: 25, mountains: 25, desert: 0, ice: 50, ocean: 0, volcano: 0, jungle: 0 }
+      : moonType === 'rocky'
+        ? { plains: 40, mountains: 30, desert: 20, ice: 0, ocean: 0, volcano: 0, jungle: 10 }
+        : { plains: 50, mountains: 30, desert: 0, ice: 20, ocean: 0, volcano: 0, jungle: 0 };
+    const hexes = generateHexGrid(size, terrainWeights, moonRng.derive('hexes'));
+    if (hexes.length > 0) {
+      assignResourceDeposits(hexes, moonRng.derive('deposits'), moonType);
+    }
+    const resourceDeposits = aggregateResourceDeposits(hexes, moonType, moonRng.derive('ultra'));
+
+    // Имя: «Epsilon Tauri IV-a», «Epsilon Tauri IV-b», ...
+    const suffix = String.fromCharCode(97 + i); // a, b, c, ...
+    const moonName = `${planetName.replace(/ — .*$/, '')} ${toRoman(orbit)}-${suffix}`;
+
+    moons.push({
+      id: genId('moon'),
+      systemId,
+      planetId,
+      name: moonName,
+      type: moonType,
+      size,
+      radiusKm: Math.round(radiusKm),
+      density: Math.round(density * 100) / 100,
+      gravity: Math.round(gravity * 100) / 100,
+      orbitRadiusKm,
+      orbitPeriodDays,
+      hexes,
+      resourceDeposits,
+      owner: null,
+    });
+  }
+
+  return moons;
 }

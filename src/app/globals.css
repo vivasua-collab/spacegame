@@ -125,22 +125,33 @@
    Used by building dialog, warehouse list, research tree, saves list, etc.
    Radix ScrollArea (max-h-*) doesn't constrain its Viewport height reliably
    when the Root has only max-height (percentage-height resolves to auto),
-   so we prefer native overflow + this style for dialog content. */
+   so we prefer native overflow + this style for dialog content.
+   Audit 2026-08-28: повышена видимость скроллбара (был rgba 0.18 — почти
+   невидимый, пользователь не мог понять, что список прокручивается, и не
+   мог построить «переработчик» — он был ниже видимой области). Теперь
+   полоса более контрастная и остаётся видимой (non-overlay behaviour). */
 .custom-scrollbar {
-  scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+  scrollbar-width: auto;
+  scrollbar-color: rgba(34, 211, 238, 0.55) rgba(255, 255, 255, 0.06);
 }
 .custom-scrollbar::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
+  -webkit-appearance: none;
 }
 .custom-scrollbar::-webkit-scrollbar-track {
-  background: transparent;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 5px;
 }
 .custom-scrollbar::-webkit-scrollbar-thumb {
-  background-color: rgba(255, 255, 255, 0.18);
-  border-radius: 4px;
+  background-color: rgba(34, 211, 238, 0.45);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  border-radius: 6px;
 }
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background-color: rgba(255, 255, 255, 0.30);
+  background-color: rgba(34, 211, 238, 0.75);
+}
+.custom-scrollbar::-webkit-scrollbar-corner {
+  background: transparent;
 }

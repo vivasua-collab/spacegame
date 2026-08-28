@@ -3,7 +3,7 @@
 import { useCallback, useMemo, useState } from 'react';
 import { useGameStore } from '@/stores/game-store';
 import { axialToPixel } from '@/galaxy';
-import { TERRAIN_COLORS, TERRAIN_NAMES, TYPE_NAMES, SIZE_NAMES } from '@/data/planet-types';
+import { TERRAIN_COLORS, TERRAIN_NAMES, TYPE_NAMES, SIZE_NAMES, SIZE_HEX_COUNT } from '@/data/planet-types';
 import { BUILDING_MAP } from '@/data/buildings';
 import { RECIPE_MAP } from '@/data/recipes';
 import { ELEMENT_MAP } from '@/data/elements';
@@ -38,6 +38,7 @@ import {
   Warehouse,
   Factory,
   Rocket,
+  Globe,
 } from 'lucide-react';
 import type { Planet, HexCell, AtmosphereType, LifeLevel, AtmosphericSlot, OrbitalSlot, PlanetResourceDeposit, ColonyRole, WarehouseSpecialization, BuildingLayer } from '@/core/types';
 
@@ -253,6 +254,39 @@ export function PlanetView() {
                     <span className="flex items-center gap-1 text-slate-500"><Thermometer className="size-3" /> Температура</span>
                     <span className="font-mono">{planet.temperature > 0 ? '+' : ''}{planet.temperature}&deg;C</span>
                   </div>
+                  {/* Audit 2026-08-28: добавлены орбитальный радиус, период,
+                      количество гексов и луны (для газовых гигантов). */}
+                  <div className="flex justify-between text-slate-300">
+                    <span className="flex items-center gap-1 text-slate-500"><Map className="size-3" /> Орбита</span>
+                    <span className="font-mono">
+                      {planet.orbitalRadius.toFixed(2)} а.е. • {planet.orbitalPeriod} дн.
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-slate-300">
+                    <span className="flex items-center gap-1 text-slate-500"><Layers className="size-3" /> Поверхность</span>
+                    <span className="font-mono">
+                      {planet.type === 'gas_giant'
+                        ? 'Газовый гигант (без гексов)'
+                        : `${planet.hexes.length} гексов (${SIZE_HEX_COUNT[planet.size]} на размер «${SIZE_NAMES[planet.size]}»)`}
+                    </span>
+                  </div>
+                  {/* Луны газового гиганта */}
+                  {planet.type === 'gas_giant' && planet.moons.length > 0 && (
+                    <div className="space-y-1 pt-1 border-t border-white/5">
+                      <div className="text-[10px] text-slate-500 uppercase tracking-wider flex items-center gap-1">
+                        <Globe className="size-3" />
+                        Луны газового гиганта ({planet.moons.length})
+                      </div>
+                      {planet.moons.map((moon) => (
+                        <div key={moon.id} className="text-[10px] flex justify-between text-slate-300">
+                          <span className="truncate mr-2">{moon.name}</span>
+                          <span className="font-mono text-slate-400 whitespace-nowrap">
+                            {TYPE_NAMES[moon.type]} • {moon.radiusKm}км • {moon.gravity.toFixed(2)}g • {moon.hexes.length} гекс
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                   <div className="flex justify-between text-slate-300">
                     <span className="flex items-center gap-1 text-slate-500"><Wind className="size-3" /> Атмосфера</span>
                     <span>{ATMO_DISPLAY[planet.atmosphere.type] ?? planet.atmosphere.type}{planet.atmosphere.type !== 'none' ? ` (${planet.atmosphere.pressure.toFixed(1)} атм)` : ''}</span>
@@ -1009,17 +1043,17 @@ function WarehousePanel({ planet }: { planet: Planet }) {
               const typeBadge = resType === 'ore' ? '⛏' : resType === 'atmospheric' ? '💨' : resType === 'ice' ? '❄' : '';
               return (
                 <div key={reserve.resourceId} className="flex items-center justify-between text-[10px] py-0.5">
-                  <span className={`${isBelowMin ? 'text-red-400' : 'text-slate-400'} truncate`} title={reserve.resourceId}>
+                  <span className={`${isBelowMin ? 'text-red-400' : 'text-slate-300'} truncate`} title={reserve.resourceId}>
                     {typeBadge && <span className="mr-0.5">{typeBadge}</span>}
                     {displayName}
                   </span>
                   <span className="flex items-center gap-1 shrink-0">
-                    <span className={`font-mono ${isBelowMin ? 'text-red-400' : 'text-slate-500'}`}>
+                    <span className={`font-mono ${isBelowMin ? 'text-red-400' : 'text-slate-400'}`}>
                       {Math.floor(current)}
                     </span>
-                    <span className="text-slate-600">/</span>
-                    <span className="text-slate-600 font-mono">{reserve.minimum}</span>
-                    <span className="text-slate-700 ml-0.5">P{reserve.priority}</span>
+                    <span className="text-slate-500">/</span>
+                    <span className="text-slate-400 font-mono">{reserve.minimum}</span>
+                    <span className="text-slate-500 ml-0.5">P{reserve.priority}</span>
                   </span>
                 </div>
               );

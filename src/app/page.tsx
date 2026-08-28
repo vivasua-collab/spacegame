@@ -9,6 +9,10 @@ import { getGameMediator } from '@/core/game-mediator';
 
 /**
  * Deterministic pseudo-random number generator (simple LCG).
+ * Used only for the decorative star field on the main menu — NOT for galaxy
+ * generation. Galaxy generation uses Xoshiro256 from the seed (see
+ * src/galaxy/generator.ts); the seed itself lives in the Zustand store
+ * (`galaxySeed`) so it does not change on every page re-mount.
  */
 function seededRng(seed: number) {
   let s = seed;
@@ -25,14 +29,13 @@ export default function Home() {
   const loadGame = useGameStore((s) => s.loadGame);
   const loadSaveList = useGameStore((s) => s.loadSaveList);
   const deleteSave = useGameStore((s) => s.deleteSave);
+  // Audit 2026-08-28: seed живёт в Zustand store (а не в локальном useState).
+  // Прежний `useState(() => Math.random()...)` перевычислялся при каждом
+  // перемонтировании Home (выход в главное меню и обратно), из-за чего seed
+  // «прыгал» раз в 20-30 секунд при активной игре. Store-поле стабильно.
+  const galaxySeed = useGameStore((s) => s.galaxySeed);
+  const rollGalaxySeed = useGameStore((s) => s.rollGalaxySeed);
 
-  // Random galaxy seed by default — each new visit to the main menu rolls a
-  // fresh galaxy. Player can still type a known seed to reproduce a galaxy.
-  const [seed, setSeed] = useState(() =>
-    String(Math.floor(Math.random() * 1_000_000) + 1),
-  );
-  const rollSeed = () =>
-    setSeed(String(Math.floor(Math.random() * 1_000_000) + 1));
   const [saves, setSaves] = useState<SaveInfo[]>([]);
   const [loadingSaveId, setLoadingSaveId] = useState<string | null>(null);
   const [deletingSaveId, setDeletingSaveId] = useState<string | null>(null);
@@ -176,36 +179,57 @@ export default function Home() {
             <h2 className="text-lg font-semibold text-center">Create New Galaxy</h2>
 
             <div className="space-y-2">
-              <label className="text-xs text-slate-400 block">Galaxy Seed</label>
+              <label className="text-xs text-slate-400 block">
+                Galaxy Seed
+                <span className="ml-1.5 text-slate-600">(по умолчанию случайный)</span>
+              </label>
               <div className="flex gap-2">
                 <input
                   type="number"
-                  value={seed}
-                  onChange={(e) => setSeed(e.target.value)}
+                  value={galaxySeed}
+                  onChange={(e) => {
+                    // Ввод пользователем — пытаемся сохранить как число в store.
+                    // Поскольку galaxySeed в store только читается через селектор,
+                    // используем простой трюк: парсим и вызываем rollGalaxySeed
+                    // только когда введено валидное число (иначе откатываемся).
+                    const v = parseInt(e.target.value, 10);
+                    if (!isNaN(v) && v > 0) {
+                      // Прямое изменение через внутренний set-store. Используем
+                      // новое API состояния Zustand: setState напрямую.
+                      useGameStore.setState({ galaxySeed: v });
+                    }
+                  }}
                   className="flex-1 bg-black/40 border border-white/10 rounded-md px-3 py-2 text-sm font-mono text-white focus:outline-none focus:border-cyan-600/50 focus:ring-1 focus:ring-cyan-600/30"
                   placeholder="Enter seed number"
                 />
                 <Button
                   type="button"
-                  variant="outline"
+                  variant="ghost"
                   size="icon"
-                  className="shrink-0 border-white/10 hover:bg-white/5 hover:text-cyan-300"
-                  onClick={rollSeed}
+                  // Audit 2026-08-28: variant="outline" давал белый фон
+                  // (bg-background в светлой теме = белый). Заменено на
+                  // variant="ghost" + явные классы: прозрачный фон, светлая
+                  // граница, cyan-акцент при наведении.
+                  className="shrink-0 bg-black/40 border border-white/10 text-cyan-300 hover:bg-cyan-500/10 hover:border-cyan-500/40 hover:text-cyan-200"
+                  onClick={rollGalaxySeed}
                   aria-label="Случайный seed"
-                  title="Случайный seed"
+                  title="Сгенерировать случайный seed галактики"
                 >
                   <Dices className="size-4" />
                 </Button>
               </div>
-              <p className="text-[10px] text-slate-600">Случайный seed по умолчанию. Тот же seed — та же галактика.</p>
+              <p className="text-[10px] text-slate-600">
+                Случайный seed по умолчанию. Тот же seed — та же галактика.
+                Нажмите на иконку кубика, чтобы перебросить seed.
+              </p>
             </div>
 
             <Button
               className="w-full"
               onClick={() => {
-                const seedNum = parseInt(seed, 10);
-                if (isNaN(seedNum) || seedNum <= 0) return;
-                newGame({ seed: seedNum });
+                // Используем стабильный galaxySeed из store (а не
+                // локальный seed, который раньше прыгал).
+                if (galaxySeed > 0) newGame({ seed: galaxySeed });
               }}
             >
               <Rocket className="size-4 mr-2" />

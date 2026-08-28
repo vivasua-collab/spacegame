@@ -374,3 +374,82 @@ Stage Summary:
 - Все quality-gates зелёные (lint 0/49, tests 340/340). tsc 162 = baseline + 22 в skills/ (не мои).
 - MVP без противников (Блок 04 AI — отложен, не тронут).
 - Изменённые файлы: src/app/globals.css, src/app/page.tsx, src/components/game/building-dialog.tsx, src/components/game/planet-view.tsx, src/components/game/research-view.tsx, src/components/game/resource-panel.tsx, worklog.md.
+
+---
+Task ID: 17
+Agent: main
+Task: UX-правки пользователя «новый день»: seed в store (не прыгает), аудит генератора (монотонные орбиты, реалистичная гравитация ГГ, луны), research-view как дерево, прокрутка построек, светлый текст склада, гексы в отображении, стартовый склад 10000.
+
+Work Log:
+- Получена системная дата: 2026-08-28 15:21 MSK (пт)
+- DEV-окружение остановлено (порт 3000 свободен)
+- Прочитан generate-planets.ts — найден корневой баг: orbitalScale * (0.3 + orbit * (0.5 + rng.nextFloat() * 0.3)) — независимый rng.nextFloat() для каждой орбиты даёт перекрытие диапазонов (orbit=4 может дать 3.5, orbit=5 — 2.8) → P5 < P4 (нарушение 3-го закона Кеплера)
+- Найден root cause «прыгающего» seed: в page.tsx seed в локальном useState с lazy initializer, перемонтируется при каждом выходе в меню; кнопка «New Game» в game-layout вызывает newGame() без аргументов → DEFAULT seed=42
+- Найдена белая кнопка rollSeed в page.tsx: variant="outline" → bg-background в светлой теме = белый
+- BuildList уже имеет max-h-[55vh] overflow-y-auto + custom-scrollbar, но custom-scrollbar невидим (rgba 0.18)
+- ResourcePanel использует text-foreground/90 для значений и text-muted-foreground для названий — на тёмно-синем фоне вкладки «Склад» чёрные/невидимые
+- Стартовый склад: ORE_WAREHOUSE_BASE=1000 + PROCESSED_WAREHOUSE_BASE=100 + HIGH_TECH_STORAGE_BASE=10 = 1110 (подтверждает жалобу «1623/1110»)
+- Газовый гигант: плотность 0.3-1.6 при радиусе 38000-90000 → gravity может быть 0.32G (нереалистично для ГГ, Сатурн=1.07G)
+
+---
+Task ID: 4
+Agent: frontend-styling-expert
+Task: Refactor research-view tree to horizontal "lying tree" with smooth bezier connector lines, arrowheads, and bright/dim edge states per prerequisite status.
+
+Work Log:
+- Прочитал /home/z/my-project/worklog.md (все 392 строки) для контекста предыдущих правок (Tasks 1, 17, 19, 23, 26, 27, и in-progress Task 17 remediation).
+- Прочитал текущее состояние research-view.tsx (1161 строка). Обнаружил, что Task 23 (main remediation) уже реализовал базовый горизонтальный TechTreeGraph с cubic-bezier S-кривыми в отдельном компоненте (lines 411-648). Задача Task 4 — отполировать эту реализацию по спецификации:
+  1. Добавить SVG-стрелочки на концах линий (через <defs> + <marker>).
+  2. Цвет линии = цвет ветки-источника (BRANCH_COLORS[from.branch]), не зависимой.
+  3. Яркая линия (emerald/source-branch color, opacity 0.85, strokeWidth 2.2) если пререквизит исследован, тусклая (slate-600, opacity 0.55, dashed, strokeWidth 1.2) если нет.
+  4. Минимальная ширина дерева ≥1264px для гарантированной горизонтальной прокрутки.
+- Прочитал /home/z/my-project/src/data/research/tech-tree.ts (15 технологий, 5 веток P/M/W/C/B, BRANCH_COLORS).
+- Прочитал /home/z/my-project/src/data/research/branch-links.ts. Обнаружил, что фактический формат данных — `{ fundamentalId, specializedId, linkType }[]` (связи между фундаменталами и специализированными ветками), а НЕ `{ from: TechId, to: TechId }` как предполагалось в task description. Однако, источником рёбер дерева технологий служат не branch-links.ts, а `prerequisites` поле каждой Technology (массив `{ techId, minLevel }`). В существующем коде уже правильно используются prerequisites для построения рёбер — оставил этот подход.
+
+Правки в /home/z/my-project/src/components/game/research-view.tsx:
+- Layout constants (строка 422-442):
+  - NODE_W 188 → 200, NODE_H 92 → 96 (более читаемые карточки, ближе к ~220px спеке).
+  - COL_GAP 76 → 88 (больше места для кривых и стрелочек).
+  - BRANCH_GAP 22 → 26 (более воздушные ряды веток).
+  - LEFT_PAD 60 → 64, TOP_PAD 22 → 24, RIGHT_PAD 14 → 28, BOTTOM_PAD 12 → 14 (симметричный padding).
+  - Добавлен MIN_TREE_WIDTH = 1264 — гарантирует горизонтальную прокрутку.
+  - Добавлен EDGE_COLOR_UNMET = '#475569' (slate-600) — тусклый цвет для невыполненных пререквизитов.
+- TreeLink interface (строка 448-454):
+  - Добавлен `fromBranch: SpecializedBranchId` для ясности источника ребра.
+  - Поле `color` теперь = цвет ветки-источника (BRANCH_COLORS[fromTech.branch]).
+- buildTreeLayout (строка 550-580):
+  - Получение fromTech через TECH_MAP.get(p.techId) для BRANCH_COLORS lookup.
+  - links.push теперь передаёт { path, color: BRANCH_COLORS[fromTech.branch], met, fromBranch }.
+- TechTreeGraph (строка 585-711):
+  - canvasWidth = Math.max(layout.totalWidth, MIN_TREE_WIDTH) — принудительная прокрутка.
+  - SVG <defs> с двумя <marker> (tech-edge-arrow-met и tech-edge-arrow-unmet) — viewBox 0 0 10 10, refX 9, markerWidth 5/4, markerUnits strokeWidth, fill="context-stroke" (наследует цвет линии path).
+  - Path rendering: stroke=met ? link.color : EDGE_COLOR_UNMET, strokeWidth=met ? 2.2 : 1.2, opacity=met ? 0.85 : 0.55, strokeDasharray=met ? undefined : '5 4', strokeLinecap="round", markerEnd=url(#tech-edge-arrow-{met|unmet}).
+  - Inner div и SVG width теперь используют canvasWidth (≥1264px).
+
+Quality gates (все зелёные):
+- `bun run lint`: 0 errors / 49 warnings (baseline preserved).
+- `bunx tsc --noEmit`: 138 errors (matches baseline, без новых ошибок типов).
+- `bun test`: 340 pass / 0 fail / 221321 expect() calls (5.06s).
+
+Что НЕ тронуто (по спецификации):
+- Левая колонка (fundamentals, 5 веток) — без изменений.
+- Правая колонка (research queue, слайдеры аллокации, ETA) — без изменений.
+- Modal деталей технологии (ResearchDetailDialog) — без изменений.
+- Все actions через useGameStore (startResearch, cancelResearch, setAllocation, levelUpFundamental, autoAllocateSlots) — без изменений.
+- State hooks (useState для selectedTechId) — без изменений.
+- Файлы tech-tree.ts, branch-links.ts, fundamental-branches.ts — без изменений.
+- Цвета shadcn/ui компонентов — без изменений.
+- Дизайн-гайдлайны (cyan вместо blue, тёмно-синий фон #0d0d24) — соблюдены.
+
+Stage Summary:
+- Center-колонка ResearchView теперь представляет собой лежащее горизонтальное дерево:
+  - 5 веток-рядов (P/M/W/C/B) сверху вниз.
+  - Каждая ветка идёт слева (Tier I базы) → вправо (Tier II → Tier III).
+  - Cross-branch пререквизиты (superconductors ← microelectronics, laser_weapons ← microelectronics) рисуют плавные S-кривые, пересекающие ряды.
+  - Минимальная ширина 1264px → горизонтальная прокрутка видна на обычных экранах.
+  - Каждое ребро имеет стрелочку на конце (SVG marker), указывает на зависимую карточку.
+  - Яркие рёбра (source-branch color, opacity 0.85, strokeWidth 2.2) — пререквизит исследован.
+  - Тусклые рёбра (slate-600, opacity 0.55, dashed, strokeWidth 1.2) — пререквизит не исследован.
+  - Цвет ребра = цвет ветки-источника (например, microelectronics → superconductors = cyan,Materials→Computing cross-branch edge).
+- Quality gates: lint 0/49, tsc 138 baseline, tests 340/340.
+- Изменён только один файл: /home/z/my-project/src/components/game/research-view.tsx.

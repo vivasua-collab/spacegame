@@ -17,7 +17,10 @@ import type { PlanetDef, PlanetType, PlanetSize, HexTerrain } from '@/core/types
  * Ice: 1.5-3 (значительная примесь льда)
  * Oceanic: 2-4 (вода снижает bulk density)
  * Desert: 3-5.5 (меньше железа, тонкая атмосфера)
- * Gas giant: 0.3-1.6 (Jupiter=1.33, Saturn=0.69, inflated hot Jupiters ~0.1)
+ * Gas giant: 1.0-1.8 (Jupiter=1.33, Saturn=0.69, Uranus=1.27, Neptune=1.64)
+ *   Audit 2026-08-28: подняли минимум с 0.3 до 1.0 — иначе при радиусе 38000
+ *   км получалась gravity 0.32G (Сатурн=1.07G, Уран=0.89G), что физически
+ *   невозможно для газового гиганта. Теперь минимум ~0.71G (Уран-класс).
  * Dwarf: 1.5-3.5 (Ceres=2.16, Vesta=3.46)
  */
 export const PLANET_DENSITY: Record<PlanetType, { min: number; max: number; avg: number }> = {
@@ -26,7 +29,7 @@ export const PLANET_DENSITY: Record<PlanetType, { min: number; max: number; avg:
   ice:      { min: 1.5, max: 3.0, avg: 2.2 },
   oceanic:  { min: 2.0, max: 4.0, avg: 3.0 },
   desert:   { min: 3.0, max: 5.5, avg: 4.0 },
-  gas_giant:{ min: 0.3, max: 1.6, avg: 1.0 },  // Jupiter=1.33, Saturn=0.69, inflated hot Jupiters < 0.5
+  gas_giant:{ min: 1.0, max: 1.8, avg: 1.4 },  // Audit 2026-08-28: min 0.3→1.0 (Uranus/Neptune class)
   dwarf:    { min: 1.5, max: 3.5, avg: 2.5 },
 };
 
@@ -38,7 +41,9 @@ export const PLANET_DENSITY: Record<PlanetType, { min: number; max: number; avg:
  * - Ice: 0.5-2.0 R_Earth (за линией снега)
  * - Oceanic: 1.0-2.5 R_Earth (water world, низкая плотность)
  * - Desert: 0.5-1.6 R_Earth (rocky, тонкая атмосфера)
- * - Gas giant: 6.0+ R_Earth (Jupiter ~11 R_Earth = 69911 km)
+ * - Gas giant: 4.0-12.5 R_Earth (Uranus=4.0, Jupiter=11.2;Audit 2026-08-28:
+ *   расширили минимум с 6.0 до 4.0, чтобы включать ледяных гигантов
+ *   Уран/Нептун — но при плотности ≥1.0 г/см³ их gravity ≥0.7G)
  * - Dwarf: 0.1-0.5 R_Earth (Ceres ~0.08, Moon ~0.27)
  */
 export const PLANET_TYPE_RADIUS: Record<PlanetType, { min: number; max: number }> = {
@@ -47,9 +52,51 @@ export const PLANET_TYPE_RADIUS: Record<PlanetType, { min: number; max: number }
   ice:      { min: 3200, max: 12700 },   // 0.5-2.0 R_Earth
   oceanic:  { min: 6400, max: 15900 },   // 1.0-2.5 R_Earth
   desert:   { min: 3200, max: 10200 },   // 0.5-1.6 R_Earth
-  gas_giant:{ min: 38000, max: 90000 },  // 6.0-14 R_Earth (Jupiter=69911 km)
+  gas_giant:{ min: 25000, max: 80000 },  // 4.0-12.5 R_Earth (Uranus=25362, Jupiter=69911)
   dwarf:    { min: 640, max: 3200 },     // 0.1-0.5 R_Earth
 };
+
+// ============ Луны газовых гигантов (Audit 2026-08-28) ============
+
+/**
+ * Количество лун у газового гиганта.
+ * Jupiter=95, Saturn=146, Uranus=28, Neptune=16 — но в MVP берём 2-7
+ * (наиболее крупные + репрезентативные).
+ */
+export const GAS_GIANT_MOON_COUNT = { min: 2, max: 7 };
+
+/**
+ * Радиус луны в км.
+ * Луна=1737, Ганимед=2634, Титан=2575, Европа=1560, Энцелад=252.
+ */
+export const MOON_RADIUS = { min: 250, max: 3500 };
+
+/**
+ * Плотность луны в г/см³.
+ * Ледяные (Европа, Энцелад, Титан): 1.0-1.9; скальные (Луна, Ио): 2.5-3.5.
+ */
+export const MOON_DENSITY = {
+  rocky: { min: 2.5, max: 3.5 },
+  ice:   { min: 1.0, max: 1.9 },
+  dwarf: { min: 1.5, max: 2.5 },
+};
+
+/**
+ * Орбитальный радиус луны вокруг планеты (тыс. км).
+ * Внутренние спутники ГГ: 100-500 тыс. км. Внешние: до 30 млн км.
+ * Для MVP: 80-3000 тыс. км.
+ */
+export const MOON_ORBIT_RADIUS_KM = { min: 80000, max: 3000000 };
+
+/**
+ * Вероятность типа луны (для взвешенного выбора).
+ * Газовые гиганты во внешних системах → больше ледяных лун (как Титан/Энцелад).
+ */
+export const MOON_TYPE_WEIGHTS: Array<{ type: 'rocky' | 'ice' | 'dwarf'; weight: number }> = [
+  { type: 'rocky', weight: 35 },
+  { type: 'ice',   weight: 45 },
+  { type: 'dwarf', weight: 20 },
+];
 
 /**
  * G-06 fix: Определение размера сетки из радиуса в R⊕.

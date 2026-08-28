@@ -20,33 +20,36 @@ import { getCurrentLookups, hasCurrentLookups } from '@/data/baked-lookups';
 // ============================================================================
 
 /** @deprecated Используйте PROCESSED_WAREHOUSE_BASE. Legacy совместимость. */
-export const BASE_CAPACITY = 100;
+export const BASE_CAPACITY = 10000;
 
 /** @deprecated Используйте PROCESSED_WAREHOUSE_PER_LEVEL. Legacy совместимость. */
-export const WAREHOUSE_PER_LEVEL = 25;
+export const WAREHOUSE_PER_LEVEL = 2500;
 
 /** Бонус орбитального буфера за уровень космопорта */
 export const SPACEPORT_PER_LEVEL = 5;
 
 // --- Раздельные константы (v3.0) ---
+// Audit 2026-08-28: стартовый склад увеличен с 1110 до 10000 ед.
+// (пропорции сохранены: ore 5000, processed 3500, highTech 1500).
+// Прежнее переполнение склада на старте («1623/1110») устранено.
 
-/** Базовая вместимость рудного склада (открытое хранение) = 1 млрд т */
-export const ORE_WAREHOUSE_BASE = 1000;
+/** Базовая вместимость рудного склада (открытое хранение) = 5 млрд т */
+export const ORE_WAREHOUSE_BASE = 5000;
 
-/** Бонус рудного склада за уровень open_warehouse = +0.25 млрд т/ур. */
-export const ORE_WAREHOUSE_PER_LEVEL = 250;
+/** Бонус рудного склада за уровень open_warehouse = +1.25 млрд т/ур. */
+export const ORE_WAREHOUSE_PER_LEVEL = 1250;
 
-/** Базовая вместимость переработанного склада (крытое хранение) = 0.1 млрд т */
-export const PROCESSED_WAREHOUSE_BASE = 100;
+/** Базовая вместимость переработанного склада (крытое хранение) = 3.5 млрд т */
+export const PROCESSED_WAREHOUSE_BASE = 3500;
 
-/** Бонус переработанного склада за уровень warehouse = +0.025 млрд т/ур. */
-export const PROCESSED_WAREHOUSE_PER_LEVEL = 25;
+/** Бонус переработанного склада за уровень warehouse = +0.875 млрд т/ур. */
+export const PROCESSED_WAREHOUSE_PER_LEVEL = 875;
 
-/** Базовая вместимость высокотехнологичного склада (спец хранение) = 0.01 млрд т */
-export const HIGH_TECH_STORAGE_BASE = 10;
+/** Базовая вместимость высокотехнологичного склада (спец хранение) = 1.5 млрд т */
+export const HIGH_TECH_STORAGE_BASE = 1500;
 
-/** Бонус высокотехнологичного склада за уровень high_tech_storage = +0.0025 млрд т/ур. */
-export const HIGH_TECH_STORAGE_PER_LEVEL = 2.5;
+/** Бонус высокотехнологичного склада за уровень high_tech_storage = +0.375 млрд т/ур. */
+export const HIGH_TECH_STORAGE_PER_LEVEL = 375;
 
 /** Минимальный резерв по умолчанию */
 const DEFAULT_MINIMUM = 50;
@@ -185,7 +188,9 @@ export function getSpecInfo(spec: WarehouseSpecialization): { multiplier: number
 /** Создать склад по умолчанию для новой колонии */
 export function createDefaultWarehouse(): PlanetWarehouse {
   return {
-    totalCapacity: PROCESSED_WAREHOUSE_BASE,
+    // Audit 2026-08-28: сумма трёх баз = 10000 (раньше было PROCESSED_WAREHOUSE_BASE
+    // = 100, что вызывало переполнение склада на старте до первого tick).
+    totalCapacity: ORE_WAREHOUSE_BASE + PROCESSED_WAREHOUSE_BASE + HIGH_TECH_STORAGE_BASE,
     capacities: {
       ore: ORE_WAREHOUSE_BASE,
       processed: PROCESSED_WAREHOUSE_BASE,
