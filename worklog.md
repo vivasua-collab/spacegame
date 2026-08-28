@@ -1078,3 +1078,184 @@ Stage Summary:
 - Конфликтов с предыдущими задачами нет: публичный API @/data/buildings
   сохранён, research barrel не тронут, R-RES бонус-система расширена
   обратно-совместимо.
+
+---
+Task ID: 20
+Agent: main
+Task: R-SHIPS-DATA — вынести данные по комплектующим космических кораблей в отдельные человекочитаемые JSON-файлы (по паттерну buildings/research), обновить документацию о новой data-driven структуре хранения.
+
+Work Log:
+- Прочитан worklog (tasks 1, 4, 17, 18 R-RES + R-BLD-REF, 19 R-BLD-MOD).
+- Прочитаны ключевые файлы для понимания контекста: src/data/ships/
+  {hulls,modules,fuel-map,shipyard-queue,index}.ts (TS-inline массивы),
+  src/core/types.ts (HullType, ShipModule, FuelType, Bonus, BuildingDef,
+  BuildingLayer), src/data/buildings/index.ts + space.json (паттерн
+  thin loader для buildings), scripts/validate-buildings.ts (паттерн
+  валидатора), src/data/research/index.ts + tech-tree.ts (паттерн
+  thin loader для research), package.json (existing validate:* scripts),
+  docs/{50-ships,40-buildings,03-project-structure,!listing,modularity}.md.
+- Grep потребителей `@/data/ships`: 10 файлов (ship-designer/shipyard-
+  dialog/ship-card/reference-dialog в UI; designer/fleet-engine/
+  ships-module в engine; game-store в stores; 4 теста). Никаких правок
+  импортов не требуется (публичный API сохраняется).
+
+Phase 1 — Data extraction:
+- Создан src/data/ships/hulls.json: 4 корпуса MVP (Скаут/Истребитель/
+  Фрегат/Транспорт) с полным HullType-форматом; поле "comment" с
+  человекочитаемым описанием semantics.
+- Создан src/data/ships/modules.json: 20 модулей Mk.I (2 engine + 5
+  control + 1 life_support + 2 weapon + 2 defense + 8 auxiliary) с
+  per-category optional полями; сохранены все спецификации + бонус
+  engine_ion_mk1 (R-RES §E demo).
+- Создан src/data/ships/fuel-map.json: FUEL_TO_ELEMENT/ELEMENT_TO_FUEL/
+  FUEL_ELEMENT_COST_PER_UNIT/ALL_FUEL_TYPES — 4 типа топлива + 3
+  обратных elementId + 4 cost-per-unit (1:1 для MVP).
+- Рефакторнуты тонкие TS-loader'ы:
+  * hulls.ts (98→41 строк): import + каст через `unknown` к HullType[] +
+    HULL_MAP + getHull + listHulls.
+  * modules.ts (376→60 строк): import + каст к ShipModule[] + MODULE_MAP
+    + getModule + listModulesByCategory + listModulesForHull.
+  * fuel-map.ts (53→56 строк): import + каст к 4 Record'ам +
+    emptyFuelStore (последняя остаётся hardcode, т.к. keyof Record
+    требует литералы; TODO Etap 4: генерировать из ALL_FUEL_TYPES).
+  * index.ts barrel: обновлён комментарий про data-driven структуру.
+- shipyard-queue.ts НЕ тронут (это runtime-логика очереди, не данные).
+
+Phase 2 — Validator:
+- Создан scripts/validate-ships.ts (240+ строк) по образцу
+  validate-buildings.ts. Проверяет: hulls (уникальность ID, валидность
+  size/armorOptions, положительность чисел, levels >= 1), modules
+  (уникальность ID, валидность category/slotRestriction/controlType/
+  weaponType/damageType/defenseType/auxiliaryType/fuelType/minHull,
+  ссылки requiredTechs на TECH_MAP, корректность bonuses), fuel-map
+  (согласованность ключей FUEL_TO_ELEMENT/FUEL_ELEMENT_COST_PER_UNIT/
+  ALL_FUEL_TYPES, валидность FuelType).
+- Выводит разбивку по category, tech-gated modules (0 в MVP), модули
+  с бонусами (engine_ion_mk1).
+- Добавлены скрипты в package.json: `validate:ships` и `validate:all`
+  (агрегат: recipes + buildings + ships).
+- Запуск: `bun run validate:ships` → ✅ All ships data valid (4 hulls,
+  20 modules, 4 FuelType).
+
+Phase 3 — Тесты:
+- Создан tests/ships/data-files.test.ts (26 тестов в 3 describe-блоках):
+  * Hulls (9): JSON-структура, ровно 4 корпуса, корректные ID, HULL_MAP,
+    getHull/listHulls, T-FLEET-1 spec fixture для hull_scout (25 HS,
+    200 HP, 500т, 50 у.е.р., armorOptions light+standard, shipyard L1),
+    отсутствие тяжёлых корпусов (cruiser/battleship/flagship), уникальность
+    ID, валидность armorOptions.
+  * Modules (10): JSON-структура, ровно 20 модулей с разбивкой 2+5+1+2+2+8,
+    MODULE_MAP, getModule, listModulesByCategory, listModulesForHull,
+    бонус engine_ion_mk1 (multiply 1.10 к ship_thrust), T-FLEET-1
+    fixture (8 модулей Разведчика: cpu_micro/engine_ion_mk1/scanner_basic/
+    comm_mk2/fuel_tank_xenon_s/jump_drive_mk1/navigator_mk1/
+    reactor_nuclear_mk1), уникальность ID, наличие requiredTechs.
+  * Fuel-map (7): JSON-структура, FUEL_TO_ELEMENT 4 типа (chemical→H,
+    xenon→Xe, hydrogen→H, antimatter→antimatter), ELEMENT_TO_FUEL,
+    FUEL_ELEMENT_COST_PER_UNIT 1:1, ALL_FUEL_TYPES 4 типа, emptyFuelStore,
+    согласованность ключей.
+- Запуск: 26 pass / 0 fail; все 116 ships-тестов зелёные (существующие
+  + новые).
+
+Phase 4 — Документация:
+- Создан НОВЫЙ документ docs/data-driven-architecture.md (~9K токенов,
+  360 строк) — главный архитектурный документ, консолидирующий
+  описание data-driven хранения для всех трёх каталогов. 8 разделов:
+  принцип, реализованные каталоги (buildings/research/ships с полями),
+  паттерн тонкого TS-loader'а (с примером кода и объяснением каста
+  через `unknown`), общая бонус-система (Bonus interface, 2 источника:
+  building-sourced vs tech-sourced, примеры, резолвер), валидаторы,
+  DATA-DRIVEN расширение (пошаговые инструкции), совместимость с кодом,
+  дорожная карта (recipes/elements/ores → JSON, Etap 4).
+- Обновлён docs/50-ships.md (v1.0 → v1.1): шапка, содержание (добавлен
+  §11), создан раздел §11 «Data-driven структура хранения» (8 подразделов:
+  принцип, тонкие loader'ы, публичный API, DATA-DRIVEN расширение,
+  валидатор, тесты, структура каталога, бонусы модулей). Маркер
+  «Конец документа» перемещён в самый конец.
+- Обновлён docs/03-project-structure.md: дерево `src/data/` приведено
+  в соответствие с реальностью (старый buildings.ts удалён из дерева,
+  оставшиеся ships/research подкаталоги помечены data-driven JSON;
+  добавлен buildings/ с R-BLD-MOD). Принцип 3 «Данные в TypeScript-модулях»
+  переписан на «Data-driven JSON + тонкие TS-loaders» со ссылкой на
+  data-driven-architecture.md.
+- Обновлён docs/!listing.md: шапка (28→29 документов, ~375K→~384K токенов,
+  дата 2026-08-28), в раздел «Научная база и аудиты» добавлена строка
+  про data-driven-architecture.md, в «Задача: Рефакторинг архитектуры»
+  добавлен 2-й позицией data-driven-architecture.md, создан новый
+  раздел «Задача: Добавить новую сущность (здание/модуль/технологию)»
+  с пошаговым планом.
+
+Phase 5 — Quality gates (all green):
+- bun run lint: 0 errors / 49 warnings (= baseline 49, 0 новых).
+- bunx tsc --noEmit: 159 errors (= baseline 159, 0 новых). Паттерн-дифф
+  по TS error-кодам: TS18048(114) / TS2532(22) / TS2345(8) / TS2322(8) /
+  TS2741(3) / TS2769(1) / TS2561(1) / TS2538(1) / TS18047(1) — идентичен
+  baseline.
+- bun test: 417 pass / 0 fail (было 391; +26 новых).
+- bun run validate:recipes: 75/75 ✓
+- bun run validate:buildings: 17/17 ✓
+- bun run validate:ships: 4 hulls + 20 modules + 4 FuelType ✓
+- bun run validate:all: все три валидатора зелёные.
+
+Phase 5 — Agent-browser verification:
+- DEV-сервер запускался несколько раз (окружение нестабильно — умирает
+  между bash-командами; workaround: всё в одной команде).
+- ✓ Главное меню загружается (SpaceGame + New Galaxy + Launch Game).
+- ✓ Игра запускается (layout с Save/Справка/Конструктор кораблей/Флоты/
+  Исследования/Galaxy Map).
+- ✓ Справка (reference-dialog): 5 вкладок (Планеты/Исследования/Экономика/
+  Флот/Здания). Вкладка «Флот» показывает таблицу «Корпуса кораблей (4
+  в MVP)» со всеми 4 корпусами из hulls.json (Скаут: 25 HS/200 HP/500т/
+  1-2-3-1/L1; Истребитель: 50/400/1000/2-2-2-2/L1; Фрегат: 100/1000/
+  2500/4-3-4-3/L2; Транспорт: 150/800/4000/2-3-5-2/L2). Данные приходят
+  из thin loader'а, читающего JSON — data-driven работает.
+- ✓ Конструктор кораблей (ship-designer.tsx): 4 корпуса в выпадающем
+  списке с корректными параметрами, 4 варианта брони (light+standard
+  активны; thick+heavy disabled для scout — фильтр по armorOptions
+  работает), все 20 модулей из modules.json видны с корректными HS/
+  массой/стоимостью/энергией (Химический двигатель Mk.I 3 HS/60т/30
+  у.е.р./Thrust 600; Ионный двигатель Mk.I 4 HS/200т/100/-30 МВт/
+  Thrust 800; ЦПУ-Микро/Лёгкий; Навигатор Mk.I; Связь Mk.I/Mk.II;
+  ЖО-Кабина; Лазерная пушка Mk.I 2 HS/40т/60/-5 МВт; Ракетная установка
+  Mk.I 3 HS/60т/80; Лёгкий щит Mk.I; Стальная обшивка; Грузовой отсек-S;
+  3 топливных бака; Сканер базовый; Прыжковый модуль Mk.I 5 HS/100т/80;
+  Колонизационный модуль; Ядерный реактор Mk.I 4 HS/120т/40/+50 МВт).
+- ✓ dev.log чист: 0 runtime errors, все GET 200, prisma-запросы OK.
+- ✓ agent-browser errors пуст.
+- DEV-сервер остановлен после верификации.
+
+Stage Summary:
+- Все требования пользователя выполнены:
+  1. ✅ Обновлена документация о новой data-driven структуре хранения
+     данных:
+     - Создан главный архитектурный документ data-driven-architecture.md
+       (~9K токенов), консолидирующий описание подхода для всех трёх
+       каталогов (buildings/research/ships) с общей бонус-системой и
+       валидаторами.
+     - Обновлён 50-ships.md (v1.0→v1.1) с новым §11.
+     - Обновлён 03-project-structure.md (дерево src/data/ + принцип 3).
+     - Обновлён !listing.md (шапка + регистрация нового документа).
+  2. ✅ Сделан вынос данных по комплектующим космических кораблей в
+     отдельные человекочитаемые файлы:
+     - hulls.json (4 корпуса), modules.json (20 модулей), fuel-map.json
+       (4 FuelType + обратные мапы).
+     - Тонкие TS-loader'ы сохраняют публичный API (10 потребителей
+       работают без правок импортов).
+     - Валидатор validate:ships проверяет целостность каталога.
+     - 26 тестов гарантируют обратную совместимость + T-FLEET-1 spec
+       fixture.
+- DATA-DRIVEN расширение: добавление записи в любой JSON-файл = автоматическое
+  появление в UI/engine/справочнике без правок кода (как и для buildings/
+  research).
+- Качественные метрики: lint 0/49, tsc 159 (=baseline), tests 417/0
+  (+26), recipes 75/75, buildings 17/17, ships 4+20+4 valid.
+- Agent-browser: справка «Флот» показывает 4 корпуса из JSON,
+  конструктор кораблей показывает все 20 модулей с корректными статами.
+  dev.log чист.
+- MVP без противников (Block 04 AI — отложен, не тронут).
+- Изменено: 5 файлов, создано: 7 файлов (3 JSON + thin loaders refactor +
+  validator + tests + 1 новый док + checkpoint). Commit pending, push
+  pending.
+- Конфликтов с предыдущими задачами нет: публичный API @/data/ships
+  сохранён, research barrel не тронут, buildings/research data-driven
+  структура не тронута, бонус-система общая и обратно-совместимая.

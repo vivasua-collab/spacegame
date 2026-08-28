@@ -10,6 +10,8 @@
     "test": "bun test",
     "validate:recipes": "bun run scripts/validate-recipes.ts",
     "validate:buildings": "bun run scripts/validate-buildings.ts",
+    "validate:ships": "bun run scripts/validate-ships.ts",
+    "validate:all": "bun run validate:recipes && bun run validate:buildings && bun run validate:ships",
     "db:push": "prisma db push",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",

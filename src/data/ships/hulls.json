@@ -1,0 +1,69 @@
+{
+  "comment": "Каталог корпусов космических кораблей MVP (Block 02 F1, docs/50-ships.md §2.5). 4 корпуса MVP из 7 в спеке: Скаут, Истребитель, Фрегат, Транспорт. Тяжёлые корпуса (cruiser/battleship/flagship) — отложены на Etap 4 (см. src/data/ships/shipyard-queue.ts SHIP_BUILD_TIME для stub-значений времени). Каждая запись — это HullType (см. src/core/types.ts). Поля: id, name, size (HullSize), totalHS, baseHP, baseMass (т), weaponSlots/engineSlots/systemSlots/defenseSlots, baseCost (у.е.р.), requiredEngineeringLevel, requiredShipyardLevel, armorOptions (HullArmorThickness[]). DATA-DRIVEN: добавление записи в этот массив автоматически делает корпус доступным в UI конструктора кораблей (ship-designer.tsx через HULLS/HULL_MAP) и в справочнике. Требования requiredEngineeringLevel/requiredShipyardLevel — это уровни зданий (не технологии); tech-gate для корпусов отсутствует. Числа подобраны под T-FLEET-1/T-FLEET-2: Скаут + light armor + 8 модулей = масса 1075 т, скорость 7.4 км/с, стоимость 415 у.е.р. (см. tests/ships/designer.test.ts).",
+  "hulls": [
+    {
+      "id": "hull_scout",
+      "name": "Скаут",
+      "size": "scout",
+      "totalHS": 25,
+      "baseHP": 200,
+      "baseMass": 500,
+      "weaponSlots": 1,
+      "engineSlots": 2,
+      "systemSlots": 3,
+      "defenseSlots": 1,
+      "baseCost": 50,
+      "requiredEngineeringLevel": 1,
+      "requiredShipyardLevel": 1,
+      "armorOptions": ["light", "standard"]
+    },
+    {
+      "id": "hull_fighter",
+      "name": "Истребитель",
+      "size": "fighter",
+      "totalHS": 50,
+      "baseHP": 400,
+      "baseMass": 1000,
+      "weaponSlots": 2,
+      "engineSlots": 2,
+      "systemSlots": 2,
+      "defenseSlots": 2,
+      "baseCost": 120,
+      "requiredEngineeringLevel": 1,
+      "requiredShipyardLevel": 1,
+      "armorOptions": ["light", "standard", "thick"]
+    },
+    {
+      "id": "hull_frigate",
+      "name": "Фрегат",
+      "size": "frigate",
+      "totalHS": 100,
+      "baseHP": 1000,
+      "baseMass": 2500,
+      "weaponSlots": 4,
+      "engineSlots": 3,
+      "systemSlots": 4,
+      "defenseSlots": 3,
+      "baseCost": 300,
+      "requiredEngineeringLevel": 2,
+      "requiredShipyardLevel": 2,
+      "armorOptions": ["light", "standard", "thick", "heavy"]
+    },
+    {
+      "id": "hull_transport",
+      "name": "Транспорт",
+      "size": "transport",
+      "totalHS": 150,
+      "baseHP": 800,
+      "baseMass": 4000,
+      "weaponSlots": 2,
+      "engineSlots": 3,
+      "systemSlots": 5,
+      "defenseSlots": 2,
+      "baseCost": 250,
+      "requiredEngineeringLevel": 2,
+      "requiredShipyardLevel": 2,
+      "armorOptions": ["light", "standard", "thick", "heavy"]
+    }
+  ]
+}

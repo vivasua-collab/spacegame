@@ -1,14 +1,30 @@
 /**
- * Block 02 (F1): Публичные экспорты каталога кораблей.
+ * Block 02 (F1) — R-SHIPS-DATA: Публичные экспорты каталога кораблей.
  *
- * Структура:
- * - hulls.ts            — 4 корпуса MVP (Скаут/Истребитель/Фрегат/Транспорт)
- * - modules.ts          — ~18 модулей Mk.I (engines, ЦПУ, оружие, оборона, ...)
- * - fuel-map.ts         — FuelType → elementId mapping
- * - shipyard-queue.ts   — функции очереди постройки (см. также src/ships/designer.ts)
+ * Структура (data-driven JSON + тонкие TS-loaders + runtime-логика):
+ * - hulls.ts            — thin loader → hulls.json (4 корпуса MVP)
+ * - modules.ts          — thin loader → modules.json (~18 модулей Mk.I)
+ * - fuel-map.ts         — thin loader → fuel-map.json (FuelType ↔ elementId)
+ * - shipyard-queue.ts   — runtime-логика очереди постройки (НЕ данные;
+ *                         см. также src/ships/designer.ts для validateShip
+ *                         и src/ships/orders.ts для planRoute)
+ *
+ * DATA-DRIVEN: добавление записи в hulls.json/modules.json или правка
+ * fuel-map.json автоматически подхватываются соответствующими тонкими
+ * loader'ами — UI конструктора (ship-designer.tsx), справочника
+ * (reference-dialog → Флот), панели ресурсов (resource-panel.tsx) и
+ * движком (ships/, economy/shipyard-queue) продолжают работать без
+ * правок импортов. Валидатор: `bun run validate:ships` проверяет
+ * целостность каталога.
+ *
+ * Публичный API сохранён для обратной совместимости с 10 потребителями
+ * (см. grep `from '@/data/ships'`).
  *
  * Логические функции (validateShip, planRoute, processFleetTick) живут в
  * `src/ships/` (отдельно от данных) — это разделение данных и логики.
+ *
+ * См. docs/data-driven-architecture.md — общая архитектура data-driven
+ * хранения в SpaceGame (buildings / research / ships).
  */
 
 export {

@@ -3,9 +3,9 @@
 > **Номерной файл-источник истины.** Классы корпусов, модули, конструктор кораблей.
 >
 > **Создан:** 2026-05-03
-> **Изменён:** 2026-06-26
-> **Версия:** 1.0
-> **Статус:** Дизайн-документ (0% реализации)
+> **Изменён:** 2026-08-28 — R-SHIPS-DATA: данные по корпусам/модулям/топливу вынесены во внешние JSON-файлы (data-driven, см. §11 + `docs/data-driven-architecture.md`).
+> **Версия:** 1.1
+> **Статус:** Дизайн-документ (реализация Block 02 + R-SHIPS-DATA data-driven миграция)
 
 ---
 
@@ -21,6 +21,7 @@
 8. [Вспомогательные модули](#8-вспомогательные-модули)
 9. [Таблица всех модулей](#9-таблица-всех-модулей)
 10. [Примеры сборки кораблей](#10-примеры-сборки-кораблей)
+11. [Data-driven структура хранения (R-SHIPS-DATA)](#11-data-driven-структура-хранения-r-ships-data)
 
 ---
 
@@ -1462,6 +1463,100 @@ function validateShip(design: ShipDesign): ValidationResult {
 - Варп-двигатели
 - Тяжёлые корпуса: Крейсер, Линкор, Флагман
 - Адмиральская система с прогрессией уровней
+
+---
+
+## 11. Data-driven структура хранения (R-SHIPS-DATA)
+
+> **Связанные документы:** [data-driven-architecture.md](./data-driven-architecture.md) (общая архитектура data-driven хранения: buildings/research/ships), [03-project-structure.md](./03-project-structure.md) (структура каталогов).
+
+### 11.1 Принцип data-driven хранения
+
+Все статические данные по кораблям вынесены из TypeScript-модулей во внешние **человекочитаемые JSON-файлы**, организованные по типу сущности:
+
+| Файл | Что содержит | Тип записей |
+|------|--------------|-------------|
+| `src/data/ships/hulls.json` | 4 корпуса MVP (Скаут/Истребитель/Фрегат/Транспорт) | `HullType[]` |
+| `src/data/ships/modules.json` | 20 модулей Mk.I (engines/control/life_support/weapon/defense/auxiliary) | `ShipModule[]` |
+| `src/data/ships/fuel-map.json` | Маппинг `FuelType ↔ elementId` + стоимость конверсии | 4 Record'а + `FuelType[]` |
+
+Каждый JSON-файл содержит опциональное поле `"comment"` с описанием формата и semantics (оно игнорируется кодом, но помогает редактору). Реальные данные лежат в поле с тем же именем, что и тип (`hulls` / `modules` / `fuelToElement` и т.д.).
+
+### 11.2 Тонкие TS-loader'ы
+
+Соответствующие `.ts`-файлы (`hulls.ts`, `modules.ts`, `fuel-map.ts`) теперь **тонкие loader'ы**: они импортируют JSON, кастят к типизированному интерфейсу (через `unknown` — TS не может напрямую скастить JSON-inferred типы к строгим интерфейсам из-за `string[]` vs `BuildingLayer[]` / `HullArmorThickness[]`) и экспортируют:
+
+- Сам массив (`HULLS` / `SHIP_MODULES`)
+- Lookup-мапу (`HULL_MAP` / `MODULE_MAP`)
+- Хелперы (`getHull`, `getModule`, `listModulesByCategory`, `listModulesForHull`, `emptyFuelStore`)
+- Категорийные records для fuel-map (`FUEL_TO_ELEMENT`, `ELEMENT_TO_FUEL`, `FUEL_ELEMENT_COST_PER_UNIT`, `ALL_FUEL_TYPES`)
+
+**Логика очереди постройки** живёт отдельно в `src/data/ships/shipyard-queue.ts` (`enqueueShipBuild`, `processShipyardTick`, `getShipBuildTime`, `getShipBuildCostUER/Resources`) — это **runtime-логика, а не данные**, и она НЕ выносится в JSON. Валидация дизайна корабля (`validateShip`, `calculateDesignStats`) — в `src/ships/designer.ts`.
+
+### 11.3 Публичный API сохранён
+
+Баррель-файл `src/data/ships/index.ts` реэкспортирует всё публичное API. **10 потребителей** (UI, engine, tests) продолжают работать без правок импортов:
+
+```
+src/components/game/ship-designer.tsx    src/components/game/shipyard-dialog.tsx
+src/components/game/ship-card.tsx        src/components/game/reference-dialog.tsx
+src/ships/designer.ts                    src/ships/fleet-engine.ts
+src/ships/ships-module.ts                src/data/ships/shipyard-queue.ts (внутренний)
+src/stores/game-store.ts                 tests/ships/* (designer/shipyard/fleet-engine/orders)
+```
+
+### 11.4 DATA-DRIVEN расширение
+
+Добавление **нового корпуса, модуля или типа топлива** = добавление одной записи в соответствующий JSON-файл. Никаких правок кода не требуется:
+
+- Новый корпус → появляется в выпадающем списке конструктора кораблей (`ship-designer.tsx`) + в справочнике (`reference-dialog → Флот`).
+- Новый модуль → появляется в палитре модулей конструктора (по категории) + в справочнике.
+- Новый тип топлива → автоматически подхватывается в `emptyFuelStore()` и `processFleetTick` (через `FUEL_TO_ELEMENT`).
+
+Это позволяет расширять каталог кораблей **без кодирования** — например, для добавления Mk.II+ модулей из Приложения D (Пост-MVP) достаточно скопировать запись Mk.I, изменить `id`/`name`/`techLevel` и скорректировать значения.
+
+### 11.5 Валидатор `validate:ships`
+
+Скрипт `scripts/validate-ships.ts` (команда `bun run validate:ships`) проверяет целостность каталога:
+
+- **Hulls**: уникальность ID, валидность `size`/`armorOptions`, положительность всех числовых полей, `requiredEngineeringLevel`/`requiredShipyardLevel >= 1`.
+- **Modules**: уникальность ID, валидность `category`/`slotRestriction`/`controlType`/`weaponType`/`damageType`/`defenseType`/`auxiliaryType`/`fuelType`/`minHull`, ссылки `requiredTechs` на существующие технологии, корректность `bonuses` (target непустой, operation валиден, `sourceTech` если задан — существует в `TECH_MAP`).
+- **Fuel-map**: ключи `FUEL_TO_ELEMENT`, `FUEL_ELEMENT_COST_PER_UNIT` и `ALL_FUEL_TYPES` согласованы между собой, все значения FuelType валидны.
+
+Также добавлена агрегатная команда `bun run validate:all` — запускает `validate:recipes`, `validate:buildings` и `validate:ships` подряд.
+
+### 11.6 Тесты
+
+`tests/ships/data-files.test.ts` (26 тестов) гарантируют обратную совместимость: JSON-файлы загружаются, массивы имеют ожидаемую длину (4 корпуса, 20 модулей, 4 типа топлива), публичные функции возвращают корректные значения, IDs уникальны, T-FLEET-1 spec fixture (Скаут + light armor + 8 модулей) сохранён.
+
+### 11.7 Структура каталога `src/data/ships/`
+
+```
+src/data/ships/
+├── hulls.json          # 4 корпуса MVP (данные)
+├── hulls.ts            # thin loader (HULLS, HULL_MAP, getHull, listHulls)
+├── modules.json        # 20 модулей Mk.I (данные)
+├── modules.ts          # thin loader (SHIP_MODULES, MODULE_MAP, getModule, list*)
+├── fuel-map.json       # FuelType ↔ elementId (данные)
+├── fuel-map.ts         # thin loader (FUEL_TO_ELEMENT, ELEMENT_TO_FUEL, *)
+├── shipyard-queue.ts   # runtime-логика очереди постройки (НЕ данные)
+└── index.ts            # barrel (публичный API)
+```
+
+### 11.8 Бонусы модулей (R-RES §E, общая система с зданиями)
+
+Поле `bonuses?: Bonus[]` в `ShipModule` использует **ту же систему бонусов**, что и здания (см. [40-buildings.md](./40-buildings.md) §R-BLD-MOD + `src/research/bonus-resolver.ts`):
+
+```json
+{
+  "id": "engine_ion_mk1",
+  "bonuses": [
+    { "target": "ship_thrust", "operation": "multiply", "value": 1.10, "source": "engine_ion_mk1" }
+  ]
+}
+```
+
+Демо-бонус: ионный двигатель даёт +10% multiply к `ship_thrust`. Поддерживаются как building-sourced бонусы (с `perLevel`), так и tech-sourced (с `sourceTech` + `minTechLevel` + `perTechLevel`). См. интерфейс `Bonus` в `src/core/types.ts` и `docs/data-driven-architecture.md` §4 (общая бонус-система).
 
 ---
 

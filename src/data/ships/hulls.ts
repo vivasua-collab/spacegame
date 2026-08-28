@@ -1,90 +1,40 @@
 /**
- * Block 02 (F1): Каталог корпусов кораблей MVP — docs/50-ships.md §2.1, §2.5.
+ * Block 02 (F1) — R-SHIPS-DATA: Каталог корпусов кораблей MVP (data-driven JSON).
  *
- * 4 корпуса MVP (из 7 в спеке): Скаут, Истребитель, Фрегат, Транспорт.
- * Тяжёлые корпуса (Cruiser/Battleship/Flagship) отложены на Etap 4.
+ * Источник истины: `src/data/ships/hulls.json` (человекочитаемый JSON).
+ * Этот файл — тонкий loader: импортирует JSON, кастит к `HullType[]` и
+ * строит `HULL_MAP` для O(1) поиска по id.
  *
- * Значения: HS, HP, масса, слоты (weapon/engine/system/defense),
- * стоимость в у.е.р., требования (Engineering/Shipyard уровни),
- * доступные обшивки (armorOptions).
+ * Спека: docs/50-ships.md §2.1, §2.5. Реализованные корпуса MVP (4 из 7):
+ * Скаут, Истребитель, Фрегат, Транспорт. Тяжёлые корпуса
+ * (cruiser/battleship/flagship) — отложены на Etap 4.
  *
- * Source of truth: docs/50-ships.md §2.2 таблица параметров корпусов.
- * Конкретные числа подобраны для MVP-балансировки: Разведчик (Скаут)
- * с 8 модулями даёт массу ≈ 1075 т, скорость ≈ 7.4 км/с,
- * энергобаланс −2 МВт, стоимость ≈ 415 у.е.р. (см. tests/ships/designer.test.ts).
+ * DATA-DRIVEN: добавление записи в `hulls.json` автоматически делает корпус
+ * доступным в UI конструктора кораблей (ship-designer.tsx) и в справочнике
+ * (reference-dialog → Флот). Никаких правок кода не требуется.
+ *
+ * Время постройки (stub для heavy hulls) живёт отдельно в
+ * `src/data/ships/shipyard-queue.ts` SHIP_BUILD_TIME, поскольку это
+ * runtime-константа, а не данные каталога.
+ *
+ * Публичный API сохранён (HULLS, HULL_MAP, getHull, listHulls) —
+ * обратная совместимость со всеми потребителями (ship-designer.tsx,
+ * shipyard-dialog.tsx, ship-card.tsx, reference-dialog.tsx, designer.ts,
+ * fleet-engine.ts, ships-module.ts, game-store.ts, tests/ships/*).
  */
 
 import type { HullType } from '@/core/types';
+import hullsData from './hulls.json';
 
-export const HULLS: HullType[] = [
-  {
-    id: 'hull_scout',
-    name: 'Скаут',
-    size: 'scout',
-    totalHS: 25,
-    baseHP: 200,
-    baseMass: 500,
-    weaponSlots: 1,
-    engineSlots: 2,
-    systemSlots: 3,
-    defenseSlots: 1,
-    baseCost: 50,
-    requiredEngineeringLevel: 1,
-    requiredShipyardLevel: 1,
-    armorOptions: ['light', 'standard'],
-  },
-  {
-    id: 'hull_fighter',
-    name: 'Истребитель',
-    size: 'fighter',
-    totalHS: 50,
-    baseHP: 400,
-    baseMass: 1000,
-    weaponSlots: 2,
-    engineSlots: 2,
-    systemSlots: 2,
-    defenseSlots: 2,
-    baseCost: 120,
-    requiredEngineeringLevel: 1,
-    requiredShipyardLevel: 1,
-    armorOptions: ['light', 'standard', 'thick'],
-  },
-  {
-    id: 'hull_frigate',
-    name: 'Фрегат',
-    size: 'frigate',
-    totalHS: 100,
-    baseHP: 1000,
-    baseMass: 2500,
-    weaponSlots: 4,
-    engineSlots: 3,
-    systemSlots: 4,
-    defenseSlots: 3,
-    baseCost: 300,
-    requiredEngineeringLevel: 2,
-    requiredShipyardLevel: 2,
-    armorOptions: ['light', 'standard', 'thick', 'heavy'],
-  },
-  {
-    id: 'hull_transport',
-    name: 'Транспорт',
-    size: 'transport',
-    totalHS: 150,
-    baseHP: 800,
-    baseMass: 4000,
-    weaponSlots: 2,
-    engineSlots: 3,
-    systemSlots: 5,
-    defenseSlots: 2,
-    baseCost: 250,
-    requiredEngineeringLevel: 2,
-    requiredShipyardLevel: 2,
-    armorOptions: ['light', 'standard', 'thick', 'heavy'],
-  },
-];
+type HullsFile = { comment?: string; hulls: HullType[] };
 
-/** Lookup-мапа: hullId → HullType. */
-export const HULL_MAP = new Map<string, HullType>(HULLS.map(h => [h.id, h]));
+/**
+ * Единый каталог корпусов (data-driven из hulls.json).
+ */
+export const HULLS: HullType[] = (hullsData as unknown as HullsFile).hulls;
+
+/** Map hullId → HullType для O(1) поиска. */
+export const HULL_MAP = new Map<string, HullType>(HULLS.map((h) => [h.id, h]));
 
 /** Получить корпус по id. */
 export function getHull(id: string): HullType | undefined {

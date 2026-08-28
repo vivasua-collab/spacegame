@@ -71,9 +71,9 @@ src/
 │   ├── research-module.ts        # Модуль исследований (для GameMediator)
 │   └── index.ts                  # Публичный экспорт
 │
-├── data/                         # Статические данные (TypeScript-модули)
+├── data/                         # Статические данные (data-driven JSON + тонкие TS-loaders)
 │   ├── elements.ts               # 60 элементов (57 базовых + 3 трансурановых)
-│   ├── buildings.ts              # 15 зданий (colony_hub, mine, processor...)
+│   ├── buildings/                # R-BLD-MOD: data-driven JSON по слою (surface/orbit/space) + index.ts (thin loader; старый buildings.ts удалён)
 │   ├── recipes.ts                # ~75 рецептов крафта
 │   ├── processing-chains.ts      # Цепочки руд (атмосфера/лёд/самородки)
 │   ├── chemistry-generator.ts    # Реэкспорт-шим (30 строк; ~1700 строк в src/data/chemistry/)
@@ -86,8 +86,8 @@ src/
 │   ├── star-types.ts             # 12 типов звёзд
 │   ├── planet-types.ts           # 7 типов планет, размеры, местность
 │   ├── warehouse.ts              # Резервы, специализация, орбитальный буфер
-│   ├── ships/                    # Подкаталог: hulls, modules, fuel-map, shipyard-queue, index
-│   ├── research/                 # Подкаталог: tech-tree, branch-links, fundamental-branches, tech-unlocks, index
+│   ├── ships/                    # R-SHIPS-DATA: data-driven JSON (hulls/modules/fuel-map) + тонкие TS-loaders + shipyard-queue.ts (логика) + index.ts
+│   ├── research/                 # R-RES: data-driven JSON (techs/fundamentals/branch-links/tech-unlocks/bonuses) + тонкие TS-loaders + index.ts
 │   └── chemistry/                # Подкаталог: ore-specs, ore-generator, ice-generator, atmospheric-generator, bake, validate, baked-types, index
 │
 ├── stores/                       # Zustand-сторы
@@ -194,6 +194,6 @@ src/
 
 1. **Разделение движка и UI** — `src/core/`, `src/galaxy/`, `src/economy/`, `src/ships/`, `src/research/` не зависят от React
 2. **Модульная архитектура** — каждый модуль реализует `IGameModule` (см. [architecture/modular-bus.md](./architecture/modular-bus.md))
-3. **Данные в TypeScript-модулях** — не JSON, для типобезопасности
+3. **Data-driven JSON + тонкие TS-loaders** — статические каталоги (здания/корабли/исследования/рецепты) хранятся в человекочитаемых JSON-файлах, разделённых по типу сущности; тонкие TS-loader'ы (`*.ts`) импортируют JSON, кастят к типам из `core/types.ts` и экспортируют типизированный API + lookup-мапы. Runtime-логика живёт в отдельных `.ts`-файлах. См. [data-driven-architecture.md](./data-driven-architecture.md).
 4. **shadcn/ui не изменять** — `src/components/ui/` содержит стандартную библиотеку
 5. **Стор как точка входа** — `src/stores/game-store.ts` делегирует модулям через GameMediator, отвечает за реактивность (Block 06 контракт; Pass 1 P0-1 — sync store→mediator ещё частично открыт)

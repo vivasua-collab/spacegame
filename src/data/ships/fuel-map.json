@@ -1,0 +1,21 @@
+{
+  "comment": "Маппинг типов топлива (FuelType) ↔ elementId для planet.resources (Block 02 F1, docs/50-ships.md §1.6 + §3.1). Используется при заправке корабля/флота на планете (списать planet.resources[elementId]) и в UI resource-panel для строки «Топливо флотов». Решение R7 плана: chemical → 'H' (упрощённо: хим. двигатели сжигают водород; MVP), xenon → 'Xe' (не в ELEMENTS, но строка-ключ для planet.resources; ResourcePanel покажет как «Прочие»), hydrogen → 'H' (те же запасы, что и chemical; но для водородных двигателей), antimatter → 'antimatter' (не используется в MVP, reserved для Etap 4). Хим. топливо и водород делят elementId 'H' — упрощение MVP: один бак 'H' на планете обслуживает оба типа двигателей. Etap 4 может разделить их. FUEL_ELEMENT_COST_PER_UNIT: сколько единиц elementId нужно на 1 ед. топлива; MVP: 1:1. DATA-DRIVEN: изменения в этом файле автоматически подхватываются через thin-loader (src/data/ships/fuel-map.ts).",
+  "fuelToElement": {
+    "chemical": "H",
+    "xenon": "Xe",
+    "hydrogen": "H",
+    "antimatter": "antimatter"
+  },
+  "elementToFuel": {
+    "H": "hydrogen",
+    "Xe": "xenon",
+    "antimatter": "antimatter"
+  },
+  "fuelElementCostPerUnit": {
+    "chemical": 1,
+    "xenon": 1,
+    "hydrogen": 1,
+    "antimatter": 1
+  },
+  "allFuelTypes": ["chemical", "xenon", "hydrogen", "antimatter"]
+}
