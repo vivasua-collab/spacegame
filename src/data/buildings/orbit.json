@@ -1,0 +1,19 @@
+{
+  "comment": "Здания, строящиеся на ОРБИТЕ вокруг планеты (орбитальные слоты). Первичный слой: 'orbit'. Здания, у которых layer содержит и 'surface' и 'orbit' (напр. solar_plant, shipyard), описаны в surface.json (своём первичном файле) — файл орбиты не дублирует их. Добавление записи сюда автоматически делает здание доступным для орбитальных слотов в UI постройки.",
+  "buildings": [
+    {
+      "id": "spaceport",
+      "name": "Космопорт",
+      "description": "Орбитальный космопорт. Обеспечивает орбитальный буфер (+5 ед./ур. = 0.005 млрд т/ур.) и погрузку кораблей.",
+      "category": "logistics",
+      "layer": ["orbit"],
+      "size": ["tiny", "small", "medium", "large", "huge"],
+      "energyConsumption": 3,
+      "baseProductionTime": 1,
+      "levels": 5,
+      "costPerLevel": { "Fe": 50, "Si": 30, "Al": 20, "Ti": 10 },
+      "terrainBonus": {},
+      "requiresAtmosphere": false
+    }
+  ]
+}

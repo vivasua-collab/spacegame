@@ -5,7 +5,7 @@
  */
 
 import type { Planet, HexCell, ProductionQueue, ProductionItem, EntityId, StarSystem, BuildingDef, ProcessorType, ProcessorRecipeCategory } from '@/core/types';
-import { BUILDING_MAP } from '@/data/buildings';
+import { BUILDING_MAP, areBuildingTechsMet } from '@/data/buildings';
 import { RECIPE_MAP } from '@/data/recipes';
 import { PROCESSOR_CATEGORIES } from '@/data/processor-categories';
 import { ELEMENT_MAP } from '@/data/elements';
@@ -542,10 +542,22 @@ export function recalcEnergyBalance(planet: Planet, system?: StarSystem): void {
 
 /**
  * Построить здание на гексе планеты.
+ *
+ * R-BLD-MOD: добавлен опциональный параметр `researched` — карта изученных
+ * технологий (techId → уровень). Если передан, проверяется requiresTechs
+ * здания (технологии, необходимые для открытия). Если не передан — гейт
+ * пропускается (backward-compat для тестов, вызывающих с 3 аргументами).
+ * Также добавлена проверка terrainTypes (allowlist местности) если задано.
  */
-export function buildOnHex(planet: Planet, hexIndex: number, buildingId: string): boolean {
+export function buildOnHex(
+  planet: Planet,
+  hexIndex: number,
+  buildingId: string,
+  researched?: Record<string, number>,
+): boolean {
   if (hexIndex < 0 || hexIndex >= planet.hexes.length) return false;
   const hex = planet.hexes[hexIndex];
+  if (!hex) return false;
   if (hex.buildingId) return false;
 
   const buildingDef = BUILDING_MAP.get(buildingId);
@@ -563,6 +575,18 @@ export function buildOnHex(planet: Planet, hexIndex: number, buildingId: string)
 
   // P3-04: проверяем, что здание подходит по размеру планеты
   if (!buildingDef.size.includes(planet.size)) {
+    return false;
+  }
+
+  // R-BLD-MOD: проверка местности (terrainTypes allowlist)
+  if (buildingDef.terrainTypes && buildingDef.terrainTypes.length > 0) {
+    if (!buildingDef.terrainTypes.includes(hex.terrain)) {
+      return false;
+    }
+  }
+
+  // R-BLD-MOD: проверка технологических требований (requiresTechs)
+  if (researched && !areBuildingTechsMet(buildingDef, researched)) {
     return false;
   }
 
@@ -589,10 +613,18 @@ export function buildOnHex(planet: Planet, hexIndex: number, buildingId: string)
 
 /**
  * Построить здание на атмосферном слоте (газовые гиганты, P1-01).
+ *
+ * R-BLD-MOD: добавлен опциональный `researched` для requiresTechs-гейта.
  */
-export function buildOnAtmosphereSlot(planet: Planet, slotIndex: number, buildingId: string): boolean {
+export function buildOnAtmosphereSlot(
+  planet: Planet,
+  slotIndex: number,
+  buildingId: string,
+  researched?: Record<string, number>,
+): boolean {
   if (slotIndex < 0 || slotIndex >= planet.atmosphericSlots.length) return false;
   const slot = planet.atmosphericSlots[slotIndex];
+  if (!slot) return false;
   if (slot.buildingId) return false;
 
   const buildingDef = BUILDING_MAP.get(buildingId);
@@ -603,6 +635,11 @@ export function buildOnAtmosphereSlot(planet: Planet, slotIndex: number, buildin
 
   // P1-27: проверка атмосферы
   if (buildingDef.requiresAtmosphere && planet.atmosphere.type === 'none') {
+    return false;
+  }
+
+  // R-BLD-MOD: проверка технологических требований (requiresTechs)
+  if (researched && !areBuildingTechsMet(buildingDef, researched)) {
     return false;
   }
 
@@ -625,10 +662,18 @@ export function buildOnAtmosphereSlot(planet: Planet, slotIndex: number, buildin
 
 /**
  * Построить здание на орбитальном слоте (P1-01).
+ *
+ * R-BLD-MOD: добавлен опциональный `researched` для requiresTechs-гейта.
  */
-export function buildOnOrbitSlot(planet: Planet, slotIndex: number, buildingId: string): boolean {
+export function buildOnOrbitSlot(
+  planet: Planet,
+  slotIndex: number,
+  buildingId: string,
+  researched?: Record<string, number>,
+): boolean {
   if (slotIndex < 0 || slotIndex >= planet.orbitSlots.length) return false;
   const slot = planet.orbitSlots[slotIndex];
+  if (!slot) return false;
   if (slot.buildingId) return false;
 
   const buildingDef = BUILDING_MAP.get(buildingId);
@@ -636,6 +681,11 @@ export function buildOnOrbitSlot(planet: Planet, slotIndex: number, buildingId: 
 
   // Только орбитальные здания
   if (!buildingDef.layer.includes('orbit')) return false;
+
+  // R-BLD-MOD: проверка технологических требований (requiresTechs)
+  if (researched && !areBuildingTechsMet(buildingDef, researched)) {
+    return false;
+  }
 
   // Проверяем ресурсы
   for (const [resourceId, amount] of Object.entries(buildingDef.costPerLevel)) {

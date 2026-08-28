@@ -198,23 +198,26 @@ export class EconomyModule implements IGameModule {
     // compatible with Planet for mutation purposes).
     let success = false;
     let reportedHexIndex = payload.hexIndex ?? -1;
+    // R-BLD-MOD: передаём researched в engine для проверки requiresTechs.
+    // Читаем из currentState (не из draft) — research не меняется во время build.
+    const researched = currentState.researchState.researched;
     const newState = produce(currentState, (draft) => {
       const planet = findPlanet(draft, payload.planetId);
       if (!planet) return;
       if (layer === 'atmosphere') {
         const slotIndex = payload.slotIndex ?? 0;
-        success = engineBuildOnAtmosphereSlot(planet, slotIndex, payload.buildingId);
+        success = engineBuildOnAtmosphereSlot(planet, slotIndex, payload.buildingId, researched);
         // engine emits use hexIndex = -1 - slotIndex for atmosphere — mirror
         // that convention so downstream listeners (UI) can locate the slot.
         if (success) reportedHexIndex = -1 - slotIndex;
       } else if (layer === 'orbit') {
         const slotIndex = payload.slotIndex ?? 0;
-        success = engineBuildOnOrbitSlot(planet, slotIndex, payload.buildingId);
+        success = engineBuildOnOrbitSlot(planet, slotIndex, payload.buildingId, researched);
         if (success) reportedHexIndex = -100 - slotIndex;
       } else {
         // surface (default)
         const hexIndex = payload.hexIndex ?? 0;
-        success = engineBuildOnHex(planet, hexIndex, payload.buildingId);
+        success = engineBuildOnHex(planet, hexIndex, payload.buildingId, researched);
         if (success) reportedHexIndex = hexIndex;
       }
     });

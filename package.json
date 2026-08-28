@@ -9,6 +9,7 @@
     "lint": "eslint src/",
     "test": "bun test",
     "validate:recipes": "bun run scripts/validate-recipes.ts",
+    "validate:buildings": "bun run scripts/validate-buildings.ts",
     "db:push": "prisma db push",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",

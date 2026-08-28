@@ -84,27 +84,28 @@ export function resolveBonuses(state: GameState, target: string): number {
 
   // ─── Source 2: built buildings (scan player planets) ────────
   const playerPlanets = collectPlayerPlanets(state);
+  const researched = state.researchState.researched;
   for (const planet of playerPlanets) {
     // Surface hexes
     for (const hex of planet.hexes) {
       if (!hex.buildingId || hex.buildingLevel < 1) continue;
       const def = BUILDING_MAP.get(hex.buildingId);
       if (!def?.bonuses) continue;
-      applyBuildingBonuses(def.bonuses, hex.buildingLevel, target, addContributions, multiplyContributions);
+      applyBuildingBonuses(def.bonuses, hex.buildingLevel, researched, target, addContributions, multiplyContributions);
     }
     // Atmospheric slots
     for (const slot of planet.atmosphericSlots) {
       if (!slot.buildingId || slot.buildingLevel < 1) continue;
       const def = BUILDING_MAP.get(slot.buildingId);
       if (!def?.bonuses) continue;
-      applyBuildingBonuses(def.bonuses, slot.buildingLevel, target, addContributions, multiplyContributions);
+      applyBuildingBonuses(def.bonuses, slot.buildingLevel, researched, target, addContributions, multiplyContributions);
     }
     // Orbit slots
     for (const slot of planet.orbitSlots) {
       if (!slot.buildingId || slot.buildingLevel < 1) continue;
       const def = BUILDING_MAP.get(slot.buildingId);
       if (!def?.bonuses) continue;
-      applyBuildingBonuses(def.bonuses, slot.buildingLevel, target, addContributions, multiplyContributions);
+      applyBuildingBonuses(def.bonuses, slot.buildingLevel, researched, target, addContributions, multiplyContributions);
     }
   }
 
@@ -123,12 +124,35 @@ export function resolveBonuses(state: GameState, target: string): number {
 function applyBuildingBonuses(
   bonuses: Bonus[],
   buildingLevel: number,
+  researched: Record<string, number>,
   target: string,
   addContributions: number[],
   multiplyContributions: number[],
 ): void {
   for (const bonus of bonuses) {
     if (bonus.target !== target) continue;
+
+    // ─── R-BLD-MOD: tech-sourced bonus (sourceTech) ─────────────
+    // Бонус зависит от уровня технологии, а не от уровня здания.
+    // Активируется только когда researched[sourceTech] >= minTechLevel.
+    if (bonus.sourceTech) {
+      const techLevel = researched[bonus.sourceTech] ?? 0;
+      const minLevel = bonus.minTechLevel ?? 1;
+      if (techLevel < minLevel) continue; // технология не достигла порога
+      // effectiveTechLevels: сколько уровней «выше порога» (min = 1).
+      const techLevels = bonus.perTechLevel ? (techLevel - minLevel + 1) : 1;
+      if (bonus.operation === 'add') {
+        addContributions.push(bonus.value * techLevels);
+      } else if (bonus.operation === 'multiply') {
+        multiplyContributions.push(Math.pow(bonus.value, techLevels));
+      } else if (bonus.operation === 'threshold') {
+        // no-op (gate)
+      }
+      continue;
+    }
+
+    // ─── Building-sourced bonus (существующая модель) ──────────
+    // Бонус зависит от уровня самого здания (perLevel).
     const effectiveLevel = bonus.perLevel ? buildingLevel : 1;
     if (bonus.operation === 'add') {
       addContributions.push(bonus.value * effectiveLevel);

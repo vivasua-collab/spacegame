@@ -231,7 +231,16 @@ export interface ElementDef {
 
 export type BuildingCategory = 'colonization' | 'extraction' | 'processing' | 'production' | 'energy' | 'military' | 'research' | 'logistics';
 
-export type BuildingLayer = 'surface' | 'atmosphere' | 'orbit';
+/**
+ * Слой размещения здания.
+ * - 'surface'   — на поверхности планеты (гекс-сетка).
+ * - 'atmosphere' — атмосферный слот (газовые гиганты).
+ * - 'orbit'     — орбитальный слот вокруг планеты.
+ * - 'space'     — глубокий космос / вокруг звезды (R-BLD-MOD: post-MVP слой;
+ *                на текущий момент движок не имеет buildOnSpaceSlot, поэтому
+ *                здания этого слоя отображаются в справочнике, но не строятся).
+ */
+export type BuildingLayer = 'surface' | 'atmosphere' | 'orbit' | 'space';
 
 export interface BuildingDef {
   id: string;
@@ -249,6 +258,23 @@ export interface BuildingDef {
   terrainBonus: Partial<Record<HexTerrain, number>>; // множитель на определённой местности
   /** Требование атмосферы (для газового экстрактора и др.) */
   requiresAtmosphere: boolean;
+  // ─── R-BLD-MOD: модульная data-driven система построек ─────────────
+  /**
+   * Технологии, необходимые для ОТКРЫТИЯ постройки здания.
+   * Все записи должны быть выполнены: `researched[techId] >= minLevel`.
+   * Если поле отсутствует — здание доступно с самого начала игры.
+   * Источник истины: внешний JSON-файл (src/data/buildings/*.json).
+   * Пример: `[{ "techId": "steel_processing", "minLevel": 1 }]`
+   */
+  requiresTechs?: { techId: string; minLevel: number }[];
+  /**
+   * Типы местности, на которых здание МОЖНО строить (allowlist).
+   * Если отсутствует — здание строится на любой местности.
+   * Отличается от `terrainBonus` (который даёт множитель к выходу на
+   * определённой местности, но не ограничивает саму возможность постройки).
+   * Пример: `['mountains', 'hills']` — только горы и холмы.
+   */
+  terrainTypes?: HexTerrain[];
   // ─── Block 05: специализация переработчиков ─────────────────────────
   /** true для processor/refinery/synthesizer — они поддерживают специализацию */
   isUniversalProcessor?: boolean;
@@ -295,6 +321,40 @@ export interface Bonus {
   value: number;
   perLevel?: boolean;
   source?: string;
+  // ─── R-BLD-MOD: бонусы, источником которых является уровень технологии ──
+  /**
+   * ID технологии-источника бонуса. Если задано — величина бонуса
+   * зависит от уровня изученной технологии (а не от уровня здания).
+   * Бонус активируется только когда `researched[sourceTech] >= minTechLevel`.
+   *
+   * Пример (из JSON):
+   *   {
+   *     "target": "research_rate",
+   *     "operation": "add",
+   *     "value": 0.03,
+   *     "sourceTech": "microelectronics",
+   *     "minTechLevel": 3,
+   *     "perTechLevel": true
+   *   }
+   * → начиная с 3-го уровня микроэлектроники, +3% к research_rate
+   *   за каждый уровень выше minTechLevel-1 (т.е. на L3=+3%, L4=+6%, L5=+9%...).
+   *
+   * Если `sourceTech` не задан — бонус building-sourced (существующая модель):
+   * величина зависит от уровня самого здания (см. `perLevel`).
+   */
+  sourceTech?: string;
+  /**
+   * Минимальный уровень технологии, с которого начинается влияние (включительно).
+   * Используется только при заданном `sourceTech`. По умолчанию 1.
+   */
+  minTechLevel?: number;
+  /**
+   * Если true — `value` умножается на количество уровней технологии
+   * выше `minTechLevel - 1` (т.е. effectiveTechLevels = techLevel - minTechLevel + 1).
+   * Если false — применяется ровно `value` (один раз) при достижении minTechLevel.
+   * Используется только при заданном `sourceTech`.
+   */
+  perTechLevel?: boolean;
 }
 
 // ============ Переработчики (Block 05) ============

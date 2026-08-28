@@ -83,6 +83,7 @@ import {
 import {
   FUNDAMENTAL_BRANCHES_MVP,
   TECH_TREE,
+  TECH_MAP,
 } from '@/data/research/index';
 
 // ============================================================================
@@ -587,23 +588,29 @@ function BuildingsTab() {
   return (
     <div className="space-y-3">
       <p className="text-xs text-slate-400">
-        Полный каталог зданий MVP. Стоимость указана за 1 уровень. Энергия: «−N» — потребление, «+10» — выход (для энергетических).
+        Полный каталог зданий (data-driven из <code className="text-cyan-300 bg-white/5 px-1 rounded">src/data/buildings/*.json</code>).
+        Стоимость — за 1 уровень. Энергия: «−N» — потребление, «+10» — выход (для энергетических).
+        Бейдж «требует технологию» означает, что постройка доступна только после изучения указанной технологии.
       </p>
       {BUILDINGS.map((b) => {
         const costEntries = Object.entries(b.costPerLevel);
-        const isTechRequired = b.id === 'synthesizer' || b.id === 'refinery';
+        // R-BLD-MOD: data-driven — бейдж «требует технологию» берётся из requiresTechs.
+        const techReqs = b.requiresTechs ?? [];
+        const hasTechReq = techReqs.length > 0;
+        // R-BLD-MOD: bonuses (building-sourced + tech-sourced) для отображения.
+        const bonuses = b.bonuses ?? [];
         return (
           <div
             key={b.id}
             className="rounded-md border border-white/10 bg-white/[0.03] p-3"
           >
             <div className="flex items-baseline justify-between gap-2 mb-1 flex-wrap">
-              <div className="flex items-baseline gap-2">
+              <div className="flex items-baseline gap-2 flex-wrap">
                 <span className="text-sm font-semibold text-cyan-200">{b.name}</span>
                 <Badge variant="outline" className="text-[10px] h-4 px-1 text-slate-400 border-white/20">
                   {CATEGORY_NAMES[b.category] ?? b.category}
                 </Badge>
-                {isTechRequired && (
+                {hasTechReq && (
                   <Badge className="text-[10px] h-4 px-1 bg-amber-900/40 text-amber-300 border border-amber-700/40">
                     требует технологию
                   </Badge>
@@ -632,6 +639,48 @@ function BuildingsTab() {
                 {costEntries.map(([rid, amt]) => `${rid} ${amt}`).join(' · ')}
               </span>
             </div>
+            {/* R-BLD-MOD: список требуемых технологий (data-driven) */}
+            {hasTechReq && (
+              <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[10px]">
+                <span className="text-amber-400/80">Требуется:</span>
+                {techReqs.map((req) => {
+                  const tech = TECH_MAP.get(req.techId);
+                  return (
+                    <span
+                      key={req.techId}
+                      className="bg-amber-950/40 border border-amber-800/40 text-amber-200 px-1.5 py-0.5 rounded"
+                    >
+                      {tech?.name ?? req.techId} ≥ ур.{req.minLevel}
+                    </span>
+                  );
+                })}
+              </div>
+            )}
+            {/* R-BLD-MOD: список бонусов (building-sourced + tech-sourced) */}
+            {bonuses.length > 0 && (
+              <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[10px]">
+                <span className="text-emerald-400/80">Бонусы:</span>
+                {bonuses.map((bonus, i) => {
+                  const op = bonus.operation === 'add' ? '+' : '×';
+                  const lvl = bonus.perLevel
+                    ? '/ур.зд.'
+                    : bonus.sourceTech
+                      ? (bonus.perTechLevel ? `/ур.тех.` : ` (фикс.)`)
+                      : '';
+                  const src = bonus.sourceTech
+                    ? `тех. ${TECH_MAP.get(bonus.sourceTech)?.name ?? bonus.sourceTech}${bonus.minTechLevel ? ` ≥L${bonus.minTechLevel}` : ''}`
+                    : bonus.source ?? '—';
+                  return (
+                    <span
+                      key={i}
+                      className="bg-emerald-950/40 border border-emerald-800/40 text-emerald-200 px-1.5 py-0.5 rounded font-mono"
+                    >
+                      {bonus.target} {op} {bonus.value}{lvl} ← {src}
+                    </span>
+                  );
+                })}
+              </div>
+            )}
           </div>
         );
       })}

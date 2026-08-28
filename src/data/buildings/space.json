@@ -1,0 +1,50 @@
+{
+  "comment": "Здания ГЛУБОКОГО КОСМОСА / вокруг звезды (слой 'space'). R-BLD-MOD: post-MVP слой — на текущий момент движок не имеет функции buildOnSpaceSlot, поэтому здания этого слоя отображаются в справочнике, но НЕ появляются в списке постройки UI (фильтр по layer). Они также защищены requiresTechs с высоким minLevel. Добавление новой записи сюда автоматически делает здание видимым в справочнике. Когда в будущем будет добавлена инфраструктура космических слоёв (buildOnSpaceSlot, starSystem.spaceSlots), эти здания заработают без правок данных.",
+  "buildings": [
+    {
+      "id": "starlift_collector",
+      "name": "Звёздный лифт-сборщик",
+      "description": "[Etap 4 / post-MVP stub] Орбитальная станция вокруг звезды для сбора звёздного вещества (водород, гелий) напрямую из фотосферы. Требует развитую термоядерную энергетику. Слой: космос (вокруг звезды).",
+      "category": "extraction",
+      "layer": ["space"],
+      "size": ["large", "huge"],
+      "energyConsumption": 0,
+      "baseProductionTime": 20,
+      "levels": 5,
+      "costPerLevel": { "Fe": 200, "Ti": 100, "Si": 150 },
+      "terrainBonus": {},
+      "requiresAtmosphere": false,
+      "requiresTechs": [
+        { "techId": "fusion_reactor", "minLevel": 5 }
+      ],
+      "bonuses": [
+        {
+          "target": "extraction_rate",
+          "operation": "add",
+          "value": 0.10,
+          "sourceTech": "fusion_reactor",
+          "minTechLevel": 5,
+          "perTechLevel": true,
+          "source": "starlift_collector_tech_fusion"
+        }
+      ]
+    },
+    {
+      "id": "deep_space_sensor",
+      "name": "Сеть глубокого космоса",
+      "description": "[Etap 4 / post-MVP stub] Орбитальная сенсорная сеть вокруг звезды для дальнего обнаружения флотов. Требует развитую сенсорную ветку вычислений. Слой: космос (вокруг звезды).",
+      "category": "research",
+      "layer": ["space"],
+      "size": ["medium", "large", "huge"],
+      "energyConsumption": 15,
+      "baseProductionTime": 0,
+      "levels": 5,
+      "costPerLevel": { "Fe": 150, "Si": 200, "Cu": 50 },
+      "terrainBonus": {},
+      "requiresAtmosphere": false,
+      "requiresTechs": [
+        { "techId": "short_range_sensors", "minLevel": 3 }
+      ]
+    }
+  ]
+}

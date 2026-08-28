@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useGameStore } from '@/stores/game-store';
-import { BUILDINGS, BUILDING_MAP, CATEGORY_NAMES } from '@/data/buildings';
+import { BUILDINGS, BUILDING_MAP, CATEGORY_NAMES, areBuildingTechsMet } from '@/data/buildings';
 import { ELEMENT_MAP } from '@/data/elements';
 import {
   Dialog,
@@ -57,6 +57,7 @@ const LAYER_LABELS: Record<BuildingLayer, string> = {
   surface: 'Поверхность',
   atmosphere: 'Атмосфера',
   orbit: 'Орбита',
+  space: 'Космос',
 };
 
 /** true если газовый гигант (нет гексов поверхности — только атмосферные/орбитальные слоты). */
@@ -69,6 +70,8 @@ export function BuildingDialog({ open, onOpenChange, planet, target }: BuildingD
   const buildOnAtmosphereSlot = useGameStore((s) => s.buildOnAtmosphereSlot);
   const buildOnOrbitSlot = useGameStore((s) => s.buildOnOrbitSlot);
   const upgradeBuildingOnHex = useGameStore((s) => s.upgradeBuildingOnHex);
+  // R-BLD-MOD: карта исследованных технологий для фильтра requiresTechs в BuildList.
+  const researched = useGameStore((s) => s.gameState?.researchState.researched ?? {});
 
   if (!planet || !target) return null;
 
@@ -229,6 +232,7 @@ export function BuildingDialog({ open, onOpenChange, planet, target }: BuildingD
                 planet={planet}
                 layer={layer}
                 target={target}
+                researched={researched}
                 buildOnHex={buildOnHex}
                 buildOnAtmosphereSlot={buildOnAtmosphereSlot}
                 buildOnOrbitSlot={buildOnOrbitSlot}
@@ -495,6 +499,7 @@ function BuildList({
   buildOnAtmosphereSlot,
   buildOnOrbitSlot,
   onClose,
+  researched,
 }: {
   planet: Planet;
   layer: BuildingLayer;
@@ -503,8 +508,11 @@ function BuildList({
   buildOnAtmosphereSlot: (planetId: string, slotIndex: number, buildingId: string) => boolean;
   buildOnOrbitSlot: (planetId: string, slotIndex: number, buildingId: string) => boolean;
   onClose: () => void;
+  researched: Record<string, number>;
 }) {
   // Filter buildings by layer + planet size + exclude colony_hub (auto-placed).
+  // R-BLD-MOD: также скрываем здания, чьи requiresTechs не выполнены —
+  // закрытые здания не видны в списке постройки (но видны в справочнике).
   const availableBuildings = BUILDINGS.filter((b) => {
     if (!b.layer.includes(layer)) return false;
     if (b.id === 'colony_hub') return false;
@@ -512,6 +520,8 @@ function BuildList({
     if (layer === 'surface' && !isGasGiant(planet)) {
       if (!b.size.includes(planet.size)) return false;
     }
+    // R-BLD-MOD: tech-gate — скрыть здания, требующие неизученные технологии.
+    if (!areBuildingTechsMet(b, researched)) return false;
     // Gas_extractor requiresAtmosphere — engine.buildOnAtmosphereSlot checks
     // planet.atmosphere.type === 'none' and returns false; we still SHOW the
     // building (greyed out if atmosphere is none) to inform the player.

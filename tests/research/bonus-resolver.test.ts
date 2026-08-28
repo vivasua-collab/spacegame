@@ -202,3 +202,77 @@ describe('R-RES §E — resolveBonuses', () => {
     expect(resolveBonuses(state, 'unknown_metric')).toBe(1.0);
   });
 });
+
+// ============================================================================
+// R-BLD-MOD: tech-sourced building bonuses (sourceTech / minTechLevel /
+// perTechLevel). Laboratory has a 2nd bonus:
+//   { target: 'research_rate', operation: 'add', value: 0.03,
+//     sourceTech: 'microelectronics', minTechLevel: 3, perTechLevel: true }
+// → начиная с microelectronics L3: +0.03 per tech-level above L2.
+// ============================================================================
+
+describe('R-BLD-MOD — tech-sourced building bonuses', () => {
+  test('laboratory has a 2nd (tech-sourced) bonus referencing microelectronics', () => {
+    const lab = BUILDING_MAP.get('laboratory');
+    expect(lab?.bonuses?.length).toBe(2);
+    const techBonus = lab?.bonuses?.[1];
+    expect(techBonus?.sourceTech).toBe('microelectronics');
+    expect(techBonus?.minTechLevel).toBe(3);
+    expect(techBonus?.perTechLevel).toBe(true);
+    expect(techBonus?.value).toBe(0.03);
+    expect(techBonus?.target).toBe('research_rate');
+    expect(techBonus?.operation).toBe('add');
+  });
+
+  test('microelectronics below minTechLevel (L0/L1/L2) → tech bonus inactive', () => {
+    // laboratory L3 building bonus = 0.02×3 = 0.06 → multiplier 1.06.
+    // tech bonus (microelectronics) inactive at L0/L1/L2.
+    for (const microLevel of [0, 1, 2]) {
+      const state = makeGameStateWithBuildings([
+        { hexIdx: 0, buildingId: 'laboratory', level: 3 },
+      ]);
+      state.researchState.researched['microelectronics'] = microLevel;
+      // 1 + 0.06 (building) + 0 (tech inactive) = 1.06
+      expect(resolveBonuses(state, 'research_rate')).toBeCloseTo(1.06, 5);
+    }
+  });
+
+  test('microelectronics at minTechLevel (L3) → +0.03×1 = 0.03', () => {
+    const state = makeGameStateWithBuildings([
+      { hexIdx: 0, buildingId: 'laboratory', level: 3 },
+    ]);
+    state.researchState.researched['microelectronics'] = 3;
+    // 1 + 0.06 (building L3) + 0.03×1 (tech L3, levels above min=1) = 1.09
+    expect(resolveBonuses(state, 'research_rate')).toBeCloseTo(1.09, 5);
+  });
+
+  test('microelectronics L5 → +0.03×3 = 0.09 (perTechLevel compounds)', () => {
+    const state = makeGameStateWithBuildings([
+      { hexIdx: 0, buildingId: 'laboratory', level: 3 },
+    ]);
+    state.researchState.researched['microelectronics'] = 5;
+    // 1 + 0.06 (building L3) + 0.03×3 (tech L5 → 5-3+1=3 levels) = 1.15
+    expect(resolveBonuses(state, 'research_rate')).toBeCloseTo(1.15, 5);
+  });
+
+  test('tech bonus active even with laboratory at L0 is ignored (building gate)', () => {
+    // building at level 0 → bonus-resolver skips the building entirely
+    // (line: `if (!hex.buildingId || hex.buildingLevel < 1) continue;`).
+    // So even with microelectronics L5, no bonus (building not built).
+    const state = makeGameStateWithBuildings([
+      { hexIdx: 0, buildingId: 'laboratory', level: 0 },
+    ]);
+    state.researchState.researched['microelectronics'] = 5;
+    expect(resolveBonuses(state, 'research_rate')).toBe(1.0);
+  });
+
+  test('starlift_collector (space layer) has tech-sourced extraction_rate bonus', () => {
+    // Sanity: stub building in space.json demonstrates tech-sourced bonus
+    // with sourceTech=fusion_reactor, minTechLevel=5.
+    const sc = BUILDING_MAP.get('starlift_collector');
+    expect(sc).toBeDefined();
+    expect(sc?.bonuses?.[0]?.sourceTech).toBe('fusion_reactor');
+    expect(sc?.bonuses?.[0]?.minTechLevel).toBe(5);
+    expect(sc?.bonuses?.[0]?.target).toBe('extraction_rate');
+  });
+});
