@@ -876,3 +876,205 @@ Stage Summary:
 - Agent-browser verified: research (RP/День, queue, ceiling), reference dialog (5 tabs + hex legend), planet badges visible.
 - MVP без противников (Block 04 AI — отложен, не тронут).
 - Изменено: 20 файлов, создано: 10 файлов (см. checkpoints/audit_2026_08_28_06_research_redesign.md).
+
+---
+Task ID: 19
+Agent: main
+Task: Большой рефакторинг — модульная data-driven система построек. Вынести определения построек из единого TS-файла в отдельные человеко-читаемые файлы (JSON), организованные по слою размещения: surface (поверхность), orbit (орбита), space (вокруг звёзд). Поля для построек на поверхности: тип поверхности, технологии для открытия, бонусы от уровней технологий (коэффициент влияния + с какого уровня начинается влияние).
+
+Work Log:
+- Прочитан worklog (tasks 1, 4, 17, 18 R-RES + R-BLD-REF) + ключевые файлы:
+  src/data/buildings.ts (287 строк, 14 зданий TS-массив), src/core/types.ts
+  (BuildingDef, Bonus, BuildingLayer), src/research/bonus-resolver.ts
+  (resolveBonuses + applyBuildingBonuses), src/economy/engine.ts
+  (buildOnHex/AtmosphereSlot/OrbitSlot), src/economy/economy-module.ts
+  (onBuild dispatch), src/components/game/building-dialog.tsx (BuildList),
+  src/components/game/reference-dialog.tsx (BuildingsTab), package.json,
+  tsconfig.json (resolveJsonModule:true), src/data/research/techs.json
+  (паттерн JSON), src/data/research/tech-tree.ts (thin loader паттерн),
+  scripts/validate-recipes.ts (validator паттерн).
+- Запущен Explore subagent для карты потребителей buildings.ts: 11 файлов
+  импортируют @/data/buildings (BUILDINGS/BUILDING_MAP/CATEGORY_NAMES/
+  CATEGORY_ICONS/LAYER_NAMES). Прямой итератор BUILDINGS — только 3 места
+  (building-dialog filter, reference-dialog catalog, lab-rp test). Никакой
+  код НЕ гейтит постройку по research (requiresTechs отсутствует; state
+  .unlockedBuildings пишется applyTechUnlock, но НИКЕМ не читается).
+  fusion_reactor unlock → несуществующее здание (баг, не тронут). Hardcoded
+  ID'ы в UI/engine/tests: colony_hub/mine/quarry/gas_extractor/processor/
+  synthesizer/refinery/solar_plant/nuclear_reactor/shipyard/warehouse/
+  open_warehouse/high_tech_storage/spaceport/laboratory — НЕ переименовывать.
+
+A. Types (src/core/types.ts):
+- BuildingLayer: + 'space' (вокруг звезды, post-MVP; движок не имеет
+  buildOnSpaceSlot, поэтому здания этого слоя видны в справке, но не
+  строятся на планетах — layer.includes('surface'/'atmosphere'/'orbit')
+ =false для всех build-функций).
+- BuildingDef: + requiresTechs?: { techId: string; minLevel: number }[]
+  (технологии для ОТКРЫТИЯ постройки; отсутствует = доступно с старта);
+  + terrainTypes?: HexTerrain[] (allowlist местности; отсутствует = любая,
+  отличается от terrainBonus который даёт множитель выхода).
+- Bonus: + sourceTech?: string (ID технологии-источника); + minTechLevel?:
+  number (с какого уровня начинается влияние, default 1); + perTechLevel?:
+  boolean (value × (techLevel - minTechLevel + 1) если true). Семантика:
+  building-sourced (без sourceTech) → value × buildingLevel (если perLevel);
+  tech-sourced (с sourceTech) → если researched[sourceTech] >= minTechLevel,
+  contribution = value × (perTechLevel ? techLevel - minTechLevel + 1 : 1).
+
+B. Data files (src/data/buildings/):
+- surface.json: 14 зданий (colony_hub, mine, quarry, gas_extractor,
+  processor, synthesizer, refinery, solar_plant, nuclear_reactor,
+  shipyard, warehouse, open_warehouse, high_tech_storage, laboratory).
+  Формат: { "comment": "...", "buildings": BuildingDef[] }.
+  synthesizer + refinery: + requiresTechs [{steel_processing, minLevel:1}]
+  (формализовало косметический хардкод b.id==='synthesizer'||'refinery').
+  laboratory: 2 bonuses — исходный building-sourced (+0.02/ур.зд. research_rate)
+  + новый tech-sourced (+0.03 research_rate от microelectronics>=3, perTechLevel).
+- orbit.json: spaceport (layer ['orbit']).
+- space.json: 2 post-MVP stubs — starlift_collector (layer ['space'],
+  category extraction, requiresTechs fusion_reactor>=5, bonus extraction_rate
+  +0.1 от fusion_reactor>=5 perTechLevel) + deep_space_sensor (layer ['space'],
+  category research, requiresTechs short_range_sensors>=3). Оба — Etap 4
+  stubs: layer 'space' (нет buildOnSpaceSlot), tech-gated, видны только в
+  справке (build-dialog фильтр layer.includes() их отсечёт).
+
+C. Loader (src/data/buildings/index.ts):
+- Импорт 3 JSON, каст через unknown (TS не может напрямую кастить JSON-
+  inferred типы к BuildingDef[] из-за string[] vs BuildingLayer[]); merge
+  в BUILDINGS (порядок surface→orbit→space); BUILDING_MAP = new Map.
+- Сохранён публичный API: BUILDINGS, BUILDING_MAP, CATEGORY_NAMES,
+  CATEGORY_ICONS, LAYER_NAMES (с + 'space':'Космос') — все 11 потребителей
+  работают без правок импортов.
+- + areBuildingTechsMet(building, researched) helper: pure функция, true
+  если requiresTechs отсутствует или все researched[techId] >= minLevel.
+- Старый src/data/buildings.ts удалён.
+
+D. bonus-resolver.ts (src/research/bonus-resolver.ts):
+- resolveBonuses: добавлен const researched = state.researchState.researched;
+  передаётся в applyBuildingBonuses для всех 3 источников (hexes/
+  atmosphericSlots/orbitSlots).
+- applyBuildingBonuses: + ветка sourceTech — если bonus.sourceTech задан,
+  проверка researched[sourceTech] >= minTechLevel (default 1); если порог
+  не достигнут → continue (бонус неактивен); иначе techLevels =
+  perTechLevel ? (techLevel - minTechLevel + 1) : 1; contrib = value ×
+  techLevels (add) или value^techLevels (multiply). Existing building-
+  sourced ветка (perLevel × buildingLevel) сохранена.
+
+E. Engine (src/economy/engine.ts) + economy-module.ts:
+- engine.ts: import + areBuildingTechsMet из @/data/buildings. buildOnHex /
+  buildOnAtmosphereSlot / buildOnOrbitSlot: + опциональный параметр
+  researched?: Record<string, number> (backward-compat: 3-арг вызовы из
+  tests/economy.test.ts работают — гейт пропускается). buildOnHex: +
+  terrainTypes allowlist проверка (if buildingDef.terrainTypes && length>0,
+  проверка includes(hex.terrain)); + requiresTechs гейт (if researched &&
+  !areBuildingTechsMet → return false). buildOnAtmosphereSlot/buildOnOrbitSlot:
+  + requiresTechs гейт. + ранние guard'ы if(!hex) return false / if(!slot)
+  return false (сузили noUncheckedIndexedAccess — TS теперь знает что
+  hex/slot определён после guard).
+- economy-module.ts onBuild: const researched = currentState.researchState
+  .researched (читается из currentState, не draft — research не меняется во
+  время build); передаётся во все 3 engine-функции → гейт АКТИВЕН в реальной
+  игре.
+
+F. UI:
+- building-dialog.tsx: + import areBuildingTechsMet; + const researched =
+  useGameStore(s => s.gameState?.researchState.researched ?? {}); передан
+  в BuildList как prop. BuildList: + researched в interface; filter
+  добавил if (!areBuildingTechsMet(b, researched)) return false (скрывает
+  закрытые здания — видны только в справочнике). LAYER_LABELS: + 'space':
+  'Космос' (Record<BuildingLayer,string> теперь требует все 4 ключа).
+- reference-dialog.tsx BuildingsTab: + import TECH_MAP. Заменён hardcoded
+  isTechRequired = b.id==='synthesizer'||'refinery' → data-driven
+  hasTechReq = (b.requiresTechs ?? []).length > 0. + блок «Требуется:» —
+  для каждого req рендерит TECH_MAP.get(req.techId)?.name ?? req.techId +
+  « ≥ ур.{minLevel}». + блок «Бонусы:» — для каждого bonus рендерит target,
+  operation (+/×), value, суффикс (/ур.зд. для building-sourced perLevel,
+  /ур.тех. для tech-sourced perTechLevel, «(фикс.)» иначе), источник
+  (building source OR «тех. {techName} ≥L{min}»).
+
+G. Validator (scripts/validate-buildings.ts + package.json):
+- Проверки: уникальность ID (нет дублей между файлами); layer ∈ {surface,
+  atmosphere, orbit, space}; category ∈ BuildingCategory; size ∈ PlanetSize;
+  terrainBonus keys ∈ HexTerrain; requiresTechs[].techId ∈ TECH_MAP;
+  bonuses[].sourceTech ∈ TECH_MAP (если задан); operation ∈ {add,multiply,
+  threshold}; minTechLevel >= 1; warning если sourceTech-бонус имеет perLevel
+  (избыточно). Вывод: разбивка по слоям, список tech-gated зданий с
+  требованиями, список зданий с бонусами. + «validate:buildings» в package.json.
+
+H. Tests:
+- tests/research/bonus-resolver.test.ts: + 6 тестов в новом describe блоке
+  «R-BLD-MOD — tech-sourced building bonuses»: laboratory имеет 2-й бонус
+  (sourceTech=microelectronics, minTechLevel=3, perTechLevel=true, value=0.03);
+  microelectronics L0/L1/L2 → tech бонус неактивен (множитель 1.06 от
+  building L3); L3 → 1.09 (+0.03×1); L5 → 1.15 (+0.03×3, 5-3+1=3 уровня);
+  building L0 → бонус игнорируется (building gate); starlift_collector имеет
+  tech-sourced extraction_rate бонус от fusion_reactor>=5.
+- tests/economy/building-tech-gate.test.ts: NEW (16 тестов): areBuildingTechsMet
+  helper (5 тестов — no requiresTechs / not researched / below minLevel / met
+  minLevel / refinery data-driven); buildOnHex backward-compat (2 — mine без
+  researched OK, synthesizer без researched OK gate skipped); buildOnHex с
+  researched (6 — mine всегда OK, synthesizer blocked/resources not consumed,
+  below minLevel blocked, met builds+consumes resources, refinery same, gate
+  failure no resource consumption); space layer rejection (3 — starlift
+  rejected by buildOnHex, by buildOnOrbitSlot, spaceport builds on orbit).
+
+I. Quality gates (all green):
+- bun run lint: 0 errors / 49 warnings (= baseline 49).
+- bunx tsc --noEmit: **159 errors** (baseline 168, **-9** — ранние guard'ы
+  if(!hex)/if(!slot) сузили noUncheckedIndexedAccess в 3 build-функциях).
+- bun test: **391 pass / 0 fail** (было 369; +22: 6 tech-sourced bonus + 16
+  building-tech-gate).
+- bun run validate:recipes: 75/75.
+- bun run validate:buildings: 17/17 valid (4 tech-gated: synthesizer,
+  refinery, starlift_collector, deep_space_sensor; 2 с бонусами: laboratory
+  2 бонуса, starlift_collector 1 бонус).
+- 0 новых tsc error-паттернов (line-number-agnostic diff: 41==41 unique).
+
+J. Agent-browser end-to-end verification (порт 3000):
+- dev-сервер стабилен в рамках одного bash-вызова (умирает между командами
+  — workaround: всё в одной команде). HTTP 200 на /.
+- Главное меню → Launch Game → игра загрузилась (layout с Save/Справка/
+  Исследования/Galaxy Map).
+- Справка → вкладка «Здания»: все 17 зданий видны (Колониальный хаб, Шахта,
+  Синтезатор, Очистительный комплекс, Лаборатория, Космопорт, Звёздный
+  лифт-сборщик, Сеть глубокого космоса и др.). Data-driven бейджи
+  «требует технологию» на synthesizer/refinery/starlift_collector/
+  deep_space_sensor. Блоки «Требуется:» — Обработка стали (для synth/refinery),
+  fusion_reactor (для starlift), short_range_sensors (для deep_space).
+  Блоки «Бонусы:» — Лаборатория: 2 бонуса research_rate (building-sourced
+  +0.02/ур.зд. + tech-sourced +0.03/ур.тех. от microelectronics≥L3);
+  Звёздный лифт: extraction_rate +0.1 от fusion_reactor≥L5.
+- Введение вкладки упоминает «data-driven из src/data/buildings/*.json».
+- dev.log: 0 runtime errors, все GET 200. agent-browser errors: пусто.
+
+Stage Summary:
+- Все требования пользователя выполнены:
+  1. ✅ Модульная система построек: данные во внешних JSON-файлах
+     (src/data/buildings/{surface,orbit,space}.json), тонкий TS-loader.
+  2. ✅ Удобный для редактирования человеком формат (JSON с comment-полем).
+  3. ✅ Отдельные файлы по слою: surface (поверхность), orbit (орбита),
+     space (вокруг звёзд — новый post-MVP слой).
+  4. ✅ Полный перечень что можем строить — в каждом файле (surface=14,
+     orbit=1, space=2 stubs). Добавление записи в JSON → автоматически
+     появляется в UI/справке (data-driven «infinite buildings»).
+  5. ✅ Поля для построек на поверхности: тип поверхности (terrainTypes
+     allowlist), технологии для открытия (requiresTechs), бонусы от
+     уровней технологий (sourceTech + minTechLevel + perTechLevel —
+     коэффициент влияния + с какого уровня начинается влияние).
+- Data-driven гейт построек: requiresTechs проверяется в engine build-
+  функциях (через researched) + UI фильтре BuildList (скрывает закрытые).
+- Bonus система расширена: tech-sourced бонусы (источник = уровень
+  технологии, не уровень здания), с minTechLevel порогом и perTechLevel
+  масштабированием. Демо: laboratory +3% research_rate от microelectronics≥L3.
+- Validator validate:buildings проверяет целостность каталога (ID уникальны,
+  tech-ссылки валидны, layer/category/size/terrain корректны).
+- Качественные метрики: lint 0/49, tsc 159 (-9 от baseline 168), tests
+  391/0 (+22), recipes 75/75, buildings 17/17.
+- Agent-browser: справка → Здания показывает все 17 зданий с data-driven
+  requiresTechs бейджами + «Требуется:» блоками + «Бонусы:» блоками
+  (building-sourced + tech-sourced). dev.log чист.
+- MVP без противников (Block 04 AI — отложен, не тронут).
+- Изменено: 8 файлов, создано: 7 файлов (3 JSON + index.ts + 2 теста +
+  validator + checkpoint). Commit ed24542, pushed to origin/main.
+- Конфликтов с предыдущими задачами нет: публичный API @/data/buildings
+  сохранён, research barrel не тронут, R-RES бонус-система расширена
+  обратно-совместимо.
