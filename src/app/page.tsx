@@ -5,6 +5,17 @@ import { useGameStore, type SaveInfo } from '@/stores/game-store';
 import { GameLayout } from '@/components/game/game-layout';
 import { Button } from '@/components/ui/button';
 import { Rocket, Save, Trash2, Loader2, FolderOpen, Dices } from 'lucide-react';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
 import { getGameMediator } from '@/core/game-mediator';
 
 /**
@@ -272,19 +283,12 @@ export default function Home() {
                         'Load'
                       )}
                     </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-7 text-xs text-red-400/60 hover:text-red-400 hover:bg-red-400/10 shrink-0"
+                    <DeleteSaveButton
+                      saveId={save.id}
+                      saveName={save.name}
                       disabled={deletingSaveId === save.id}
-                      onClick={() => handleDelete(save.id)}
-                    >
-                      {deletingSaveId === save.id ? (
-                        <Loader2 className="size-3.5 animate-spin" />
-                      ) : (
-                        <Trash2 className="size-3.5" />
-                      )}
-                    </Button>
+                      onDelete={() => handleDelete(save.id)}
+                    />
                   </div>
                 ))}
               </div>
@@ -296,5 +300,64 @@ export default function Home() {
       {/* Sticky footer */}
       <footer className="mt-auto pt-4 text-[10px] text-slate-700">SpaceGame v0.1</footer>
     </div>
+  );
+}
+
+/**
+ * R-27-sec (инцидент 2026-08-31): подтверждение удаления сейва.
+ *
+ * Во время верификации R-27 все 3 сейва были удалены из БД серией из 3
+ * «одновременных» DELETE-запросов (паттерн dev.log: DELETE × 3 → GET × 3;
+ * источник не установлен однозначно — внешний клиент через шлюз / серия
+ * кликов). Кнопка «мусорка» без подтверждения = потеря прогресса одним
+ * кликом. Теперь удаление требует явного подтверждения (AlertDialog,
+ * паттерн C9 — как «Начать новую игру» в game-layout).
+ */
+function DeleteSaveButton({
+  saveId,
+  saveName,
+  disabled,
+  onDelete,
+}: {
+  saveId: string;
+  saveName: string;
+  disabled: boolean;
+  onDelete: () => void;
+}) {
+  return (
+    <AlertDialog>
+      <AlertDialogTrigger asChild>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-7 text-xs text-red-400/60 hover:text-red-400 hover:bg-red-400/10 shrink-0"
+          disabled={disabled}
+          aria-label={`Удалить сейв ${saveName}`}
+        >
+          <Trash2 className="size-3.5" />
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>
+            Удалить сохранение?
+            <span className="sr-only">Сейв {saveId}</span>
+          </AlertDialogTitle>
+          <AlertDialogDescription>
+            «{saveName}» будет удалён безвозвратно. Прогресс этой галактики
+            будет потерян (файл дампа не создаётся).
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Отмена</AlertDialogCancel>
+          <AlertDialogAction
+            className="bg-red-600 text-white hover:bg-red-500"
+            onClick={onDelete}
+          >
+            Удалить
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }

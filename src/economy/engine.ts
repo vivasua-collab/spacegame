@@ -10,8 +10,16 @@ import { RECIPE_MAP } from '@/data/recipes';
 import { PROCESSOR_CATEGORIES } from '@/data/processor-categories';
 import { ELEMENT_MAP } from '@/data/elements';
 import { getCurrentLookups } from '@/data/baked-lookups';
-import { canStoreResource, calculateWarehouseCapacity, calculateWarehouseCapacities, getOrbitBufferCapacity, ensureReservesForResources } from '@/data/warehouse';
+import { canStoreResource, calculateWarehouseCapacity, calculateWarehouseCapacities, getOrbitBufferCapacity, ensureReservesForResources, getWarehouseType } from '@/data/warehouse';
 import { DIRECT_GAS_MAP, getAtmosphericGasesForType } from '@/data/atmosphere-gases';
+import {
+  BASE_CONSTRUCTION_RECIPE_IDS,
+  AUTO_PROCESSING_BATCH_SIZE,
+  AUTO_PROCESSING_LEVEL_INCREMENT,
+  AUTO_PROCESSING_MIN_INPUT,
+  AUTO_SPECIALIZATIONS,
+} from '@/data/auto-processing';
+import { resolveProcessorCategory } from '@/data/processor-recipe-categories';
 import { gameBus } from '@/core/typed-event-bus';
 import { getEnergyConsumptionMultiplier, getEnergyGenerationMultiplier, getMiningSpeedMultiplier, getProcessingSpeedMultiplier } from '@/economy/adjacency';
 
@@ -39,14 +47,18 @@ export function processEconomyTick(planets: Planet[], queues: Map<EntityId, Prod
     // 1. Добыча ресурсов зданиями
     processExtraction(planet);
 
-    // 2. Обработка очереди производства
+    // 2. R-27: авто-переработка базовых строительных руд переработчиками
+    //    (universal — все базовые; metal/nonmetal_smelting — своя категория с бустом)
+    processAutoProcessing(planet);
+
+    // 3. Обработка очереди производства
     processProductionQueue(planet, queues);
 
-    // 3. Расчёт энергетического баланса
+    // 4. Расчёт энергетического баланса
     const system = systemMap?.get(planet.systemId);
     recalcEnergyBalance(planet, system);
 
-    // 4. Автоматическое создание резервов для новых ресурсов
+    // 5. Автоматическое создание резервов для новых ресурсов
     ensureReservesForResources(planet);
   }
 }
@@ -188,6 +200,191 @@ function getAtmosphereEfficiency(type: string): number {
     case 'methane': return 0.7;
     case 'co2': return 0.5;
     default: return 0;
+  }
+}
+
+// ─── R-27: АВТО-ПЕРЕРАБОТКА БАЗОВЫХ СТРОИТЕЛЬНЫХ РЕСУРСОВ ──────────────────
+
+/**
+ * R-27 (жалоба владельца 2026-08-31 №2/№3/№4): авто-переработка руд базовых
+ * строительных ресурсов (Fe, Si, Al, C, Cu, Ti — объединение costPerLevel
+ * каталога зданий) переработчиками без ручной очереди.
+ *
+ * Режимы экземпляра processor:
+ *   - universal (базовая комплектация): все базовые рецепты, выход ×0.75
+ *     (baseYield), чистота 0.78 — как у ручной очереди;
+ *   - specialized в metal_smelting / nonmetal_smelting: только базовые
+ *     рецепты СВОЕЙ категории, буст специализированного выхода
+ *     («специализация даёт буст только в рамках базовых ресурсов» — владелец);
+ *   - прочие специализации (chemical_decomp, gas_processing, …): НЕ участвуют
+ *     в авто-режиме — продвинутые цепочки через ручную очередь / refinery /
+ *     synthesizer.
+ *
+ * Скорость за рецепт за экземпляр: (10 ед. входа / recipe.time) ×
+ * (1 + (L−1)×0.15) × Синергия processing_speed (mine_processor +15% за
+ * смежный экстрактор, warehouse_production +20% за смежный склад).
+ *
+ * Ограничения:
+ *   - входы НЕ расходуются ниже резерва minimum руды (пол — «в базовом складе
+ *     всегда есть зарезервированное место для минимального хранения»);
+ *   - выходы — через canStoreResource (ёмкость склада + долг резервов);
+ *   - энергия: гейт planet.energyBalance > 0 (постоянное потребление
+ *     переработчиков уже учтено в recalcEnergyBalance; recipe.energyCost
+ *     дополнительно НЕ списывается — авто-режим не двойной тариф).
+ */
+function processAutoProcessing(planet: Planet): void {
+  // Гейт энергии: без энергии переработчики стоят (баланс с прошлого тика —
+  // та же семантика, что у processProductionQueue P3-02).
+  if (planet.energyBalance <= 0) return;
+
+  const processorDef = BUILDING_MAP.get('processor');
+  if (!processorDef) return;
+
+  // Экземпляры переработчиков: surface (с индексом для Синергии) + слоты
+  interface ProcInstance {
+    level: number;
+    processorType: ProcessorType | undefined;
+    specialization: string | undefined;
+    specializationLevel: number;
+    hexIndex: number; // −1 для слотов (нет смежности)
+  }
+  const instances: ProcInstance[] = [];
+  for (let i = 0; i < planet.hexes.length; i++) {
+    const hex = planet.hexes[i];
+    if (!hex || hex.buildingId !== 'processor' || hex.buildingLevel < 1) continue;
+    instances.push({
+      level: hex.buildingLevel,
+      processorType: hex.processorType,
+      specialization: hex.specialization,
+      specializationLevel: hex.specializationLevel ?? 0,
+      hexIndex: i,
+    });
+  }
+  for (const slot of planet.atmosphericSlots) {
+    if (slot.buildingId !== 'processor' || slot.buildingLevel < 1) continue;
+    instances.push({
+      level: slot.buildingLevel,
+      processorType: slot.processorType,
+      specialization: slot.specialization,
+      specializationLevel: slot.specializationLevel ?? 0,
+      hexIndex: -1,
+    });
+  }
+  for (const slot of planet.orbitSlots) {
+    if (slot.buildingId !== 'processor' || slot.buildingLevel < 1) continue;
+    instances.push({
+      level: slot.buildingLevel,
+      processorType: slot.processorType,
+      specialization: slot.specialization,
+      specializationLevel: slot.specializationLevel ?? 0,
+      hexIndex: -1,
+    });
+  }
+  if (instances.length === 0) return;
+
+  for (const instance of instances) {
+    // Режим: universal → все базовые; base-специализация → своя категория
+    const isUniversal = !instance.processorType || instance.processorType === 'universal';
+    const isBaseSpec = instance.processorType === 'specialized'
+      && instance.specialization !== undefined
+      && AUTO_SPECIALIZATIONS.includes(instance.specialization);
+    if (!isUniversal && !isBaseSpec) continue;
+
+    // Скорость: базовая партия × уровень × Синергия (только surface-гексы)
+    const levelMult = 1 + (instance.level - 1) * AUTO_PROCESSING_LEVEL_INCREMENT;
+    const synergyMult = instance.hexIndex >= 0
+      ? getProcessingSpeedMultiplier(planet, instance.hexIndex)
+      : 1;
+
+    for (const recipeId of BASE_CONSTRUCTION_RECIPE_IDS) {
+      // Специализированный экземпляр берёт только рецепты своей категории
+      if (isBaseSpec && instance.specialization !== undefined
+        && resolveProcessorCategory(recipeId, 'processor')?.category !== instance.specialization) {
+        continue;
+      }
+      const recipe = RECIPE_MAP.get(recipeId);
+      if (!recipe) continue;
+
+      // Батч: batchSize ед. входа за recipe.time тиков
+      const batchInput = Object.values(recipe.inputs).reduce((s, v) => s + (v ?? 0), 0);
+      if (batchInput <= 0) continue;
+      const ratePerTick = (AUTO_PROCESSING_BATCH_SIZE / recipe.time) * levelMult * synergyMult;
+
+      // Доля партии за тик (0..ratePerTick/batchInput), ограниченная:
+      //   - скоростью (ratePerTick / batchInput);
+      //   - запасом входов над резервным полом (minimum руды — не трогаем).
+      let fraction = ratePerTick / batchInput;
+      for (const [inputId, inputAmount] of Object.entries(recipe.inputs)) {
+        const stock = planet.resources[inputId] ?? 0;
+        const floor = planet.warehouse?.reserves[inputId]?.minimum ?? 0;
+        const usable = Math.max(0, stock - floor);
+        const inputFraction = usable / (inputAmount ?? 1);
+        if (inputFraction <= 0) { fraction = 0; break; }
+        if (inputFraction < fraction) fraction = inputFraction;
+      }
+      if (fraction <= 0) continue;
+
+      // Выход и чистота: те же формулы, что у ручной очереди
+      // (calculateProcessorOutputMultiplier; activeRecipes = [recipeId] —
+      // авто-режим гонит рецепты последовательно, штраф мульти-рецепта не
+      // накладывается).
+      const instanceLike = {
+        processorType: (instance.processorType ?? 'universal') as ProcessorType,
+        specialization: instance.specialization as ProcessorRecipeCategory | undefined,
+        specializationLevel: instance.specializationLevel,
+        activeRecipes: [recipeId],
+      };
+      const { yieldMult, purity } = calculateProcessorOutputMultiplier(processorDef, instanceLike);
+
+      // Ограничение по месту под выходы: доля партии уменьшается до
+      // «влезания» ВСЕХ выходов ВМЕСТЕ (несколько выходов одного рецепта
+      // делят склад: Fe и O — оба processed). Итеративно накапливаем желаемые
+      // объёмы по типам склада; если сумма не влезает (canStoreResource с
+      // учётом долга резервов) — ужать долю на min(storable/combined).
+      // Одного ужатия достаточно: ограничения монотонны (последний выход в
+      // каждом складе даёт полную сумму, свой выход — свой avail).
+      {
+        let minAllowed = 1;
+        const desiredByType = new Map<string, number>();
+        for (const [outputId, outputAmount] of Object.entries(recipe.outputs)) {
+          const desired = fraction * (outputAmount ?? 0) * yieldMult;
+          if (desired <= 0) continue;
+          const whType = getWarehouseType(outputId);
+          const combined = (desiredByType.get(whType) ?? 0) + desired;
+          const storable = canStoreResource(planet, outputId, combined);
+          if (storable < combined - 1e-12) {
+            const allowed = storable / combined;
+            if (allowed <= 0) { minAllowed = 0; break; }
+            if (allowed < minAllowed) minAllowed = allowed;
+          }
+          desiredByType.set(whType, combined);
+        }
+        if (minAllowed < 1) fraction *= minAllowed;
+      }
+      if (fraction * batchInput < AUTO_PROCESSING_MIN_INPUT) continue;
+
+      // Списание входов
+      for (const [inputId, inputAmount] of Object.entries(recipe.inputs)) {
+        const consumed = fraction * (inputAmount ?? 0);
+        const left = (planet.resources[inputId] ?? 0) - consumed;
+        if (left > 0) planet.resources[inputId] = left;
+        else delete planet.resources[inputId];
+      }
+
+      // Начисление выходов (средневзвешенная чистота — как в очереди)
+      if (!planet.resourcePurity) planet.resourcePurity = {};
+      for (const [outputId, outputAmount] of Object.entries(recipe.outputs)) {
+        const produced = fraction * (outputAmount ?? 0) * yieldMult;
+        if (produced <= 0) continue;
+        const prevAmount = planet.resources[outputId] ?? 0;
+        const prevPurity = planet.resourcePurity[outputId] ?? 1.0;
+        const newTotal = prevAmount + produced;
+        planet.resources[outputId] = newTotal;
+        planet.resourcePurity[outputId] = newTotal > 0
+          ? (prevPurity * prevAmount + purity * produced) / newTotal
+          : purity;
+      }
+    }
   }
 }
 

@@ -9,7 +9,7 @@ import { RECIPE_MAP } from '@/data/recipes';
 import { ELEMENT_MAP } from '@/data/elements';
 import { getCurrentLookups, findResourceDisplay } from '@/data/baked-lookups';
 import { CATEGORY_LABELS } from '@/data/element-helpers';
-import { getUsedCapacity, getOrbitBufferUsed, getSpecInfo, getResourceType, getResourceCategory } from '@/data/warehouse';
+import { getUsedCapacity, getUsedCapacityByType, calculateWarehouseCapacities, getOrbitBufferUsed, getSpecInfo, getResourceType, getResourceCategory } from '@/data/warehouse';
 import { BuildingDialog, type BuildingDialogTarget } from './building-dialog';
 import { ResourcePanel } from './resource-panel';
 import { ShipyardDialog } from './shipyard-dialog';
@@ -965,15 +965,26 @@ function WarehousePanel({ planet }: { planet: Planet }) {
   const orbitUsed = getOrbitBufferUsed(planet);
   const orbitPct = wh.orbitBuffer.capacity > 0 ? (orbitUsed / wh.orbitBuffer.capacity) * 100 : 0;
 
+  // R-27 (v3.1): раздельные показатели по 4 складам (включая газовый).
+  // calculateWarehouseCapacities считает газовый склад всегда (фолбэк базы
+  // для старых сейвов без capacities.gas).
+  const caps = calculateWarehouseCapacities(planet);
+  const warehouseRows: Array<{ key: 'ore' | 'processed' | 'highTech' | 'gas'; label: string; icon: string; cap: number }> = [
+    { key: 'ore', label: 'Рудный', icon: '⛏', cap: caps.ore },
+    { key: 'processed', label: 'Элементы', icon: '⚙', cap: caps.processed },
+    { key: 'highTech', label: 'Высокотех', icon: '🔬', cap: caps.highTech },
+    { key: 'gas', label: 'Газовый', icon: '💨', cap: caps.gas },
+  ];
+
   // Reserve entries sorted by priority (highest first)
   const reserveEntries = Object.values(wh.reserves).sort((a, b) => b.priority - a.priority);
 
   return (
     <div className="space-y-4">
-      {/* Capacity bar */}
+      {/* Capacity bars: R-27 — раздельно по 4 складам + общий итог */}
       <div className="space-y-1">
         <div className="flex justify-between text-xs">
-          <span className="text-slate-400">Вместимость</span>
+          <span className="text-slate-400">Вместимость (всего)</span>
           <span className="font-mono text-slate-300">{Math.floor(used)} / {wh.totalCapacity}</span>
         </div>
         <div className="h-2.5 bg-white/5 rounded-full overflow-hidden">
@@ -983,6 +994,28 @@ function WarehousePanel({ planet }: { planet: Planet }) {
             }`}
             style={{ width: `${Math.min(100, pct)}%` }}
           />
+        </div>
+        <div className="grid grid-cols-2 gap-x-3 gap-y-1 pt-1">
+          {warehouseRows.map(({ key, label, icon, cap }) => {
+            const typeUsed = getUsedCapacityByType(planet, key);
+            const typePct = cap > 0 ? (typeUsed / cap) * 100 : 0;
+            return (
+              <div key={key} className="space-y-0.5">
+                <div className="flex justify-between text-[10px]">
+                  <span className="text-slate-500">{icon} {label}</span>
+                  <span className="font-mono text-slate-400">{Math.floor(typeUsed)}/{cap}</span>
+                </div>
+                <div className="h-1.5 bg-white/5 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all ${
+                      typePct > 90 ? 'bg-red-500' : typePct > 70 ? 'bg-amber-500' : 'bg-emerald-500'
+                    }`}
+                    style={{ width: `${Math.min(100, typePct)}%` }}
+                  />
+                </div>
+              </div>
+            );
+          })}
         </div>
       </div>
 

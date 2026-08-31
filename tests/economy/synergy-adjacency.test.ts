@@ -204,16 +204,18 @@ describe('R-SYNERGY v2 — mining_cluster (Задача 24: добыча уск�
     expect(getMiningSpeedMultiplier(planet, 1)).toBe(1);
   });
 
-  test('не-экстрактор (переработчик рядом с шахтами) → НЕТ mining_speed', () => {
+  test('не-экстрактор (переработчик рядом с шахтами) → НЕТ mining_speed, но processing_speed (R-27 mine_processor)', () => {
     const planet = makePlanet([
       { q: 0, r: 0, id: 'processor' },
       { q: 1, r: 0, id: 'mine' },
       { q: 0, r: 1, id: 'mine' },
     ]);
-    // Кросс-типовое правило mine_processor отложено (Задача 24) —
-    // переработчик не получает ни mining_speed, ни processing_speed.
+    // R-27: кросс-типовое правило mine_processor ВОЗВРАЩЕНО (владелец,
+    // жалоба 2026-08-31 №2 «не могу определить её реальное влияние»):
+    // переработчик НЕ получает mining_speed, но получает processing_speed
+    // +15% за 1-го смежного экстрактора, +7.5% за 2-го (decay 0.5).
     expect(getSynergyContribution(planet, 0, 'mining_speed')).toBe(0);
-    expect(getProcessingSpeedMultiplier(planet, 0)).toBe(1);
+    expect(getProcessingSpeedMultiplier(planet, 0)).toBeCloseTo(1.225, 10);
   });
 
   test('уровень 0 соседа не считается (docs §5.3.2)', () => {
@@ -460,6 +462,7 @@ describe('R-24 — чистые хелперы энергии (единая фо
   test('каталог: солнечная станция и ядерный реактор существуют (валидность правил)', () => {
     expect(BUILDING_MAP.has('solar_plant')).toBe(true);
     expect(BUILDING_MAP.has('nuclear_reactor')).toBe(true);
-    expect(SYNERGY_RULES.length).toBe(4);
+    // R-27: +3 правила (generator_cluster, mine_processor, warehouse_production)
+    expect(SYNERGY_RULES.length).toBe(7);
   });
 });
