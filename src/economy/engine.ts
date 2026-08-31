@@ -13,7 +13,7 @@ import { getCurrentLookups } from '@/data/baked-lookups';
 import { canStoreResource, calculateWarehouseCapacity, calculateWarehouseCapacities, getOrbitBufferCapacity, ensureReservesForResources } from '@/data/warehouse';
 import { DIRECT_GAS_MAP, getAtmosphericGasesForType } from '@/data/atmosphere-gases';
 import { gameBus } from '@/core/typed-event-bus';
-import { getEnergyConsumptionMultiplier, getProcessingSpeedMultiplier } from '@/economy/adjacency';
+import { getEnergyConsumptionMultiplier, getEnergyGenerationMultiplier, getMiningSpeedMultiplier, getProcessingSpeedMultiplier } from '@/economy/adjacency';
 
 /**
  * Детерминированный счётчик ProductionItem IDs (gap-6, P9).
@@ -59,8 +59,9 @@ export function processEconomyTick(planets: Planet[], queues: Map<EntityId, Prod
  */
 function processExtraction(planet: Planet): void {
   // Surface buildings
-  for (const hex of planet.hexes) {
-    if (!hex.buildingId) continue;
+  for (let i = 0; i < planet.hexes.length; i++) {
+    const hex = planet.hexes[i];
+    if (!hex || !hex.buildingId) continue;
     const buildingDef = BUILDING_MAP.get(hex.buildingId);
     if (!buildingDef) continue;
 
@@ -74,13 +75,17 @@ function processExtraction(planet: Planet): void {
       const terrainMult = hex.terrain in (buildingDef.terrainBonus ?? {})
         ? (buildingDef.terrainBonus as Record<string, number>)[hex.terrain] ?? 1
         : 1;
+      // R-SYNERGY v2 mining_cluster (Задача 24): экстракторы одного
+      // подтипа ускоряют добычу друг друга (+10% за смежного, стекинг
+      // ×0.5^(n−1)) — добывающие здания дают бонус СКОРОСТИ ДОБЫЧИ.
+      const miningMult = getMiningSpeedMultiplier(planet, i);
 
       for (const deposit of hex.deposits) {
         if (deposit.quantity <= 0) continue;
 
         // 1 тик = 1 день. Базовая скорость: ~1 единица/день при availability=0.5
         const baseRate = 1.0 * deposit.availability;
-        const amount = baseRate * levelMult * terrainMult;
+        const amount = baseRate * levelMult * terrainMult * miningMult;
         const requested = Math.min(amount, deposit.quantity);
 
         // Audit Pass 2 P1-1 (fix): only debit the deposit for the portion
@@ -473,11 +478,90 @@ export function calculateProcessorOutputMultiplier(
 }
 
 /**
+ * R-24 (Задача 24): чистый хелпер выработки энергии зданием за тик.
+ *
+ * ЕДИНАЯ формула для engine (recalcEnergyBalance) и UI (building-dialog —
+ * «реальное отображение в построенном здании»): раньше UI показывал
+ * захардкоженное «+10/tick», игнорируя уровень, светимость звезды (P1-26)
+ * и орбитальный бонус — теперь диалог показывает ровно то, что считает
+ * движок (без синергии power_boost — она добавляется отдельно, т.к. engine
+ * применяет её только на гексах поверхности).
+ *
+ * Формулы (docs/30-energy.md / 40-buildings.md):
+ *   - solar_plant:  10 × (1 + L×0.2) × светимость / max(0.01, R) × (orbit? 1.2 : 1)
+ *     (P1-26 — выработка зависит от светимости звезды и расстояния;
+ *     орбитальные станции работают в 1.2× лучше — нет затухания в атмосфере);
+ *   - nuclear_reactor: 25 × (1 + L×0.2) (P2-06/P2-07 — без светимости);
+ *   - прочие energy:  10 × (1 + L×0.2) (fallback);
+ *   - colony_hub (только surface): 5 × (1 + L×0.2);
+ *   - остальные: 0.
+ *
+ * @param buildingId     id здания из каталога
+ * @param buildingLevel  уровень (≥1; 0 → 0)
+ * @param layer          слой размещения (orbit → solar ×1.2)
+ * @param starLuminosity светимость звезды (L_sun); при отсутствии — 1.0
+ * @param orbitalRadius  орб. радиус планеты (дистанционный фактор P1-26)
+ */
+export function getBuildingEnergyOutput(
+  buildingId: string,
+  buildingLevel: number,
+  layer: 'surface' | 'atmosphere' | 'orbit',
+  starLuminosity: number,
+  orbitalRadius: number,
+): number {
+  const def = BUILDING_MAP.get(buildingId);
+  if (!def || buildingLevel < 1) return 0;
+  const levelMult = 1 + buildingLevel * 0.2;
+  const distanceFactor = Math.max(0.01, orbitalRadius);
+  const orbitBonus = layer === 'orbit' ? 1.2 : 1.0;
+
+  if (def.category === 'energy') {
+    if (def.id === 'solar_plant') {
+      // P1-26: power_output = base_output × level × star_luminosity / distance_factor
+      // Orbit solar plants work 1.2× better (no atmosphere attenuation).
+      return 10 * levelMult * Math.max(0.0001, starLuminosity) / distanceFactor * orbitBonus;
+    }
+    if (def.id === 'nuclear_reactor') {
+      // P2-06/P2-07: nuclear plant base output = 25, no luminosity factor
+      return 25 * levelMult;
+    }
+    return 10 * levelMult; // fallback for unknown energy buildings
+  }
+  if (def.id === 'colony_hub') {
+    // Colony hub: базовая энергия 5 — только на surface (строится только там).
+    return layer === 'surface' ? 5 * levelMult : 0;
+  }
+  return 0;
+}
+
+/**
+ * R-24 (Задача 24): чистый хелпер энергопотребления здания за тик.
+ *
+ * Базовая формула engine: energyConsumption × (1 + L×0.2) — тот же расчёт,
+ * что в recalcEnergyBalance (без синергии power_grid; движок применяет её
+ * только на гексах поверхности). UI показывает потребление с учётом уровня.
+ */
+export function getBuildingEnergyConsumption(
+  buildingId: string,
+  buildingLevel: number,
+): number {
+  const def = BUILDING_MAP.get(buildingId);
+  if (!def || buildingLevel < 1) return 0;
+  return def.energyConsumption * (1 + buildingLevel * 0.2);
+}
+
+/**
  * Пересчёт энергетического баланса планеты.
  * P1-26: Солнечная станция зависит от светимости звезды и расстояния.
  *
  * (C4 — audit §2.3: ранее 3 отдельных цикла по surface/atmosphere/orbit с дублированной
  * логикой. Объединены в один helper `processBuildingEnergy` + 3 коротких цикла.)
+ *
+ * R-SYNERGY v2 (Задача 24):
+ *   - потребители на гексах поверхности: множитель энергопотребления от
+ *     смежных электростанций (power_grid, −5% за станцию);
+ *   - генераторы на гексах поверхности: множитель ВЫРАБОТКИ от смежных
+ *     потребителей (power_boost, +5% за потребителя, стекинг ×0.5^(n−1)).
  */
 export function recalcEnergyBalance(planet: Planet, system?: StarSystem): void {
   let production = 0;
@@ -485,13 +569,12 @@ export function recalcEnergyBalance(planet: Planet, system?: StarSystem): void {
 
   // Get star luminosity if available (P2-26: guard against black holes with ~0 luminosity)
   const starLuminosity = Math.max(0.0001, system?.stars[0]?.luminosity ?? 1.0);
-  const distanceFactor = Math.max(0.01, planet.orbitalRadius);
 
   // Helper: process one building's energy contribution (C4 — extracted from 3 inline copies).
   // layer: 'surface' | 'atmosphere' | 'orbit' — affects solar_plant bonus (orbit ×1.2)
   //        and colony_hub special-case (only on surface).
-  // R-SYNERGY: для зданий на гексах поверхности применяется множитель
-  // энергопотребления от смежных электростанций (−5% за станцию, docs §5.1).
+  // R-SYNERGY: для зданий на гексах поверхности применяются множители
+  // энергопотребления (power_grid) и выработки (power_boost), docs §5.1.
   const processBuildingEnergy = (
     buildingId: string | null | undefined,
     buildingLevel: number,
@@ -503,19 +586,16 @@ export function recalcEnergyBalance(planet: Planet, system?: StarSystem): void {
     if (!buildingDef) return;
 
     const levelMult = 1 + buildingLevel * 0.2;
-    const orbitBonus = layer === 'orbit' ? 1.2 : 1.0;
 
     if (buildingDef.category === 'energy') {
-      if (buildingDef.id === 'solar_plant') {
-        // P1-26: power_output = base_output × level × star_luminosity / distance_factor
-        // Orbit solar plants work 1.2× better (no atmosphere attenuation).
-        production += 10 * levelMult * starLuminosity / distanceFactor * orbitBonus;
-      } else if (buildingDef.id === 'nuclear_reactor') {
-        // P2-06/P2-07: nuclear plant base output = 25, no luminosity factor
-        production += 25 * levelMult;
-      } else {
-        production += 10 * levelMult; // fallback for unknown energy buildings
-      }
+      // Базовая выработка (единая формула с UI-хелпером getBuildingEnergyOutput).
+      const base = getBuildingEnergyOutput(buildingDef.id, buildingLevel, layer, starLuminosity, planet.orbitalRadius);
+      // R-SYNERGY v2 power_boost: генератор на гексе поверхности получает
+      // +выработку за смежных потребителей (+5% за каждого, стекинг).
+      const synergyMult = layer === 'surface' && hexIndex >= 0
+        ? getEnergyGenerationMultiplier(planet, hexIndex)
+        : 1;
+      production += base * synergyMult;
     } else if (buildingDef.id === 'colony_hub') {
       // Colony hub: базовая энергия 5 — только на surface (colony_hub строится только там).
       if (layer === 'surface') {

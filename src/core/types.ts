@@ -301,29 +301,45 @@ export interface BuildingDef {
 }
 
 /**
- * R-SYNERGY: правило Синергии — бонус соседства (docs/40-buildings.md §5).
+ * R-SYNERGY v2 (Задача 24): правило Синергии — бонус соседства,
+ * привязанный к ТИПАМ зданий (docs/40-buildings.md §5).
  *
- * Здание из sourceBuildingIds ПОЛУЧАЕТ бонус, если в соседнем гексе стоит
- * здание из neighborBuildingIds. Стекинг с убывающей отдачей (§5.2):
- * n-й подходящий сосед даёт value × stackDecay^(n-1).
+ * Здание, чей тип входит в sourceTypes, ПОЛУЧАЕТ бонус, если в соседнем
+ * гексе стоит здание, чей тип входит в neighborTypes. Стекинг с убывающей
+ * отдачей (§5.2): n-й подходящий сосед даёт value × stackDecay^(n-1).
+ *
+ * ТИПЫ (производные от category каталога, см. data/buildings/synergy.ts):
+ *   generator (energy) · extractor (extraction) · processor (processing) ·
+ *   research · storage (logistics) · production · colony · military.
+ * Псевдо-тип-роль 'consumer' — любое здание с energyConsumption > 0
+ * (генераторы не потребляют → не матчатся). '*' — любой тип.
+ *
+ * ПОДТИП = buildingId (solar_plant ≠ nuclear_reactor, mine ≠ quarry).
+ * Флаг sameSubtypeOnly: бонус только между зданиями ОДНОГО подтипа —
+ * «подтипы не дают бонусов друг другу» (владелец, Задача 24).
  *
  * bonusTarget:
- *   - 'research_rate'    — аддитивный вклад в множитель RP/сек (bonus-resolver).
- *   - 'processing_speed' — аддитивный вклад в скорость очереди производства.
- *   - 'energy_consumption' — вклад в снижение энергопотребления получателя
+ *   - 'research_rate'      — аддитивный вклад в множитель RP/сек (bonus-resolver).
+ *   - 'processing_speed'   — аддитивный вклад в скорость очереди производства.
+ *   - 'energy_consumption' — снижение энергопотребления получателя
  *                            (value отрицательное; recalcEnergyBalance).
- *
- * Специальное значение sourceBuildingIds: ["*"] — правило действует для
- * любого здания (кроме самих источников — электростанции не снижают своё
- * потребление, т.к. оно равно 0).
+ *   - 'energy_generation'  — бонус к выработке энергии генератора
+ *                            (recalcEnergyBalance, R-24 power_boost).
+ *   - 'mining_speed'       — бонус к скорости добычи экстрактора
+ *                            (processExtraction, R-24 mining_cluster).
  */
 export interface SynergyRule {
   id: string;
   description: string;
-  /** Здания, которые ПОЛУЧАЮТ бонус. ["*"] = любое здание. */
-  sourceBuildingIds: string[];
-  /** Соседние здания, которые ДАЮТ бонус. */
-  neighborBuildingIds: string[];
+  /** Типы зданий, которые ПОЛУЧАЮТ бонус. ["*"] = любой тип. */
+  sourceTypes: string[];
+  /** Типы соседних зданий, которые ДАЮТ бонус. */
+  neighborTypes: string[];
+  /**
+   * Бонус только между зданиями одного подтипа (подтип = buildingId).
+   * true → сосед должен иметь тот же buildingId, что и получатель.
+   */
+  sameSubtypeOnly?: boolean;
   /** Целевая метрика (см. комментарий выше). */
   bonusTarget: string;
   /** Величина бонуса (доля; для energy_consumption — отрицательная). */

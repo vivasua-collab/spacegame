@@ -1,8 +1,12 @@
 /**
- * R-SYNERGY: движок Синергии — бонусы соседства (adjacency bonuses).
+ * R-SYNERGY v2 (Задача 24): движок Синергии — ТИПОВЫЕ бонусы соседства.
  *
  * Реализует docs/40-buildings.md §5 (data-driven из src/data/buildings/synergy.json):
  *   - Смежные здания (соседние гексы, axial-координаты) дают бонусы соседства.
+ *   - Матчинг по ТИПАМ зданий (generator/extractor/processor/research/storage/
+ *     production/colony/military + псевдо-роль consumer = energyConsumption > 0).
+ *   - ПОДТИП = buildingId; флаг sameSubtypeOnly запрещает бонусы между
+ *     разными подтипами одного типа (solar_plant ↔ nuclear_reactor — нет).
  *   - Стекинг с убывающей отдачей (§5.2): n-й подходящий сосед даёт
  *     value × stackDecay^(n-1). Пример: переработчик окружён 3 шахтами →
  *     0.15 + 0.15×0.5 + 0.15×0.25 = 0.2625 (+26.25%).
@@ -16,13 +20,21 @@
  *
  * Точки интеграции:
  *   - research/bonus-resolver.ts: research_rate (кластеры лабораторий §5.1).
- *   - economy/engine.ts recalcEnergyBalance: energy_consumption (электростанции).
- *   - economy/engine.ts processProductionQueue: processing_speed (шахта/склад
- *     смежны с переработчиком).
+ *   - economy/engine.ts recalcEnergyBalance: energy_consumption (потребители
+ *     у электростанций) + energy_generation (power_boost: электростанция
+ *     получает +выработку за смежных потребителей).
+ *   - economy/engine.ts processExtraction: mining_speed (mining_cluster:
+ *     экстракторы одного подтипа ускоряют добычу друг друга).
+ *   - economy/engine.ts processProductionQueue: processing_speed (кросс-
+ *     типовые правила отложены, Задача 24).
  */
 
 import type { Planet, SynergyRule, HexCell } from '@/core/types';
-import { SYNERGY_RULES } from '@/data/buildings/synergy';
+import {
+  SYNERGY_RULES,
+  getSynergyBuildingType,
+  isEnergyConsumer,
+} from '@/data/buildings/synergy';
 
 /** 6 направлений соседства axial-координат (docs/40-buildings.md §4). */
 const HEX_DIRECTIONS: ReadonlyArray<{ q: number; r: number }> = [
@@ -63,26 +75,43 @@ function isBuilt(cell: { buildingId: string | null; buildingLevel: number }): bo
   return cell.buildingId !== null && cell.buildingLevel > 0;
 }
 
-/** Здание подходит под список id (["*"] = любое непустое здание). */
-function matchesIdList(buildingId: string | null, list: string[]): boolean {
+/**
+ * Подходит ли здание под список ТИПОВ (Задача 24 — матчинг по типам):
+ *   - 'consumer' — псевдо-тип-роль: любое здание с energyConsumption > 0
+ *     (генераторы не потребляют → solar/nuclear не матчатся друг с другом);
+ *   - 'generator' | 'extractor' | 'processor' | 'research' | 'storage' |
+ *     'production' | 'colony' | 'military' — тип от category каталога;
+ *   - '*' — любой тип.
+ */
+function matchesTypeList(buildingId: string | null, types: string[]): boolean {
   if (!buildingId) return false;
-  return list.includes('*') || list.includes(buildingId);
+  for (const type of types) {
+    if (type === '*') return true;
+    if (type === 'consumer') {
+      if (isEnergyConsumer(buildingId)) return true;
+      continue;
+    }
+    if (getSynergyBuildingType(buildingId) === type) return true;
+  }
+  return false;
 }
 
 /**
- * Сколько соседей гекса дают бонус по правилу (за вычетом случая, когда
- * «получатель» сам входит в neighborBuildingIds — электростанция не даёт
- * бонус соседней электростанции по правилу power_grid, т.к. та не имеет
- * энергопотребления; впрочем, это фильтруется самим списком sources).
+ * Сколько соседей гекса дают бонус по правилу.
+ *
+ * §5.3.2: сосед должен быть ПОСТРОЕН (buildingLevel ≥ 1).
+ * sameSubtypeOnly: сосед должен быть ТОГО ЖЕ подтипа (buildingId), что и
+ * получатель — «подтипы не дают бонусов друг другу» (Задача 24).
  */
 export function countSynergyNeighbors(planet: Planet, hexIndex: number, rule: SynergyRule): number {
+  const hex = planet.hexes[hexIndex];
   let count = 0;
   for (const idx of getNeighborIndices(planet, hexIndex)) {
     const neighbor = planet.hexes[idx];
-    // §5.3.2: сосед должен быть ПОСТРОЕН (buildingLevel ≥ 1, а не просто id).
-    if (neighbor && isBuilt(neighbor) && matchesIdList(neighbor.buildingId, rule.neighborBuildingIds)) {
-      count++;
-    }
+    if (!neighbor || !isBuilt(neighbor)) continue;
+    if (!matchesTypeList(neighbor.buildingId, rule.neighborTypes)) continue;
+    if (rule.sameSubtypeOnly && hex && neighbor.buildingId !== hex.buildingId) continue;
+    count++;
   }
   return count;
 }
@@ -106,10 +135,11 @@ export function getSynergyBonusValue(planet: Planet, hexIndex: number, rule: Syn
 
 /**
  * Суммарный вклад Синергии для гекса по целевой метрике (все правила
- * с данным bonusTarget, где гекс подходит под sourceBuildingIds).
+ * с данным bonusTarget, где гекс подходит под sourceTypes).
  *
- * Для research_rate / processing_speed — положительный вклад (доля);
- * для energy_consumption — отрицательный (снижение потребления).
+ * Для research_rate / processing_speed / energy_generation / mining_speed —
+ * положительный вклад (доля); для energy_consumption — отрицательный
+ * (снижение потребления).
  */
 export function getSynergyContribution(planet: Planet, hexIndex: number, target: string): number {
   const hex = planet.hexes[hexIndex];
@@ -117,7 +147,7 @@ export function getSynergyContribution(planet: Planet, hexIndex: number, target:
   let total = 0;
   for (const rule of SYNERGY_RULES) {
     if (rule.bonusTarget !== target) continue;
-    if (!matchesIdList(hex.buildingId, rule.sourceBuildingIds)) continue;
+    if (!matchesTypeList(hex.buildingId, rule.sourceTypes)) continue;
     total += getSynergyBonusValue(planet, hexIndex, rule);
   }
   return total;
@@ -126,8 +156,9 @@ export function getSynergyContribution(planet: Planet, hexIndex: number, target:
 /**
  * R-SYNERGY §processing: множитель скорости производства для здания-гекса.
  *
- * 1 + Σ processing_speed-вкладов (шахта/склад смежны с переработчиком).
- * Применяется в processProductionQueue к скорости прогресса очереди.
+ * 1 + Σ processing_speed-вкладов. Применяется в processProductionQueue
+ * к скорости прогресса очереди. (Активные правила с этой метрикой
+ * отложены как кросс-типовые — Задача 24; хелпер сохранён для будущего.)
  */
 export function getProcessingSpeedMultiplier(planet: Planet, hexIndex: number): number {
   return 1 + getSynergyContribution(planet, hexIndex, 'processing_speed');
@@ -144,6 +175,32 @@ export function getProcessingSpeedMultiplier(planet: Planet, hexIndex: number): 
 export function getEnergyConsumptionMultiplier(planet: Planet, hexIndex: number): number {
   const mult = 1 + getSynergyContribution(planet, hexIndex, 'energy_consumption');
   return Math.max(0, mult);
+}
+
+/**
+ * R-SYNERGY v2 §generation (Задача 24, power_boost): множитель выработки
+ * энергии генератора-гекса.
+ *
+ * 1 + Σ energy_generation-вкладов (электростанция получает +5% выработки
+ * за каждого смежного потребителя, стекинг ×0.5^(n-1)).
+ * Пример: солнечная станция смежна с 2 потребителями:
+ *   1 + 0.05 + 0.05×0.5 = 1.075 → +7.5% выработки.
+ */
+export function getEnergyGenerationMultiplier(planet: Planet, hexIndex: number): number {
+  return 1 + getSynergyContribution(planet, hexIndex, 'energy_generation');
+}
+
+/**
+ * R-SYNERGY v2 §mining (Задача 24, mining_cluster): множитель скорости
+ * добычи экстрактора-гекса.
+ *
+ * 1 + Σ mining_speed-вкладов (шахты одного подтипа ускоряют добычу друг
+ * друга: +10% за смежную, стекинг ×0.5^(n-1)).
+ * Пример: шахта смежна с 2 шахтами:
+ *   1 + 0.1 + 0.1×0.5 = 1.15 → +15% скорости добычи.
+ */
+export function getMiningSpeedMultiplier(planet: Planet, hexIndex: number): number {
+  return 1 + getSynergyContribution(planet, hexIndex, 'mining_speed');
 }
 
 /**
@@ -170,7 +227,7 @@ export function getEnergyConsumptionMultiplier(planet: Planet, hexIndex: number)
 export function getLabClusterBoost(planet: Planet): { boostSum: number; labCount: number } {
   let boostSum = 0;
   let labCount = 0;
-  planet.hexes.forEach((hex: HexCell, i: number) => {
+  planet.hexes.forEach((hex: HexCell, i) => {
     if (hex.buildingId !== 'laboratory' || hex.buildingLevel < 1) return;
     labCount++;
     boostSum += getSynergyContribution(planet, i, 'research_rate');
@@ -198,7 +255,7 @@ export function getActiveSynergiesForHex(
   if (!hex || !isBuilt(hex)) return [];
   const result: Array<{ rule: SynergyRule; neighbors: number; bonus: number }> = [];
   for (const rule of SYNERGY_RULES) {
-    if (!matchesIdList(hex.buildingId, rule.sourceBuildingIds)) continue;
+    if (!matchesTypeList(hex.buildingId, rule.sourceTypes)) continue;
     const neighbors = countSynergyNeighbors(planet, hexIndex, rule);
     if (neighbors === 0) continue;
     result.push({ rule, neighbors, bonus: getSynergyBonusValue(planet, hexIndex, rule) });

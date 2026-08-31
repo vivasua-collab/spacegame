@@ -1,40 +1,42 @@
 {
-  "comment": "Правила Синергии — бонусы соседства (adjacency bonuses), docs/40-buildings.md §5. Кластеризация однотипных/смежных построек. Семантика: здание из sourceBuildingIds ПОЛУЧАЕТ бонус, если в соседнем гексе стоит здание из neighborBuildingIds. Стекинг с убывающей отдачей: n-й сосед даёт value × stackDecay^(n-1) (docs §5.2). bonusTarget: 'research_rate' — множитель RP/сек лабораторий (bonus-resolver); 'processing_speed' — ускорение очереди производства (processProductionQueue); 'energy_consumption' — cнижение энергопотребления получателя (recalcEnergyBalance, value отрицательное). Синергия действует ТОЛЬКО на гексах поверхности (атмосферные/орбитальные слоты не имеют пространственной смежности). Правило «Завод компонентов» (docs §5.1) добавитcя когда здание появится в каталоге — достаточно дописать запись сюда. Валидация: scripts/validate-buildings.ts проверяет, что все id существуют в каталоге и value/stackDecay в допустимых диапазонах.",
+  "comment": "Правила Синергии v2 — ТИПОВЫЕ бонусы соседства (adjacency bonuses), docs/40-buildings.md §5. Задача 24: здания разделены по ТИПАМ (generator/extractor/processor/research/storage/production/colony/military — производные от category каталога); для каждого типа — свой набор бонусов; ПОДТИП = buildingId (solar_plant ≠ nuclear_reactor, mine ≠ quarry); флаг sameSubtypeOnly запрещает бонусы между разными подтипами одного типа. Псевдо-тип-роль 'consumer' = любое здание с energyConsumption > 0. Семантика: здание, чей тип ∈ sourceTypes, ПОЛУЧАЕТ бонус, если в соседнем гексе стоит здание, чей тип ∈ neighborTypes. Стекинг с убывающей отдачей: n-й сосед даёт value × stackDecay^(n-1) (docs §5.2). bonusTarget: 'research_rate' — множитель RP/сек лабораторий (bonus-resolver); 'processing_speed' — ускорение очереди производства (processProductionQueue); 'energy_consumption' — снижение энергопотребления получателя (recalcEnergyBalance, value отрицательное); 'energy_generation' — бонус выработки генератора (recalcEnergyBalance); 'mining_speed' — бонус скорости добычи экстрактора (processExtraction). Синергия действует ТОЛЬКО на гексах поверхности (атмосферные/орбитальные слоты не имеют пространственной смежности). ОТЛОЖЕНО (кросс-типовые бонусы, владелец Задача 24): mine_processor (extractor→processor, +15% processing_speed), warehouse_production (storage→processor, +20% processing_speed) — вернуть = дописать записи с sourceTypes/neighborTypes. Валидация: scripts/validate-buildings.ts проверяет типы, value/stackDecay в допустимых диапазонах.",
   "rules": [
     {
       "id": "lab_cluster",
       "description": "Лаборатория + Лаборатория: +10% к скорости исследований (кластерный эффект однотипных построек)",
-      "sourceBuildingIds": ["laboratory"],
-      "neighborBuildingIds": ["laboratory"],
+      "sourceTypes": ["research"],
+      "neighborTypes": ["research"],
+      "sameSubtypeOnly": true,
       "bonusTarget": "research_rate",
       "value": 0.1,
       "stackDecay": 0.5
     },
     {
-      "id": "mine_processor",
-      "description": "Шахта + Переработчик: +15% к скорости переработки (переработчик получает бонус за смежную шахту)",
-      "sourceBuildingIds": ["processor", "refinery", "synthesizer"],
-      "neighborBuildingIds": ["mine"],
-      "bonusTarget": "processing_speed",
-      "value": 0.15,
-      "stackDecay": 0.5
-    },
-    {
-      "id": "warehouse_production",
-      "description": "Склад + Производственное здание: +20% к скорости производства (логистика смежного склада; MVP-упрощение: применяется к скорости очереди производства)",
-      "sourceBuildingIds": ["processor", "refinery", "synthesizer"],
-      "neighborBuildingIds": ["warehouse", "open_warehouse"],
-      "bonusTarget": "processing_speed",
-      "value": 0.2,
-      "stackDecay": 0.5
-    },
-    {
       "id": "power_grid",
       "description": "Электростанция + Любое здание-потребитель: −5% к энергопотреблению получателя за каждую смежную электростанцию",
-      "sourceBuildingIds": ["*"],
-      "neighborBuildingIds": ["solar_plant", "nuclear_reactor"],
+      "sourceTypes": ["consumer"],
+      "neighborTypes": ["generator"],
       "bonusTarget": "energy_consumption",
       "value": -0.05,
+      "stackDecay": 0.5
+    },
+    {
+      "id": "power_boost",
+      "description": "Электростанция + смежный потребитель: +5% к выработке энергии электростанции за каждого смежного потребителя",
+      "sourceTypes": ["generator"],
+      "neighborTypes": ["consumer"],
+      "bonusTarget": "energy_generation",
+      "value": 0.05,
+      "stackDecay": 0.5
+    },
+    {
+      "id": "mining_cluster",
+      "description": "Шахта + Шахта (один подтип): +10% к скорости добычи за каждую смежную шахту того же подтипа",
+      "sourceTypes": ["extractor"],
+      "neighborTypes": ["extractor"],
+      "sameSubtypeOnly": true,
+      "bonusTarget": "mining_speed",
+      "value": 0.1,
       "stackDecay": 0.5
     }
   ]
