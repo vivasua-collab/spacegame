@@ -12,11 +12,16 @@
  *   7. Все bonuses[].sourceTech (если задан) существует в TECH_MAP.
  *   8. Все bonuses[].target непустые; operation ∈ {add, multiply, threshold}.
  *   9. minTechLevel >= 1 если задан (для sourceTech-бонусов).
+ *  10. R-SYNERGY (Задача 22): правила Синергии (synergy.json) —
+ *      все sourceBuildingIds/neighborBuildingIds существуют в каталоге
+ *      (или "*"), bonusTarget ∈ {research_rate, processing_speed,
+ *      energy_consumption}, value ∈ (−1, 1), stackDecay ∈ (0, 1].
  *
  * Run: `cd /home/z/my-project && bun run validate:buildings`
  */
 
 import { BUILDINGS, BUILDING_MAP } from '@/data/buildings';
+import { SYNERGY_RULES } from '@/data/buildings/synergy';
 import { TECH_MAP } from '@/data/research/tech-tree';
 import type { BuildingLayer, BuildingCategory, PlanetSize, HexTerrain } from '@/core/types';
 
@@ -169,6 +174,61 @@ for (const b of withBonuses) {
   });
   console.log(`  ${b.id}:`);
   lines.forEach((l) => console.log(l));
+}
+console.log('');
+
+// ─── R-SYNERGY: правила Синергии (synergy.json) ──────────────────────────
+console.log('  Synergy rules (R-SYNERGY, docs/40-buildings.md §5):');
+const VALID_SYNERGY_TARGETS = ['research_rate', 'processing_speed', 'energy_consumption'];
+const seenRuleIds = new Set<string>();
+console.log(`    Total rules: ${SYNERGY_RULES.length}`);
+for (const rule of SYNERGY_RULES) {
+  const ctx = `Synergy rule '${rule.id}'`;
+  if (!rule.id) errors.push(`${ctx}: empty id`);
+  if (seenRuleIds.has(rule.id)) errors.push(`${ctx}: duplicate id`);
+  seenRuleIds.add(rule.id);
+  if (!rule.description) warnings.push(`${ctx}: empty description`);
+
+  // sourceBuildingIds / neighborBuildingIds exist in catalog (or "*")
+  for (const [i, id] of rule.sourceBuildingIds.entries()) {
+    if (id !== '*' && !BUILDING_MAP.has(id)) {
+      errors.push(`${ctx}: sourceBuildingIds[${i}] references unknown building '${id}'`);
+    }
+  }
+  if (rule.sourceBuildingIds.length === 0) errors.push(`${ctx}: empty sourceBuildingIds`);
+  for (const [i, id] of rule.neighborBuildingIds.entries()) {
+    if (!BUILDING_MAP.has(id)) {
+      errors.push(`${ctx}: neighborBuildingIds[${i}] references unknown building '${id}'`);
+    }
+  }
+  if (rule.neighborBuildingIds.length === 0) errors.push(`${ctx}: empty neighborBuildingIds`);
+
+  // bonusTarget
+  if (!VALID_SYNERGY_TARGETS.includes(rule.bonusTarget)) {
+    errors.push(`${ctx}: invalid bonusTarget '${rule.bonusTarget}' (valid: ${VALID_SYNERGY_TARGETS.join(', ')})`);
+  }
+
+  // value range: для research/processing — (0, 1); для energy — (−1, 0)
+  if (rule.bonusTarget === 'energy_consumption') {
+    if (rule.value >= 0 || rule.value <= -1) {
+      errors.push(`${ctx}: energy_consumption value must be in (−1, 0), got ${rule.value}`);
+    }
+  } else if (rule.value <= 0 || rule.value >= 1) {
+    errors.push(`${ctx}: ${rule.bonusTarget} value must be in (0, 1), got ${rule.value}`);
+  }
+
+  // stackDecay in (0, 1]
+  if (rule.stackDecay <= 0 || rule.stackDecay > 1) {
+    errors.push(`${ctx}: stackDecay must be in (0, 1], got ${rule.stackDecay}`);
+  }
+
+  const sources = rule.sourceBuildingIds.includes('*')
+    ? 'любое'
+    : rule.sourceBuildingIds.join(', ');
+  console.log(
+    `    ${rule.id.padEnd(22)} ${sources} ← ${rule.neighborBuildingIds.join(', ')}: `.padEnd(56) +
+    `${(rule.value * 100).toFixed(0)}% (decay ${rule.stackDecay}) → ${rule.bonusTarget}`,
+  );
 }
 console.log('');
 

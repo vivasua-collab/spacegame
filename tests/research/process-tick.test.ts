@@ -90,17 +90,21 @@ describe('Block 03 T-R7 — processResearchTick (tickResearch)', () => {
       expect(state.totalRpGenerated).toBe(0);
     });
 
-    test('100 RP/сек × 10 сек × 100% × focus(×1.2) → 1200 RP — completes P1 level 1 (cost 500)', () => {
+    test('R-SPLIT: все фундаменталы изучены → 100% притока в дерево × focus(×1.2) = 120/сек × 10 = 1200 — completes P1 L1, 700 carry over', () => {
       const state = makeStateWithSlot('fusion_reactor');
-      // effective = 100 × (100/100) × 1.2 = 120 RP/сек
-      // × 10 сек = 1200 RP → level 1 cost 500 → completes (1200 - 500 = 700 RP invested next)
+      // R-SPLIT (Задача 23): makeStateWithSlot ставит все 5 MVP-веток на 10
+      // → areAllFundamentalsMaxed = true → редирект «100% в дерево»
+      // (банк копит 0). techPerSec = 100; focus (1 слот на 100%) ×1.2
+      // → 120 RP/сек × 10 = 1200 RP. Уровень 1 (cost 500) завершён,
+      // 700 RP переносится в слот. Банк заморожен (0). Lifetime: 1000.
       const result = tickResearch(state, 100, 10);
       expect(state.researched['fusion_reactor']).toBe(1);
       expect(state.activeSlots[0]!.targetLevel).toBe(2);
       expect(state.activeSlots[0]!.rpInvested).toBe(700); // 1200 - 500
       expect(result.completed.length).toBe(1);
       expect(result.completed[0]).toEqual({ techId: 'fusion_reactor', level: 1 });
-      expect(state.totalRpGenerated).toBe(1000); // 100 × 10
+      expect(state.rpBank).toBe(0); // банк не растёт (fundamentalsMaxed)
+      expect(state.totalRpGenerated).toBe(1000); // lifetime: 100 × 10
     });
 
     test('Slot with 0 RP/sec — no progress', () => {
@@ -110,13 +114,11 @@ describe('Block 03 T-R7 — processResearchTick (tickResearch)', () => {
       expect(result.completed).toEqual([]);
     });
 
-    test('50% allocation → half RP accumulation', () => {
+    test('R-SPLIT × 50% allocation → half of tree share per slot', () => {
       const state = makeStateWithSlot('fusion_reactor', 50);
-      // 100 RP × 50% × 1.0 (no focus, but 1 slot at <100% — wait, focus applies if
-      // 1 slot at 100%, here 1 slot at 50% → no focus)
-      // effective = 100 × 0.5 × 1.0 = 50 RP/сек
-      // × 10 сек = 500 RP → exactly cost(500) for level 1 → completes
-      const result = tickResearch(state, 100, 10);
+      // Приток 200 → tree share 100 (R-SPLIT 50/50) × 50% allocation
+      // = 50 RP/сек × 10 = 500 RP — ровно стоимость уровня 1 → завершён.
+      const result = tickResearch(state, 200, 10);
       expect(state.researched['fusion_reactor']).toBe(1);
       expect(result.completed.length).toBe(1);
     });
@@ -197,19 +199,20 @@ describe('Block 03 T-R7 — processResearchTick (tickResearch)', () => {
   });
 
   describe('tickResearch — multiple slots', () => {
-    test('Two slots, 50% each — split RP between them', () => {
+    test('R-SPLIT: Two slots, 50% each — tree share splits between them', () => {
       const state = createDefaultResearchState();
       // Set fundamentals high enough for both techs (power needs physics,
-      // materials needs chemistry + engineering)
+      // materials needs chemistry + engineering) — но НЕ все 6 веток,
+      // поэтому действует split 50/50 (не «100% в дерево»).
       state.fundamentalLevels.physics = 10;
       state.fundamentalLevels.chemistry = 10;
       state.fundamentalLevels.engineering = 10;
       state.activeSlots.push(createResearchSlot('s1', 'fusion_reactor', 1, 50));
       state.activeSlots.push(createResearchSlot('s2', 'steel_processing', 1, 50));
-      // 100 RP × 0.5 × 1.0 (no focus, 2 slots) = 50 RP/сек each
-      // × 10 = 500 RP each → fusion_reactor (cost 500) completes,
-      // steel_processing (cost 300) completes
-      const result = tickResearch(state, 100, 10);
+      // Приток 200 → tree share = 100 → × 0.5 (no focus, 2 slots) = 50 RP/сек
+      // each × 10 = 500 RP each → fusion_reactor (cost 500) completes впритык,
+      // steel_processing (cost 300) completes (+200 в остаток, L2 cost 450)
+      const result = tickResearch(state, 200, 10);
       expect(state.researched['fusion_reactor']).toBe(1);
       expect(state.researched['steel_processing']).toBe(1);
       expect(result.completed.length).toBe(2);

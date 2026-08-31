@@ -12,6 +12,8 @@
  *      id+level смотрим def.bonuses, для каждого эффекта с perLevel=true
  *      умножаем value на buildingLevel.
  *   3. Ship parts (TODO Etap 4) — для статов флотов; сейчас stub.
+ *   4. R-SYNERGY — кластеры лабораторий (adjacency, docs/40-buildings.md §5):
+ *      смежные лаборатории дают аддитивный вклад в research_rate.
  *
  * Семантика операций:
  *   - 'add'       → contrib = value × (perLevel ? level : 1). Суммируем.
@@ -41,6 +43,7 @@
 import type { GameState, Planet, Bonus, Technology } from '@/core/types';
 import { TECH_MAP } from '@/data/research/tech-tree';
 import { BUILDING_MAP } from '@/data/buildings';
+import { getLabClusterBoost } from '@/economy/adjacency';
 
 /**
  * Compute the bonus multiplier for a given target key (e.g. 'research_rate',
@@ -106,6 +109,27 @@ export function resolveBonuses(state: GameState, target: string): number {
       const def = BUILDING_MAP.get(slot.buildingId);
       if (!def?.bonuses) continue;
       applyBuildingBonuses(def.bonuses, slot.buildingLevel, researched, target, addContributions, multiplyContributions);
+    }
+  }
+
+  // ─── R-SYNERGY: Source 4 — кластеры лабораторий (adjacency §5.1) ──
+  // Семантика docs §5.1/§5.4 «НА КАЖДУЮ лабораторию»: смежные лаборатории
+  // бустят собственный выход на +10% за смежного (стекинг ×0.5^(n-1)).
+  // Единый глобальный множитель ⇒ корректный агрегат — СРЕДНЕЕ по всем
+  // лабораториям империи: Σ boostSum / Σ labCount (изолированные и слот-
+  // лаборатории разбавляют). 2 смежные → +10%; кластер 2×2 → +15% (§5.4).
+  // Не Σ вкладов (было в первой ревизии): линейный рост с размером кластера
+  // давал бы +60% для 2×2 и неограниченный рост для мегакластеров.
+  if (target === 'research_rate') {
+    let clusterBoostSum = 0;
+    let labTotal = 0;
+    for (const planet of playerPlanets) {
+      const { boostSum, labCount } = getLabClusterBoost(planet);
+      clusterBoostSum += boostSum;
+      labTotal += labCount;
+    }
+    if (labTotal > 0 && clusterBoostSum > 0) {
+      addContributions.push(clusterBoostSum / labTotal);
     }
   }
 

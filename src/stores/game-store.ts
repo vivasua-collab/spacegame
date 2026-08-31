@@ -48,11 +48,10 @@ import {
 import { executeOrder as executeOrderFn } from '@/ships/orders'; // Block 02 F4
 import {
   TECH_MAP as TECH_MAP_FN,
-  FUNDAMENTAL_BRANCH_MAP as FUNDAMENTAL_BRANCH_MAP_FN,
   createResearchSlot as createResearchSlotFn,
   canStartResearch as canStartResearchFn,
-  getTechCost as getTechCostFn,
   arePrerequisitesMet as arePrerequisitesMetFn,
+  levelUpFundamentalEngine as levelUpFundamentalEngineFn,
 } from '@/research'; // Block 03 R6/R7 — research engine helpers
 // Note: ResearchState type is already imported above from '@/core/types' (line 22).
 
@@ -61,18 +60,6 @@ import {
  * Аналог shipyardItemCounter из Phase 2.3 — без Math.random.
  */
 let researchSlotCounter = 0;
-
-/**
- * Block 03 (R7): helper — сумма RP, вложенных во все фундаментальные ветки.
- * Используется в levelUpFundamental для подсчёта доступного банка RP.
- */
-function sumFundamentalRpInvested(rs: ResearchState): number {
-  let sum = 0;
-  for (const v of Object.values(rs.fundamentalRpInvested)) {
-    sum += v ?? 0;
-  }
-  return sum;
-}
 
 // ============ Типы стора ============
 
@@ -149,6 +136,11 @@ export interface GameStore {
   buildOnAtmosphereSlot: (planetId: EntityId, slotIndex: number, buildingId: string) => boolean;
   buildOnOrbitSlot: (planetId: EntityId, slotIndex: number, buildingId: string) => boolean;
   upgradeBuildingOnHex: (planetId: EntityId, hexIndex: number) => boolean;
+  // R-DEMOLISH (Задача 22): понижение уровня и снос зданий.
+  downgradeBuildingOnHex: (planetId: EntityId, hexIndex: number) => boolean;
+  demolishBuildingOnHex: (planetId: EntityId, hexIndex: number) => boolean;
+  downgradeBuildingOnSlot: (planetId: EntityId, layer: 'atmosphere' | 'orbit', slotIndex: number) => boolean;
+  demolishBuildingOnSlot: (planetId: EntityId, layer: 'atmosphere' | 'orbit', slotIndex: number) => boolean;
   enqueueProduction: (planetId: EntityId, recipeId: string, repeat?: boolean) => boolean;
   cancelProduction: (planetId: EntityId, queueItemId: string) => boolean;
   // Block 05 PR7 — специализация переработчиков
@@ -486,6 +478,17 @@ function migrateResearchState(raw: unknown): ResearchState {
       xenoarchaeology: r.fundamentalLevels?.xenoarchaeology ?? 0,
     },
     fundamentalRpInvested: r.fundamentalRpInvested ?? {},
+    // R-SPLIT (Задача 22): аккумулятор фундаменталов. Старые сейвы (до
+    // R-SPLIT) не имеют поля — мигрируем legacy-значением:
+    // totalRpGenerated − fundamental − slots (кламп ≥ 0).
+    rpBank: typeof (r as { rpBank?: number }).rpBank === 'number'
+      ? (r as { rpBank: number }).rpBank
+      : Math.max(
+          0,
+          (typeof r.totalRpGenerated === 'number' ? r.totalRpGenerated : 0)
+          - Object.values(r.fundamentalRpInvested ?? {}).reduce((s, v) => s + (v ?? 0), 0)
+          - (Array.isArray(r.activeSlots) ? r.activeSlots : []).reduce((s, slot) => s + (slot?.rpInvested ?? 0), 0),
+        ),
     researched: r.researched ?? {},
     activeSlots: Array.isArray(r.activeSlots) ? r.activeSlots : [],
     // R-RES §B: researchQueue migration — pre-R-RES saves had no queue.
@@ -693,6 +696,85 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
       if (!newPlanet) return false;
       const after = newPlanet.hexes[hexIndex]?.buildingLevel ?? 0;
       return after > before;
+    },
+
+    // ─── R-DEMOLISH (Задача 22): понижение уровня и снос зданий ────────
+    downgradeBuildingOnHex: (planetId, hexIndex) => {
+      const mediator = getMediatorWithModules();
+      const gameState = get().gameState;
+      if (!gameState) return false;
+      const planet = findPlanet(gameState, planetId);
+      if (!planet) return false;
+      const beforeHex = planet.hexes[hexIndex];
+      const beforeLevel = beforeHex?.buildingLevel ?? 0;
+      const beforeId = beforeHex?.buildingId ?? null;
+      mediator.getBus().emit('economy:downgrade', { planetId, hexIndex, layer: 'surface' });
+      // Re-fetch — produce() in EconomyModule created a new state reference.
+      const newState = get().gameState;
+      if (!newState) return false;
+      const newPlanet = findPlanet(newState, planetId);
+      if (!newPlanet) return false;
+      const afterHex = newPlanet.hexes[hexIndex];
+      // Уровень 1 → понижение = снос: гекс освобождён (buildingId → null).
+      if (beforeLevel === 1) {
+        return afterHex?.buildingId == null && beforeId != null;
+      }
+      return (afterHex?.buildingLevel ?? 0) < beforeLevel;
+    },
+
+    demolishBuildingOnHex: (planetId, hexIndex) => {
+      const mediator = getMediatorWithModules();
+      const gameState = get().gameState;
+      if (!gameState) return false;
+      const planet = findPlanet(gameState, planetId);
+      if (!planet) return false;
+      const beforeId = planet.hexes[hexIndex]?.buildingId ?? null;
+      mediator.getBus().emit('economy:demolish', { planetId, hexIndex, layer: 'surface' });
+      const newState = get().gameState;
+      if (!newState) return false;
+      const newPlanet = findPlanet(newState, planetId);
+      if (!newPlanet) return false;
+      return newPlanet.hexes[hexIndex]?.buildingId == null && beforeId != null;
+    },
+
+    downgradeBuildingOnSlot: (planetId, layer, slotIndex) => {
+      const mediator = getMediatorWithModules();
+      const gameState = get().gameState;
+      if (!gameState) return false;
+      const planet = findPlanet(gameState, planetId);
+      if (!planet) return false;
+      const slots = layer === 'atmosphere' ? planet.atmosphericSlots : planet.orbitSlots;
+      if (slotIndex < 0 || slotIndex >= slots.length) return false;
+      const beforeLevel = slots[slotIndex]?.buildingLevel ?? 0;
+      const beforeId = slots[slotIndex]?.buildingId ?? null;
+      mediator.getBus().emit('economy:downgrade', { planetId, slotIndex, layer });
+      const newState = get().gameState;
+      if (!newState) return false;
+      const newPlanet = findPlanet(newState, planetId);
+      if (!newPlanet) return false;
+      const newSlots = layer === 'atmosphere' ? newPlanet.atmosphericSlots : newPlanet.orbitSlots;
+      if (beforeLevel === 1) {
+        return newSlots[slotIndex]?.buildingId == null && beforeId != null;
+      }
+      return (newSlots[slotIndex]?.buildingLevel ?? 0) < beforeLevel;
+    },
+
+    demolishBuildingOnSlot: (planetId, layer, slotIndex) => {
+      const mediator = getMediatorWithModules();
+      const gameState = get().gameState;
+      if (!gameState) return false;
+      const planet = findPlanet(gameState, planetId);
+      if (!planet) return false;
+      const slots = layer === 'atmosphere' ? planet.atmosphericSlots : planet.orbitSlots;
+      if (slotIndex < 0 || slotIndex >= slots.length) return false;
+      const beforeId = slots[slotIndex]?.buildingId ?? null;
+      mediator.getBus().emit('economy:demolish', { planetId, slotIndex, layer });
+      const newState = get().gameState;
+      if (!newState) return false;
+      const newPlanet = findPlanet(newState, planetId);
+      if (!newPlanet) return false;
+      const newSlots = layer === 'atmosphere' ? newPlanet.atmosphericSlots : newPlanet.orbitSlots;
+      return newSlots[slotIndex]?.buildingId == null && beforeId != null;
     },
 
     buildOnAtmosphereSlot: (planetId, slotIndex, buildingId) => {
@@ -1500,20 +1582,11 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
       set((state) => {
         if (!state.gameState) return;
         const rs = state.gameState.researchState;
-        const currentLevel = rs.fundamentalLevels[branchId] ?? 0;
-        const branchDef = FUNDAMENTAL_BRANCH_MAP_FN.get(branchId);
-        if (!branchDef) return;
-        if (currentLevel >= branchDef.maxLevel) return;
-        // Cost = floor(baseCost × 1.5^currentLevel) — same formula as techs.
-        const cost = getTechCostFn(branchDef.baseCost, currentLevel + 1);
-        // Check available RP: use totalRpGenerated as the "bank".
-        // (MVP simplification — Phase 3.7 ResearchModule will handle RP accrual
-        //  into a separate "available RP" field, with proper accounting.)
-        const available = rs.totalRpGenerated - sumFundamentalRpInvested(rs);
-        if (available < cost) return;
-        rs.fundamentalLevels[branchId] = currentLevel + 1;
-        rs.fundamentalRpInvested[branchId] = (rs.fundamentalRpInvested[branchId] ?? 0) + cost;
-        ok = true;
+        // R-SPLIT (Задача 22): тратим ТОЛЬКО из аккумулятора (rpBank).
+        // Дерево технологий больше не занимает/возвращает RP банка —
+        // ветки полностью разделены (engine.levelUpFundamentalEngine:
+        // миграция rpBank для старых сейвов выполняется внутри).
+        ok = levelUpFundamentalEngineFn(rs, branchId);
       });
       syncMediatorState();
       return ok;

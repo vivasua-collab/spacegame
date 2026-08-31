@@ -94,6 +94,7 @@ function makeGameStateWithBuildings(buildings: Array<{ hexIdx: number; buildingI
         biology_fund: 0, military_science: 0, xenoarchaeology: 0,
       },
       fundamentalRpInvested: {},
+      rpBank: 0,
       researched: {},
       activeSlots: [],
       researchQueue: [],
@@ -143,13 +144,36 @@ describe('R-RES §E — resolveBonuses', () => {
     expect(resolveBonuses(state, 'research_rate')).toBeCloseTo(1.10, 5);
   });
 
-  test('multiple laboratories sum their contributions', () => {
+  test('multiple laboratories (НЕ смежные) sum their contributions', () => {
     const state = makeGameStateWithBuildings([
       { hexIdx: 0, buildingId: 'laboratory', level: 3 },
-      { hexIdx: 1, buildingId: 'laboratory', level: 2 },
+      { hexIdx: 2, buildingId: 'laboratory', level: 2 }, // гекс 2 не смежен с 0
     ]);
-    // (1 + 0.02×3 + 0.02×2) = 1 + 0.06 + 0.04 = 1.10
+    // Без кластера: (1 + 0.02×3 + 0.02×2) = 1 + 0.06 + 0.04 = 1.10
     expect(resolveBonuses(state, 'research_rate')).toBeCloseTo(1.10, 5);
+  });
+
+  test('R-SYNERGY: 2 СМЕЖНЫЕ лаборатории → +10% агрегат (docs §5.1 «на каждую»)', () => {
+    const state = makeGameStateWithBuildings([
+      { hexIdx: 0, buildingId: 'laboratory', level: 3 },
+      { hexIdx: 1, buildingId: 'laboratory', level: 2 }, // гексы 0-1 смежны (q, r)=(0,0)-(1,0)
+    ]);
+    // База: 1 + 0.06 + 0.04 = 1.10. Кластер: каждая лаборатория +10%
+    // (1 смежный сосед, без затухания) → boostSum = 0.2, labCount = 2
+    // → среднее +0.10. Итог: 1.10 + 0.10 = 1.20.
+    expect(resolveBonuses(state, 'research_rate')).toBeCloseTo(1.20, 5);
+  });
+
+  test('R-SYNERGY: кластер разбавляется изолированными лабораториями', () => {
+    const state = makeGameStateWithBuildings([
+      { hexIdx: 0, buildingId: 'laboratory', level: 1 },
+      { hexIdx: 1, buildingId: 'laboratory', level: 1 }, // смежная пара
+      { hexIdx: 3, buildingId: 'laboratory', level: 1 }, // изолированная
+      { hexIdx: 5, buildingId: 'laboratory', level: 1 }, // изолированная
+    ]);
+    // База: 1 + 0.02×4 = 1.08. Кластер: boostSum = 0.1+0.1 = 0.2, labCount = 4
+    // → среднее +0.05. Итог: 1.08 + 0.05 = 1.13.
+    expect(resolveBonuses(state, 'research_rate')).toBeCloseTo(1.13, 5);
   });
 
   test('building at level 0 is ignored', () => {

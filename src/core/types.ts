@@ -301,6 +301,38 @@ export interface BuildingDef {
 }
 
 /**
+ * R-SYNERGY: правило Синергии — бонус соседства (docs/40-buildings.md §5).
+ *
+ * Здание из sourceBuildingIds ПОЛУЧАЕТ бонус, если в соседнем гексе стоит
+ * здание из neighborBuildingIds. Стекинг с убывающей отдачей (§5.2):
+ * n-й подходящий сосед даёт value × stackDecay^(n-1).
+ *
+ * bonusTarget:
+ *   - 'research_rate'    — аддитивный вклад в множитель RP/сек (bonus-resolver).
+ *   - 'processing_speed' — аддитивный вклад в скорость очереди производства.
+ *   - 'energy_consumption' — вклад в снижение энергопотребления получателя
+ *                            (value отрицательное; recalcEnergyBalance).
+ *
+ * Специальное значение sourceBuildingIds: ["*"] — правило действует для
+ * любого здания (кроме самих источников — электростанции не снижают своё
+ * потребление, т.к. оно равно 0).
+ */
+export interface SynergyRule {
+  id: string;
+  description: string;
+  /** Здания, которые ПОЛУЧАЮТ бонус. ["*"] = любое здание. */
+  sourceBuildingIds: string[];
+  /** Соседние здания, которые ДАЮТ бонус. */
+  neighborBuildingIds: string[];
+  /** Целевая метрика (см. комментарий выше). */
+  bonusTarget: string;
+  /** Величина бонуса (доля; для energy_consumption — отрицательная). */
+  value: number;
+  /** Затухание стека: n-й сосед даёт value × stackDecay^(n-1). */
+  stackDecay: number;
+}
+
+/**
  * R-RES §E: универсальное описание бонуса (для зданий и модулей кораблей).
  *
  * - target: ключ метрики, к которой применяется бонус
@@ -977,8 +1009,17 @@ export interface ResearchSlot {
 /**
  * Block 03 (R7): состояние исследований.
  *
+ * R-SPLIT (Задача 22): две ПАРАЛЛЕЛЬНЫЕ ветки притока RP:
+ *   1. Аккумулятор (rpBank) — накопительная ветка для ФУНДАМЕНТАЛЬНЫХ
+ *      исследований. Приток: доля RP/сек (см. engine.getResearchInflowSplit).
+ *      Тратится только levelUpFundamental. Слоты дерева НЕ трогают банк.
+ *   2. Дерево технологий (activeSlots) — постоянная ветка: слоты прогрессируют
+ *      напрямую от скорости притока RP (доля inflow × allocationPercent),
+ *      без списаний из банка и без «возврата» RP при завершении уровня.
+ *
  * - fundamentalLevels — уровень каждой фундаментальной ветки (0..10).
- * - fundamentalRpInvested — сколько RP уже вложено в каждую ветку.
+ * - fundamentalRpInvested — сколько RP уже вложено в каждую ветку
+ *   (только для отображения «Вложено»).
  * - researched — карта techId → текущий уровень (0 = не изучена).
  * - activeSlots — активные слоты очереди (не более getMaxResearchSlots).
  *   Первый слот — «активное исследование».
@@ -986,8 +1027,9 @@ export interface ResearchSlot {
  *   (R-RES task §B). Когда активный слот завершается (достигает maxLevel),
  *   первый элемент очереди автоматически становится активным (shift+create).
  *   Элементы очереди не занимают слотов до старта.
- * - totalRpGenerated — монотонный lifetime-счётчик RP (для отладки и
- *   «банка» фундаменталов). Не уменьшается при списаниях в слоты/фундаменталы.
+ * - totalRpGenerated — монотонный lifetime-счётчик RP (debug/статистика).
+ *   НЕ отображается в UI (параметр «Всего» удалён как не имеющий смысла).
+ *   Не уменьшается при списаниях.
  *
  * Используем Record/Partial вместо Map для нативной JSON-сериализации
  * (без Array.from(entries)). T-R8 (serialization round-trip) работает
@@ -996,6 +1038,8 @@ export interface ResearchSlot {
 export interface ResearchState {
   fundamentalLevels: Record<FundamentalBranchId, number>;
   fundamentalRpInvested: Partial<Record<FundamentalBranchId, number>>;
+  /** R-SPLIT: аккумулятор RP для фундаментальных исследований. */
+  rpBank: number;
   researched: Record<string, number>;
   activeSlots: ResearchSlot[];
   /** R-RES §B: ordered queue of techIds waiting to become active research. */

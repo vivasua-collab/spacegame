@@ -20,7 +20,7 @@
 import type { IGameModule, ModuleManifest, ModulePhase } from '@/core/module-types';
 import type { TypedEventBus } from '@/core/typed-event-bus';
 import type { ModuleRegistry } from '@/core/module-registry';
-import type { GameTime, EntityId, ProductionQueue, GameState } from '@/core/types';
+import type { GameTime, EntityId, ProductionQueue, GameState, BuildingLayer } from '@/core/types';
 import type { EventPayload } from '@/core/events';
 import { findPlanet } from '@/core/find-planet';
 import { PRIORITY } from '@/core/module-types';
@@ -32,6 +32,8 @@ import {
   buildOnAtmosphereSlot as engineBuildOnAtmosphereSlot,
   buildOnOrbitSlot as engineBuildOnOrbitSlot,
   upgradeBuilding as engineUpgradeBuilding,
+  downgradeBuilding as engineDowngradeBuilding,
+  demolishBuilding as engineDemolishBuilding,
   enqueueProduction as engineEnqueueProduction,
   colonizePlanet as engineColonizePlanet,
   recalcEnergyBalance,
@@ -50,6 +52,8 @@ export class EconomyModule implements IGameModule {
     emits: [
       'economy:building-constructed',
       'economy:building-upgraded',
+      'economy:building-downgraded',
+      'economy:building-demolished',
       'economy:production-complete',
       'economy:planet-colonized',
       'economy:energy-recalced',
@@ -127,6 +131,9 @@ export class EconomyModule implements IGameModule {
       bus.on('core:tick', (time) => this.onTick(time), { priority: PRIORITY.SIMULATION, label: 'economy' }),
       bus.on('economy:build', (p) => this.onBuild(p), { label: 'economy' }),
       bus.on('economy:upgrade', (p) => this.onUpgrade(p), { label: 'economy' }),
+      // R-DEMOLISH (Задача 22): понижение уровня и снос зданий
+      bus.on('economy:downgrade', (p) => this.onDowngrade(p), { label: 'economy' }),
+      bus.on('economy:demolish', (p) => this.onDemolish(p), { label: 'economy' }),
       bus.on('economy:enqueue', (p) => this.onEnqueue(p), { label: 'economy' }),
       bus.on('economy:colonize', (p) => this.onColonize(p), { label: 'economy' }),
       // Block 05 PR7 — specialization events
@@ -257,6 +264,145 @@ export class EconomyModule implements IGameModule {
         level: newLevel,
       });
     }
+  }
+
+  // ─── R-DEMOLISH (Задача 22): обработчики понижения и сноса ──────────
+
+  /**
+   * Понизить уровень здания на 1. При уровне 1 — снос (гекс/слот
+   * освобождается). Диспетчеризация по layer (как в onBuild):
+   * 'surface' (default) → hexIndex; 'atmosphere' | 'orbit' → slotIndex.
+   */
+  private onDowngrade(payload: EventPayload<'economy:downgrade'>): void {
+    const currentState = this.getGameState?.();
+    if (!currentState) return;
+
+    const layer = payload.layer ?? 'surface';
+    let success = false;
+    let reportedIndex = payload.hexIndex ?? -1;
+
+    const newState = produce(currentState, (draft) => {
+      const planet = findPlanet(draft, payload.planetId);
+      if (!planet) return;
+      if (layer === 'atmosphere') {
+        const slotIndex = payload.slotIndex ?? 0;
+        success = engineDowngradeBuilding(planet, 'atmosphere', slotIndex);
+        if (success) reportedIndex = -1 - slotIndex;
+      } else if (layer === 'orbit') {
+        const slotIndex = payload.slotIndex ?? 0;
+        success = engineDowngradeBuilding(planet, 'orbit', slotIndex);
+        if (success) reportedIndex = -100 - slotIndex;
+      } else {
+        const hexIndex = payload.hexIndex ?? 0;
+        success = engineDowngradeBuilding(planet, 'surface', hexIndex);
+        if (success) reportedIndex = hexIndex;
+      }
+    });
+
+    if (success) {
+      this.commitState?.(newState);
+      // engine уже эмитнул economy:building-downgraded /
+      // economy:building-demolished (уровень 1 = снос) через gameBus —
+      // здесь дублируем на шину модуля для UI-слушателей медиатора.
+      const isDemolition = this.isCellEmptyAfter(newState, payload.planetId, layer, payload);
+      if (!isDemolition) {
+        this.bus.emit('economy:building-downgraded', {
+          planetId: payload.planetId,
+          hexIndex: reportedIndex,
+          level: this.getCellLevelAfter(newState, payload.planetId, layer, payload),
+        });
+      }
+    }
+  }
+
+  /**
+   * Снести здание полностью — освобождает гекс/слот, возвращает 50%
+   * вложенных ресурсов. Диспетчеризация по layer (как в onBuild).
+   */
+  private onDemolish(payload: EventPayload<'economy:demolish'>): void {
+    const currentState = this.getGameState?.();
+    if (!currentState) return;
+
+    const layer = payload.layer ?? 'surface';
+    // Считываем id ДО сноса (для эмита на шину модуля).
+    const beforeBuildingId = this.getBuildingIdAt(currentState, payload.planetId, layer, payload);
+    if (!beforeBuildingId) return;
+
+    let success = false;
+    let reportedIndex = payload.hexIndex ?? -1;
+
+    const newState = produce(currentState, (draft) => {
+      const planet = findPlanet(draft, payload.planetId);
+      if (!planet) return;
+      if (layer === 'atmosphere') {
+        const slotIndex = payload.slotIndex ?? 0;
+        success = engineDemolishBuilding(planet, 'atmosphere', slotIndex);
+        if (success) reportedIndex = -1 - slotIndex;
+      } else if (layer === 'orbit') {
+        const slotIndex = payload.slotIndex ?? 0;
+        success = engineDemolishBuilding(planet, 'orbit', slotIndex);
+        if (success) reportedIndex = -100 - slotIndex;
+      } else {
+        const hexIndex = payload.hexIndex ?? 0;
+        success = engineDemolishBuilding(planet, 'surface', hexIndex);
+        if (success) reportedIndex = hexIndex;
+      }
+    });
+
+    if (success) {
+      this.commitState?.(newState);
+      this.bus.emit('economy:building-demolished', {
+        planetId: payload.planetId,
+        hexIndex: reportedIndex,
+        buildingId: beforeBuildingId,
+      });
+    }
+  }
+
+  /** id здания в указанной ячейке (для эмита до сноса). */
+  private getBuildingIdAt(
+    state: GameState,
+    planetId: EntityId,
+    layer: BuildingLayer,
+    payload: EventPayload<'economy:demolish'>,
+  ): string | null {
+    const planet = findPlanet(state, planetId);
+    if (!planet) return null;
+    if (layer === 'atmosphere') {
+      return planet.atmosphericSlots[payload.slotIndex ?? 0]?.buildingId ?? null;
+    }
+    if (layer === 'orbit') {
+      return planet.orbitSlots[payload.slotIndex ?? 0]?.buildingId ?? null;
+    }
+    return planet.hexes[payload.hexIndex ?? 0]?.buildingId ?? null;
+  }
+
+  /** Ячейка пуста после операции (снос прошёл, а не понижение)? */
+  private isCellEmptyAfter(
+    state: GameState,
+    planetId: EntityId,
+    layer: BuildingLayer,
+    payload: EventPayload<'economy:downgrade'>,
+  ): boolean {
+    return this.getBuildingIdAt(state, planetId, layer, payload) == null;
+  }
+
+  /** Уровень здания в ячейке после операции (для эмита понижения). */
+  private getCellLevelAfter(
+    state: GameState,
+    planetId: EntityId,
+    layer: BuildingLayer,
+    payload: EventPayload<'economy:downgrade'>,
+  ): number {
+    const planet = findPlanet(state, planetId);
+    if (!planet) return 0;
+    if (layer === 'atmosphere') {
+      return planet.atmosphericSlots[payload.slotIndex ?? 0]?.buildingLevel ?? 0;
+    }
+    if (layer === 'orbit') {
+      return planet.orbitSlots[payload.slotIndex ?? 0]?.buildingLevel ?? 0;
+    }
+    return planet.hexes[payload.hexIndex ?? 0]?.buildingLevel ?? 0;
   }
 
   private onEnqueue(payload: EventPayload<'economy:enqueue'>): void {

@@ -1,0 +1,41 @@
+{
+  "comment": "Правила Синергии — бонусы соседства (adjacency bonuses), docs/40-buildings.md §5. Кластеризация однотипных/смежных построек. Семантика: здание из sourceBuildingIds ПОЛУЧАЕТ бонус, если в соседнем гексе стоит здание из neighborBuildingIds. Стекинг с убывающей отдачей: n-й сосед даёт value × stackDecay^(n-1) (docs §5.2). bonusTarget: 'research_rate' — множитель RP/сек лабораторий (bonus-resolver); 'processing_speed' — ускорение очереди производства (processProductionQueue); 'energy_consumption' — cнижение энергопотребления получателя (recalcEnergyBalance, value отрицательное). Синергия действует ТОЛЬКО на гексах поверхности (атмосферные/орбитальные слоты не имеют пространственной смежности). Правило «Завод компонентов» (docs §5.1) добавитcя когда здание появится в каталоге — достаточно дописать запись сюда. Валидация: scripts/validate-buildings.ts проверяет, что все id существуют в каталоге и value/stackDecay в допустимых диапазонах.",
+  "rules": [
+    {
+      "id": "lab_cluster",
+      "description": "Лаборатория + Лаборатория: +10% к скорости исследований (кластерный эффект однотипных построек)",
+      "sourceBuildingIds": ["laboratory"],
+      "neighborBuildingIds": ["laboratory"],
+      "bonusTarget": "research_rate",
+      "value": 0.1,
+      "stackDecay": 0.5
+    },
+    {
+      "id": "mine_processor",
+      "description": "Шахта + Переработчик: +15% к скорости переработки (переработчик получает бонус за смежную шахту)",
+      "sourceBuildingIds": ["processor", "refinery", "synthesizer"],
+      "neighborBuildingIds": ["mine"],
+      "bonusTarget": "processing_speed",
+      "value": 0.15,
+      "stackDecay": 0.5
+    },
+    {
+      "id": "warehouse_production",
+      "description": "Склад + Производственное здание: +20% к скорости производства (логистика смежного склада; MVP-упрощение: применяется к скорости очереди производства)",
+      "sourceBuildingIds": ["processor", "refinery", "synthesizer"],
+      "neighborBuildingIds": ["warehouse", "open_warehouse"],
+      "bonusTarget": "processing_speed",
+      "value": 0.2,
+      "stackDecay": 0.5
+    },
+    {
+      "id": "power_grid",
+      "description": "Электростанция + Любое здание-потребитель: −5% к энергопотреблению получателя за каждую смежную электростанцию",
+      "sourceBuildingIds": ["*"],
+      "neighborBuildingIds": ["solar_plant", "nuclear_reactor"],
+      "bonusTarget": "energy_consumption",
+      "value": -0.05,
+      "stackDecay": 0.5
+    }
+  ]
+}

@@ -4,7 +4,7 @@
  * P1-27: Газовый экстрактор проверяет наличие атмосферы.
  */
 
-import type { Planet, HexCell, ProductionQueue, ProductionItem, EntityId, StarSystem, BuildingDef, ProcessorType, ProcessorRecipeCategory } from '@/core/types';
+import type { Planet, HexCell, AtmosphericSlot, OrbitalSlot, BuildingLayer, ProductionQueue, ProductionItem, EntityId, StarSystem, BuildingDef, ProcessorType, ProcessorRecipeCategory } from '@/core/types';
 import { BUILDING_MAP, areBuildingTechsMet } from '@/data/buildings';
 import { RECIPE_MAP } from '@/data/recipes';
 import { PROCESSOR_CATEGORIES } from '@/data/processor-categories';
@@ -13,6 +13,7 @@ import { getCurrentLookups } from '@/data/baked-lookups';
 import { canStoreResource, calculateWarehouseCapacity, calculateWarehouseCapacities, getOrbitBufferCapacity, ensureReservesForResources } from '@/data/warehouse';
 import { DIRECT_GAS_MAP, getAtmosphericGasesForType } from '@/data/atmosphere-gases';
 import { gameBus } from '@/core/typed-event-bus';
+import { getEnergyConsumptionMultiplier, getProcessingSpeedMultiplier } from '@/economy/adjacency';
 
 /**
  * Детерминированный счётчик ProductionItem IDs (gap-6, P9).
@@ -230,8 +231,18 @@ function processProductionQueue(planet: Planet, queues: Map<EntityId, Production
     return;
   }
 
-  // Обновляем прогресс
-  item.progress--;
+  // ─── R-SYNERGY §processing: множитель скорости производства ─────────
+  // Смежные шахты (+15%) / склады (+20%) ускоряют переработку у здания-
+  // исполнителя (docs/40-buildings.md §5.1, стекинг ×0.5^(n-1)).
+  // PR3-min: берём ПЕРВЫЙ экземпляр здания recipe.buildingId на гексах
+  // поверхности (та же политика выбора, что у findProcessorInstance).
+  const executorHexIndex = planet.hexes.findIndex((h) => h?.buildingId === recipe.buildingId);
+  const synergySpeedMult = executorHexIndex >= 0
+    ? getProcessingSpeedMultiplier(planet, executorHexIndex)
+    : 1;
+
+  // Обновляем прогресс (R-SYNERGY: с множителем Синергии)
+  item.progress -= synergySpeedMult;
 
   // Тратим энергию
   if (recipe.energyCost > 0) {
@@ -479,10 +490,13 @@ export function recalcEnergyBalance(planet: Planet, system?: StarSystem): void {
   // Helper: process one building's energy contribution (C4 — extracted from 3 inline copies).
   // layer: 'surface' | 'atmosphere' | 'orbit' — affects solar_plant bonus (orbit ×1.2)
   //        and colony_hub special-case (only on surface).
+  // R-SYNERGY: для зданий на гексах поверхности применяется множитель
+  // энергопотребления от смежных электростанций (−5% за станцию, docs §5.1).
   const processBuildingEnergy = (
     buildingId: string | null | undefined,
     buildingLevel: number,
     layer: 'surface' | 'atmosphere' | 'orbit',
+    hexIndex = -1,
   ): void => {
     if (!buildingId) return;
     const buildingDef = BUILDING_MAP.get(buildingId);
@@ -508,13 +522,20 @@ export function recalcEnergyBalance(planet: Planet, system?: StarSystem): void {
         production += 5 * levelMult;
       }
     } else {
-      consumption += buildingDef.energyConsumption * levelMult;
+      // R-SYNERGY §power: смежные электростанции снижают потребление
+      // (−5% за каждую, стекинг ×0.5^(n-1); только для гексов поверхности).
+      const synergyMult = layer === 'surface' && hexIndex >= 0
+        ? getEnergyConsumptionMultiplier(planet, hexIndex)
+        : 1;
+      consumption += buildingDef.energyConsumption * levelMult * synergyMult;
     }
   };
 
   // Surface buildings
-  for (const hex of planet.hexes) {
-    processBuildingEnergy(hex.buildingId, hex.buildingLevel, 'surface');
+  for (let i = 0; i < planet.hexes.length; i++) {
+    const hex = planet.hexes[i];
+    if (!hex) continue;
+    processBuildingEnergy(hex.buildingId, hex.buildingLevel, 'surface', i);
   }
 
   // Atmospheric slot buildings
@@ -729,6 +750,162 @@ export function upgradeBuilding(planet: Planet, hexIndex: number): boolean {
   recalcEnergyBalance(planet);
   gameBus.emit('economy:building-upgraded', { planetId: planet.id, hexIndex, level: hex.buildingLevel });
 
+  return true;
+}
+
+// ═══════════ R-DEMOLISH (Задача 22): понижение уровня и снос ═══════════
+
+/**
+ * Доля возврата ресурсов при понижении уровня / сносе здания.
+ * 0.5 = 50% вложенных ресурсов возвращается на склад планеты.
+ */
+export const DEMOLITION_REFUND_SHARE = 0.5;
+
+/** Слот-ячейка здания: surface-гекс, атмосферный или орбитальный слот. */
+type BuildingCell = HexCell | AtmosphericSlot | OrbitalSlot;
+
+/**
+ * Разрешить адрес ячейки здания по слою и индексу.
+ *
+ * Возвращает ячейку (структурно совместимую: buildingId/buildingLevel/
+ * процессорные поля) и reportIndex — единый индекс для событий/UI:
+ *   surface      → hexIndex (>= 0);
+ *   atmosphere   → -1 - slotIndex;
+ *   orbit        → -100 - slotIndex
+ * (та же конвенция, что у economy:building-constructed).
+ *
+ * 'space' не поддерживается (нет планетарных слотов) → null.
+ */
+function getBuildingCell(
+  planet: Planet,
+  layer: BuildingLayer,
+  index: number,
+): { cell: BuildingCell; reportIndex: number } | null {
+  if (layer === 'atmosphere') {
+    const slot = planet.atmosphericSlots[index];
+    if (!slot) return null;
+    return { cell: slot, reportIndex: -1 - index };
+  }
+  if (layer === 'orbit') {
+    const slot = planet.orbitSlots[index];
+    if (!slot) return null;
+    return { cell: slot, reportIndex: -100 - index };
+  }
+  if (layer === 'surface') {
+    const hex = planet.hexes[index];
+    if (!hex) return null;
+    return { cell: hex, reportIndex: index };
+  }
+  return null;
+}
+
+/** Сбросить состояние экземпляра здания (процессорные поля) при сносе. */
+function clearCellInstanceState(cell: BuildingCell): void {
+  cell.buildingId = null;
+  cell.buildingLevel = 0;
+  cell.processorType = undefined;
+  cell.specialization = undefined;
+  cell.specializationLevel = undefined;
+  cell.activeRecipes = undefined;
+}
+
+/**
+ * Понизить уровень здания на 1 (R-DEMOLISH).
+ *
+ * - Уровень L → L−1; возврат 50% стоимости уровня L (стоимость = base × (L−1)).
+ * - При L = 1 понижение превращается в СНОС (гекс/слот освобождается,
+ *   возврат 50% стоимости постройки) — «понижение до нуля».
+ * - Колониальный хаб нельзя понижать/сносить (ядро колонии).
+ * - Энергобаланс пересчитывается (recalcEnergyBalance).
+ *
+ * Известное упрощение MVP: снос не блокируется активной очередью
+ * производства (рецепты ссылаются на buildingId, не на экземпляр —
+ * при отсутствии экземпляра выход считается без процессорных бонусов).
+ */
+export function downgradeBuilding(
+  planet: Planet,
+  layer: BuildingLayer,
+  index: number,
+): boolean {
+  const ref = getBuildingCell(planet, layer, index);
+  if (!ref) return false;
+  const { cell, reportIndex } = ref;
+  if (!cell.buildingId || cell.buildingLevel < 1) return false;
+
+  const buildingDef = BUILDING_MAP.get(cell.buildingId);
+  if (!buildingDef) return false;
+
+  // Колониальный хаб — ядро колонии, снос/понижение запрещены.
+  if (buildingDef.id === 'colony_hub') return false;
+
+  // Уровень 1: понижение = снос (полное освобождение гекса/слота).
+  if (cell.buildingLevel === 1) {
+    return demolishBuilding(planet, layer, index);
+  }
+
+  // Возврат 50% стоимости текущего уровня L (стоимость уровня L = base × (L-1)).
+  const levelCostMult = cell.buildingLevel - 1;
+  for (const [resourceId, baseAmount] of Object.entries(buildingDef.costPerLevel)) {
+    const refund = Math.floor(baseAmount * levelCostMult * DEMOLITION_REFUND_SHARE);
+    if (refund > 0) {
+      planet.resources[resourceId] = (planet.resources[resourceId] ?? 0) + refund;
+    }
+  }
+
+  cell.buildingLevel--;
+  recalcEnergyBalance(planet);
+  gameBus.emit('economy:building-downgraded', {
+    planetId: planet.id,
+    hexIndex: reportIndex,
+    level: cell.buildingLevel,
+  });
+  return true;
+}
+
+/**
+ * Снести здание полностью (R-DEMOLISH) — освобождает гекс/слот.
+ *
+ * Возврат: 50% суммарных вложенных ресурсов. Модель стоимости
+ * (симметрична buildOnHex/upgradeBuilding): уровень 1 = base × 1,
+ * уровень i (i ≥ 2) = base × (i−1) → суммарно до уровня L:
+ *   base × (1 + L(L−1)/2).
+ *
+ * Специализация/активные рецепты экземпляра сбрасываются.
+ * Колониальный хаб снести нельзя. Энергобаланс пересчитывается.
+ */
+export function demolishBuilding(
+  planet: Planet,
+  layer: BuildingLayer,
+  index: number,
+): boolean {
+  const ref = getBuildingCell(planet, layer, index);
+  if (!ref) return false;
+  const { cell, reportIndex } = ref;
+  if (!cell.buildingId || cell.buildingLevel < 1) return false;
+
+  const buildingDef = BUILDING_MAP.get(cell.buildingId);
+  if (!buildingDef) return false;
+  if (buildingDef.id === 'colony_hub') return false;
+
+  const removedId = cell.buildingId;
+  const level = cell.buildingLevel;
+
+  // Возврат 50% суммарных вложений (см. докблок выше).
+  const totalInvestedMult = 1 + (level * (level - 1)) / 2;
+  for (const [resourceId, baseAmount] of Object.entries(buildingDef.costPerLevel)) {
+    const refund = Math.floor(baseAmount * totalInvestedMult * DEMOLITION_REFUND_SHARE);
+    if (refund > 0) {
+      planet.resources[resourceId] = (planet.resources[resourceId] ?? 0) + refund;
+    }
+  }
+
+  clearCellInstanceState(cell);
+  recalcEnergyBalance(planet);
+  gameBus.emit('economy:building-demolished', {
+    planetId: planet.id,
+    hexIndex: reportIndex,
+    buildingId: removedId,
+  });
   return true;
 }
 

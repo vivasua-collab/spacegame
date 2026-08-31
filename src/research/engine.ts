@@ -50,6 +50,7 @@ import type {
 import { TECH_MAP } from '@/data/research/tech-tree';
 import { BRANCH_LINKS } from '@/data/research/branch-links';
 import { TECH_UNLOCKS, type TechUnlock } from '@/data/research/tech-unlocks';
+import { FUNDAMENTAL_BRANCH_MAP, FUNDAMENTAL_BRANCHES_MVP } from '@/data/research/fundamental-branches';
 
 // ============ R1: validateTechTree ============
 
@@ -599,15 +600,27 @@ export function advanceQueue(state: ResearchState): boolean {
 }
 
 /**
- * R-RES §C: «Доступные RP» = totalRpGenerated (lifetime-банк)
- *  − sum(fundamentalRpInvested) (RP, потраченные на фундаменталы)
- *  − sum(activeSlots.rpInvested) (RP, вложенные в активные слоты).
+ * R-RES §C → R-SPLIT (Задача 22): «Аккумулятор RP» — единственный источник
+ * для фундаментальных исследований.
  *
- * Это «банк» игрока, который он может потратить на новые фундаменталы.
- * Не путать с totalRpGenerated — это lifetime-счётчик, который только
- * растёт. UI показывает оба: «Доступно» (главное) и «Всего» (secondary).
+ * ДО Задачи 22 «доступные RP» считались как totalRpGenerated − fundamental −
+ * slots: очередь дерева «занимала» RP из того же аккумулятора и ВОЗВРАЩАЛА
+ * их при завершении уровня (двойной учёт). Теперь ветки разделены:
+ *   - слоты дерева прогрессируют напрямую от притока (bank не трогают);
+ *   - банк копит собственную долю притока (getResearchInflowSplit).
+ *
+ * Совместимость: для состояний БЕЗ поля rpBank (старые сейвы до R-SPLIT)
+ * вычисляется legacy-значение (totalRpGenerated − fundamental − slots,
+ * кламп ≥ 0) — миграция происходит при первом levelUpFundamental/tick.
  */
 export function getAvailableRP(state: ResearchState): number {
+  const bank = (state as { rpBank?: number }).rpBank;
+  if (bank !== undefined) return bank;
+  return legacyAvailableRP(state);
+}
+
+/** Legacy-расчёт «доступных RP» (сейвы до R-SPLIT), кламп снизу нулём. */
+function legacyAvailableRP(state: ResearchState): number {
   const fundamentalInvested = Object.values(state.fundamentalRpInvested).reduce(
     (sum, v) => sum + (v ?? 0),
     0,
@@ -616,29 +629,111 @@ export function getAvailableRP(state: ResearchState): number {
     (sum, s) => sum + s.rpInvested,
     0,
   );
-  return state.totalRpGenerated - fundamentalInvested - slotsInvested;
+  return Math.max(0, state.totalRpGenerated - fundamentalInvested - slotsInvested);
 }
 
 /**
- * Обработка тика исследований — основная функция (R3).
+ * R-SPLIT: гарантировать наличие поля rpBank (миграция старых сейвов).
  *
- * Алгоритм:
- *   1. Если activeSlots.length === 0 — nothing to do (return state as is).
- *   2. Для каждого слота:
- *      a) Найти технологию в TECH_MAP (если не найдена — удалить слот).
- *      b) Вычислить effectiveRPPerSec (с учётом фокус-бонуса и partial-бонуса).
- *      c) Прибавить effectiveRPPerSec × deltaSeconds к slot.rpInvested.
- *      d) Пока rpInvested ≥ getTechCost(tech.baseCost, targetLevel):
- *         - Если targetLevel > getTechCeiling → удалить слот (потолок достигнут).
- *         - Если targetLevel > tech.maxLevel → удалить слот (макс. уровень).
- *         - Иначе: записать researched[techId] = targetLevel, добавить в completed[].
- *         - Увеличить targetLevel на 1, вычесть стоимость из rpInvested.
- *         - Если targetLevel превышает потолок — удалить слот.
- *   3. totalRpGenerated += totalRPPerSec × deltaSeconds (монотонно).
+ * Если поля нет (состояние создано до Задачи 22) — вычислить legacy-значение
+ * и записать. Вызывается из tickResearch (draft) и levelUpFundamental (draft).
  *
- * Возвращает { state: новое состояние (но mutation через draft — caller сам
- * создаёт новый объект через immer.produce), completed: список завершённых
- * уровней для эмита tech:research-completed }.
+ * Возвращает текущее значение банка.
+ */
+export function ensureRpBank(state: ResearchState): number {
+  const bank = (state as { rpBank?: number }).rpBank;
+  if (bank === undefined) {
+    const migrated = legacyAvailableRP(state);
+    state.rpBank = migrated;
+    return migrated;
+  }
+  return bank;
+}
+
+// ═══════════ R-SPLIT (Задача 22): разделение веток исследований ═══════════
+
+/**
+ * R-SPLIT: доля притока RP, направляемая в аккумулятор фундаменталов,
+ * пока обе ветки активны (фундаменталы не завершены И дерево работает).
+ * Остальное (1 − доля) идёт в слоты дерева технологий.
+ *
+ * Значение 0.5 = «параллельные ветки»: банк копит 50% притока, дерево
+ * исследует со скоростью 50% притока. Настройка на будущее — вынести в
+ * балансный конфиг, если потребуется.
+ */
+export const FUNDAMENTAL_RP_SHARE = 0.5;
+
+/**
+ * R-SPLIT: все ли ДОСТУПНЫЕ игроку фундаментальные ветки достигли maxLevel.
+ *
+ * Когда ДА — доля банка перенаправляется в дерево (дерево получает 100%
+ * притока). Это ответ на вопрос «куда девать RP, когда фундаменталы
+ * полностью изучены»: всё идёт в дерево технологий.
+ *
+ * ВАЖНО: проверяется FUNDAMENTAL_BRANCHES_MVP (5 веток) — «призрак»
+ * xenoarchaeology (Etap 4, не отображается в UI и недоступен для
+ * прокачки) не блокирует редирект. Иначе банк копился бы вечно
+ * после изучения всех доступных фундаменталов.
+ */
+export function areAllFundamentalsMaxed(state: ResearchState): boolean {
+  for (const branch of FUNDAMENTAL_BRANCHES_MVP) {
+    if ((state.fundamentalLevels[branch.id] ?? 0) < branch.maxLevel) return false;
+  }
+  return true;
+}
+
+/**
+ * R-SPLIT: разложить приток RP на две параллельные ветки.
+ *
+ * Правила (RP никогда не теряются понапрасну):
+ *   1. Все фундаменталы изучены → банк 0%, дерево 100%
+ *      (доля банка перенаправляется в дерево — ускорение эндгейма).
+ *   2. Дерево простаивает (нет активных слотов И очередь пуста) → банк 100%,
+ *      дерево 0% (доля дерева перенаправляется в банк — накопление).
+ *   3. Иначе — параллельно: банк FUNDAMENTAL_RP_SHARE (50%), дерево 50%.
+ *
+ * Слоты дерева НЕ трогают банк: rpInvested растёт от techPerSec напрямую
+ * (приток × аллокация), завершение уровня ничего не «возвращает» в банк.
+ */
+export function getResearchInflowSplit(
+  state: ResearchState,
+  totalRPPerSec: number,
+): { bankPerSec: number; techPerSec: number } {
+  const fundamentalsMaxed = areAllFundamentalsMaxed(state);
+  const techIdle = state.activeSlots.length === 0 && state.researchQueue.length === 0;
+
+  let bankShare: number;
+  if (fundamentalsMaxed) {
+    bankShare = 0;
+  } else if (techIdle) {
+    bankShare = 1;
+  } else {
+    bankShare = FUNDAMENTAL_RP_SHARE;
+  }
+
+  return {
+    bankPerSec: totalRPPerSec * bankShare,
+    techPerSec: totalRPPerSec * (1 - bankShare),
+  };
+}
+
+/**
+ * Обработка тика исследований — основная функция (R3 → R-SPLIT).
+ *
+ * Алгоритм (R-SPLIT, Задача 22 — две ПАРАЛЛЕЛЬНЫЕ ветки):
+ *   0. Миграция: гарантировать rpBank (старые сейвы до R-SPLIT).
+ *   1. Разложить приток: getResearchInflowSplit → bankPerSec + techPerSec
+ *      (все фундаменталы изучены → 100% в дерево; дерево простаивает →
+ *      100% в банк; иначе параллельно 50/50).
+ *   2. Слоты дерева: slot.rpInvested += techPerSec × allocation% ×
+ *      focusBonus × partialBonus × dt. Банк НЕ трогается; завершение
+ *      уровня ничего не «возвращает» (двойной учёт устранён).
+ *   3. Банк фундаменталов: rpBank += bankPerSec × dt.
+ *   4. totalRpGenerated += totalRPPerSec × dt (lifetime-счётчик для
+ *      отладки/статистики; НЕ отображается в UI).
+ *
+ * Возвращает { completed: список завершённых уровней для эмита
+ * tech:research-completed }.
  *
  * ВАЖНО: функция ПРИНИМАЕТ draft-объект ResearchState (immer) и мутирует его
  * in-place. Это паттерн из shipyard-queue.ts processShipyardTick.
@@ -650,66 +745,70 @@ export function tickResearch(
 ): { completed: Array<{ techId: string; level: number }> } {
   const completed: Array<{ techId: string; level: number }> = [];
 
+  // R-SPLIT: миграция старых сейвов (rpBank может отсутствовать).
+  ensureRpBank(state);
+
+  // R-SPLIT: разложить приток на банк (фундаменталы) и дерево (слоты).
+  const { bankPerSec, techPerSec } = getResearchInflowSplit(state, totalRPPerSec);
+
   if (state.activeSlots.length === 0) {
     // Нет активных слотов — но если есть очередь, попытаемся стартануть
     // первый элемент (R-RES §B auto-advance).
     advanceQueue(state);
-    state.totalRpGenerated += totalRPPerSec * deltaSeconds;
-    return { completed };
-  }
+  } else {
+    const activeSlots = state.activeSlots.length;
 
-  const activeSlots = state.activeSlots.length;
+    // Обрабатываем слоты; удаляем finished из массива (reverse + splice).
+    for (let i = state.activeSlots.length - 1; i >= 0; i--) {
+      const slot = state.activeSlots[i];
+      if (!slot) continue;
 
-  // Обрабатываем слоты; удаляем finished из массива (через reverse + splice).
-  // Mutation-friendly: итерируем по индексу, при удалении — splice + decrement i.
-  for (let i = state.activeSlots.length - 1; i >= 0; i--) {
-    const slot = state.activeSlots[i];
-    if (!slot) continue;
-
-    const tech = TECH_MAP.get(slot.techId);
-    if (!tech) {
-      // Tech not in tree — drop slot
-      state.activeSlots.splice(i, 1);
-      continue;
-    }
-
-    // Эффективный RP/сек для этого слота
-    const partialBonus = getPartialBonus(tech.branch, state.fundamentalLevels);
-    const effectiveRPPerSec = getEffectiveRPPerSec(
-      totalRPPerSec,
-      slot.allocationPercent,
-      activeSlots,
-    ) * partialBonus;
-
-    // Накопить RP
-    slot.rpInvested += effectiveRPPerSec * deltaSeconds;
-
-    // Завершать уровни, пока хватает RP
-    let levelFinished = false;
-    // Защита от бесконечного цикла (maxLevel ограничивает)
-    while (slot.rpInvested >= getTechCost(tech.baseCost, slot.targetLevel) && slot.targetLevel >= 1) {
-      const cost = getTechCost(tech.baseCost, slot.targetLevel);
-      const ceiling = getTechCeiling(tech, state);
-      if (slot.targetLevel > ceiling || slot.targetLevel > tech.maxLevel) {
-        // Слот достиг потолка — удалить
+      const tech = TECH_MAP.get(slot.techId);
+      if (!tech) {
+        // Tech not in tree — drop slot
         state.activeSlots.splice(i, 1);
-        levelFinished = true;
-        break;
+        continue;
       }
-      // Завершить уровень
-      const newLevel = slot.targetLevel;
-      state.researched[slot.techId] = newLevel;
-      completed.push({ techId: slot.techId, level: newLevel });
-      slot.rpInvested -= cost;
-      slot.targetLevel = newLevel + 1;
-      // Если следующий уровень превышает потолок — удалить слот
-      if (slot.targetLevel > ceiling || slot.targetLevel > tech.maxLevel) {
-        state.activeSlots.splice(i, 1);
-        levelFinished = true;
-        break;
+
+      // Эффективный RP/сек для этого слота (R-SPLIT: от techPerSec —
+      // доли притока дерева; банк фундаменталов не участвует).
+      const partialBonus = getPartialBonus(tech.branch, state.fundamentalLevels);
+      const effectiveRPPerSec = getEffectiveRPPerSec(
+        techPerSec,
+        slot.allocationPercent,
+        activeSlots,
+      ) * partialBonus;
+
+      // Накопить RP (прогресс слота — «постоянная ветка», без банка)
+      slot.rpInvested += effectiveRPPerSec * deltaSeconds;
+
+      // Завершать уровни, пока хватает RP
+      let levelFinished = false;
+      // Защита от бесконечного цикла (maxLevel ограничивает)
+      while (slot.rpInvested >= getTechCost(tech.baseCost, slot.targetLevel) && slot.targetLevel >= 1) {
+        const cost = getTechCost(tech.baseCost, slot.targetLevel);
+        const ceiling = getTechCeiling(tech, state);
+        if (slot.targetLevel > ceiling || slot.targetLevel > tech.maxLevel) {
+          // Слот достиг потолка — удалить
+          state.activeSlots.splice(i, 1);
+          levelFinished = true;
+          break;
+        }
+        // Завершить уровень
+        const newLevel = slot.targetLevel;
+        state.researched[slot.techId] = newLevel;
+        completed.push({ techId: slot.techId, level: newLevel });
+        slot.rpInvested -= cost;
+        slot.targetLevel = newLevel + 1;
+        // Если следующий уровень превышает потолок — удалить слот
+        if (slot.targetLevel > ceiling || slot.targetLevel > tech.maxLevel) {
+          state.activeSlots.splice(i, 1);
+          levelFinished = true;
+          break;
+        }
       }
+      void levelFinished; // для будущего лога
     }
-    void levelFinished; // для будущего лога
   }
 
   // R-RES §B: если после тика активных слотов не осталось, а очередь
@@ -720,6 +819,9 @@ export function tickResearch(
     advanceQueue(state);
   }
 
+  // R-SPLIT: банк фундаменталов — накопительная параллельная ветка.
+  state.rpBank += bankPerSec * deltaSeconds;
+  // Lifetime-счётчик (debug/статистика; НЕ для UI — «Всего» удалено).
   state.totalRpGenerated += totalRPPerSec * deltaSeconds;
   return { completed };
 }
@@ -892,7 +994,7 @@ export function applyTechUnlock(
 /**
  * Создать ResearchState по умолчанию (новая игра).
  * Все фундаменталы = 0, researched = {}, activeSlots = [], researchQueue = [],
- * rpGenerated = 0.
+ * rpBank = 0 (R-SPLIT: аккумулятор фундаменталов), rpGenerated = 0.
  *
  * Используется в game-store.newGame() и migrateGameState.
  */
@@ -907,6 +1009,7 @@ export function createDefaultResearchState(): ResearchState {
       xenoarchaeology: 0,
     },
     fundamentalRpInvested: {},
+    rpBank: 0,
     researched: {},
     activeSlots: [],
     researchQueue: [],
@@ -930,6 +1033,42 @@ export function getFundamentalLevelCost(baseCost: number, level: number): number
  */
 export function getFundamentalCumulativeCost(baseCost: number, targetLevel: number): number {
   return getCumulativeCost(baseCost, targetLevel);
+}
+
+/**
+ * R-SPLIT: повысить уровень фундаментальной ветки за счёт АККУМУЛЯТОРА.
+ *
+ * Чистая функция над draft (мутирует state как immer-draft):
+ *   1. Гарантировать rpBank (миграция старых сейвов).
+ *   2. Проверить потолок ветки (maxLevel) и достаточность банка.
+ *   3. Списать стоимость из rpBank, записать fundamentalRpInvested
+ *      (для отображения «Вложено»), поднять fundamentalLevels[branchId].
+ *
+ * Возвращает true при успехе. Вызывается store-акцией levelUpFundamental;
+ * эмиты tech:fundamental-leveled остаются на стороне store (UI-действие).
+ */
+export function levelUpFundamentalEngine(
+  state: ResearchState,
+  branchId: FundamentalBranchId,
+): boolean {
+  const branchDef = FUNDAMENTAL_BRANCH_MAP.get(branchId);
+  if (!branchDef) return false;
+
+  const currentLevel = state.fundamentalLevels[branchId] ?? 0;
+  if (currentLevel >= branchDef.maxLevel) return false;
+
+  const cost = getFundamentalLevelCost(branchDef.baseCost, currentLevel + 1);
+
+  // R-SPLIT: тратим ТОЛЬКО из аккумулятора (ветки разделены — дерево
+  // больше не «занимает» и не «возвращает» RP банка).
+  const bank = ensureRpBank(state);
+  if (bank < cost) return false;
+
+  state.rpBank = bank - cost;
+  state.fundamentalLevels[branchId] = currentLevel + 1;
+  state.fundamentalRpInvested[branchId] =
+    (state.fundamentalRpInvested[branchId] ?? 0) + cost;
+  return true;
 }
 
 // ============ Tech status (UI helper) ============

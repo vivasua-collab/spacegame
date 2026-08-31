@@ -20,9 +20,10 @@ import {
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
-import { Hammer, Zap, ArrowUp, Wrench, RotateCcw, ArrowRight, FlaskConical } from 'lucide-react';
+import { Hammer, Zap, ArrowUp, ArrowDown, Trash2, Wrench, RotateCcw, ArrowRight, FlaskConical, Sparkles } from 'lucide-react';
 import type { Planet, HexTerrain, BuildingLayer, BuildingDef } from '@/core/types';
 import { calculateProcessorOutputMultiplier } from '@/economy/engine';
+import { getActiveSynergiesForHex } from '@/economy/adjacency';
 import { PROCESSOR_CATEGORIES } from '@/data/processor-categories';
 import { SpecializeDialog } from './specialize-dialog';
 import { ShipyardDialog } from './shipyard-dialog';
@@ -70,6 +71,11 @@ export function BuildingDialog({ open, onOpenChange, planet, target }: BuildingD
   const buildOnAtmosphereSlot = useGameStore((s) => s.buildOnAtmosphereSlot);
   const buildOnOrbitSlot = useGameStore((s) => s.buildOnOrbitSlot);
   const upgradeBuildingOnHex = useGameStore((s) => s.upgradeBuildingOnHex);
+  // R-DEMOLISH (Задача 22): понижение уровня и снос.
+  const downgradeBuildingOnHex = useGameStore((s) => s.downgradeBuildingOnHex);
+  const demolishBuildingOnHex = useGameStore((s) => s.demolishBuildingOnHex);
+  const downgradeBuildingOnSlot = useGameStore((s) => s.downgradeBuildingOnSlot);
+  const demolishBuildingOnSlot = useGameStore((s) => s.demolishBuildingOnSlot);
   // R-BLD-MOD: карта исследованных технологий для фильтра requiresTechs в BuildList.
   const researched = useGameStore((s) => s.gameState?.researchState.researched ?? {});
 
@@ -112,6 +118,16 @@ export function BuildingDialog({ open, onOpenChange, planet, target }: BuildingD
             upgradeBuildingOnHex(planet.id, target.hexIndex);
             onOpenChange(false);
           }}
+          onDowngrade={() => {
+            // R-DEMOLISH: понижение на 1 (уровень 1 = снос, гекс освобождается).
+            downgradeBuildingOnHex(planet.id, target.hexIndex);
+            onOpenChange(false);
+          }}
+          onDemolish={() => {
+            // R-DEMOLISH: снос с возвратом 50% вложенных ресурсов.
+            demolishBuildingOnHex(planet.id, target.hexIndex);
+            onOpenChange(false);
+          }}
         />
       );
     }
@@ -122,18 +138,19 @@ export function BuildingDialog({ open, onOpenChange, planet, target }: BuildingD
     const slot = target.kind === 'atmosphere'
       ? planet.atmosphericSlots[target.slotIndex]
       : planet.orbitSlots[target.slotIndex];
-    const existingBuilding = slot.buildingId ? BUILDING_MAP.get(slot.buildingId) : null;
+    const existingBuilding = slot?.buildingId ? BUILDING_MAP.get(slot.buildingId) : null;
+    const slotLevel = slot?.buildingLevel ?? 0;
     // If the slot is occupied, show a brief info card; player can still switch tabs to
     // build elsewhere on the same planet via the Tabs (e.g. another empty slot — but
     // the dialog doesn't know about other slots, so we just show the occupied slot info).
-    if (existingBuilding && slot.buildingId) {
+    if (existingBuilding && slot?.buildingId) {
       return (
         <Dialog open={open} onOpenChange={onOpenChange}>
           <DialogContent className="bg-[#0d0d24] border-white/10 text-white max-w-md">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
                 <Hammer className="size-4 text-amber-400" />
-                {existingBuilding.name} — Lvl {slot.buildingLevel}
+                {existingBuilding.name} — Lvl {slotLevel}
               </DialogTitle>
               <DialogDescription className="text-slate-400">
                 {existingBuilding.description}
@@ -159,18 +176,50 @@ export function BuildingDialog({ open, onOpenChange, planet, target }: BuildingD
                   Энергия: +10/tick
                 </div>
               )}
-              {existingBuilding.id === 'laboratory' && slot && (
+              {existingBuilding.id === 'laboratory' && (
                 <div className="text-sm text-cyan-400 flex items-center gap-1">
                   <FlaskConical className="size-3" />
-                  RP: +{getResearchRate(slot.buildingLevel).toFixed(1)}/сек
+                  RP: +{getResearchRate(slotLevel).toFixed(1)}/сек
                   <span className="text-slate-500 text-[10px]">
-                    (ур.{slot.buildingLevel} × 5 × 1.0)
+                    (ур.{slotLevel} × 5 × 1.0)
                   </span>
                 </div>
               )}
               <div className="text-[10px] text-slate-600 italic">
                 Апгрейд атмосферных/орбитальных зданий пока не реализован в engine.
               </div>
+              {/* ─── R-DEMOLISH: понижение и снос на атмосферных/орбитальных слотах ─── */}
+              {existingBuilding.id !== 'colony_hub' && (
+                <div className="pt-3 border-t border-white/10 space-y-2">
+                  <Button
+                    variant="outline"
+                    className="w-full border-orange-400/30 hover:border-orange-400/60 text-orange-300"
+                    onClick={() => {
+                      downgradeBuildingOnSlot(planet.id, target.kind, target.slotIndex);
+                      onOpenChange(false);
+                    }}
+                    title={slotLevel === 1
+                      ? 'Уровень 1: здание будет снесено, слот освободится'
+                      : `Уровень ${slotLevel} → ${slotLevel - 1}; возврат 50% стоимости уровня`}
+                  >
+                    <ArrowDown className="size-4 mr-1" />
+                    {slotLevel === 1 ? 'Снести (ур. 1)' : `Понизить до ур. ${slotLevel - 1}`}
+                  </Button>
+                  {slotLevel > 1 && (
+                    <Button
+                      variant="outline"
+                      className="w-full border-red-400/30 hover:border-red-400/60 text-red-300"
+                      onClick={() => {
+                        demolishBuildingOnSlot(planet.id, target.kind, target.slotIndex);
+                        onOpenChange(false);
+                      }}
+                    >
+                      <Trash2 className="size-4 mr-1" />
+                      Снести здание
+                    </Button>
+                  )}
+                </div>
+              )}
             </div>
           </DialogContent>
         </Dialog>
@@ -257,6 +306,8 @@ function UpgradeMode({
   existingBuilding,
   existingLevel,
   onUpgrade,
+  onDowngrade,
+  onDemolish,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -266,9 +317,15 @@ function UpgradeMode({
   existingBuilding: BuildingDef;
   existingLevel: number;
   onUpgrade: () => void;
+  onDowngrade: () => void;
+  onDemolish: () => void;
 }) {
   const canAffordUpgrade = canAffordBuildingUpgrade(planet, existingLevel, existingBuilding);
   const isMaxLevel = existingLevel >= existingBuilding.levels;
+  // R-DEMOLISH: колониальный хаб нельзя понижать/сносить (ядро колонии).
+  const isProtected = existingBuilding.id === 'colony_hub';
+  // R-SYNERGY: активные бонусы соседства этого здания.
+  const activeSynergies = getActiveSynergiesForHex(planet, hexIndex);
   // Block 05 PR6 — specialization state
   const specializeBuildingOnHex = useGameStore((s) => s.specializeBuildingOnHex);
   const upgradeSpecializationOnHex = useGameStore((s) => s.upgradeSpecializationOnHex);
@@ -369,6 +426,28 @@ function UpgradeMode({
                 </div>
               )}
 
+              {/* ─── R-SYNERGY: активные бонусы соседства (docs §5) ─── */}
+              {activeSynergies.length > 0 && (
+                <div className="rounded-md border border-violet-400/30 bg-violet-400/10 p-2 space-y-1">
+                  <div className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-violet-300">
+                    <Sparkles className="size-3" />
+                    Синергия
+                  </div>
+                  {activeSynergies.map((s) => (
+                    <div key={s.rule.id} className="text-[10px] text-slate-400 leading-snug">
+                      <span className="text-slate-300">{s.neighbors}</span>{' '}
+                      смежн. →{' '}
+                      <span className={s.bonus >= 0 ? 'text-emerald-300' : 'text-cyan-300'}>
+                        {s.bonus >= 0 ? '+' : ''}
+                        {(s.bonus * 100).toFixed(1)}%
+                      </span>{' '}
+                      ({SYNERGY_TARGET_LABELS[s.rule.bonusTarget] ?? s.rule.bonusTarget})
+                      <span className="text-slate-500 text-[10px]">— {s.rule.description}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
               {/* ─── Block 05 PR6 — панель специализации переработчика ─── */}
               {isProcessorBuilding && processorOutput && (
                 <ProcessorSpecializationPanel
@@ -432,6 +511,42 @@ function UpgradeMode({
                     Апгрейд
                   </Button>
                 </>
+              )}
+
+              {/* ─── R-DEMOLISH (Задача 22): понижение уровня и снос ─── */}
+              {!isProtected && (
+                <div className="mt-3 pt-3 border-t border-white/10 space-y-2">
+                  <div className="text-xs uppercase tracking-wider text-slate-500">
+                    Управление зданием
+                  </div>
+                  <Button
+                    variant="outline"
+                    className="w-full border-orange-400/30 hover:border-orange-400/60 text-orange-300"
+                    onClick={onDowngrade}
+                    title={existingLevel === 1
+                      ? 'Уровень 1: здание будет снесено, гекс освободится'
+                      : `Уровень ${existingLevel} → ${existingLevel - 1}; возврат 50% стоимости уровня`}
+                  >
+                    <ArrowDown className="size-4 mr-1" />
+                    {existingLevel === 1 ? 'Снести (ур. 1)' : `Понизить до ур. ${existingLevel - 1}`}
+                  </Button>
+                  {existingLevel > 1 && (
+                    <Button
+                      variant="outline"
+                      className="w-full border-red-400/30 hover:border-red-400/60 text-red-300"
+                      onClick={onDemolish}
+                      title={`Снос: гекс освобождается, возврат 50% вложенных ресурсов (~${Math.floor(demolishRefundEstimate(existingBuilding, existingLevel))} ед. суммарно)`}
+                    >
+                      <Trash2 className="size-4 mr-1" />
+                      Снести здание
+                    </Button>
+                  )}
+                </div>
+              )}
+              {isProtected && (
+                <div className="text-[10px] text-slate-600 italic text-center mt-2">
+                  Колониальный хаб — ядро колонии, понижение/снос запрещены.
+                </div>
               )}
 
               {/* ─── Block 02 (F2): shipyard action buttons ───────────────── */}
@@ -632,6 +747,25 @@ function canAffordBuilding(planet: Planet, building: BuildingDef): boolean {
     if ((planet.resources[resourceId] ?? 0) < amount) return false;
   }
   return true;
+}
+
+// ─── R-SYNERGY: подписи целевых метрик Синергии для UI ──────────────────
+const SYNERGY_TARGET_LABELS: Record<string, string> = {
+  research_rate: 'скорость исследований',
+  processing_speed: 'скорость производства',
+  energy_consumption: 'энергопотребление',
+};
+
+// ─── R-DEMOLISH: оценка суммарного возврата ресурсов при сносе (для тултипа) ──
+// Модель стоимости (sym. upgradeBuilding): уровень 1 = base; уровень i = base × (i−1).
+// Возврат = 50% × (1 + L(L−1)/2) × base — сумма по всем ресурсам.
+function demolishRefundEstimate(building: BuildingDef, level: number): number {
+  const totalInvestedMult = 1 + (level * (level - 1)) / 2;
+  let total = 0;
+  for (const amount of Object.values(building.costPerLevel)) {
+    total += Math.floor((amount ?? 0) * totalInvestedMult * 0.5);
+  }
+  return total;
 }
 
 function canAffordBuildingUpgrade(
