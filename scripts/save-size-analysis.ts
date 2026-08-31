@@ -1,22 +1,20 @@
 /**
- * R-28 (2026-08-31): анализ размера сейва.
+ * R-28/R-29 (2026-08-31): анализ размера сейва.
  *
- * Запрос владельца: «Расчет размера сейва, почему он такой большой?
- * Определить какие данные сохраняются для пустой или условно пустой
- * галактики… Продумать схему оптимизации. Возможно часть полей излишние.»
+ * Запрос владельца (R-28): «Расчет размера сейва, почему он такой большой?
+ * …какие данные сохраняются для пустой галактики…».
+ * Запрос владельца (R-29): ленивые залежи — «в сейв не попадают мёртвые
+ * (не разведанные) гексы, файл на начальном этапе меньше».
  *
  * Что делает:
  *   1. Генерирует эталонную галактику (seed 42, 200 систем — конфиг newGame)
- *      и собирает GameState «свежей игры» (без зданий/складов).
- *   2. Сериализует двумя способами:
- *      - v1 — объектная форма (как до R-28) — базлайн;
- *      - v2 — текущий кодек serializeGameState (кортежи, без coord,
- *        округления) — фактический размер сейва.
- *   3. Разлагает v1-JSON по полям каждой сущности (system/star/planet/moon/
- *      hex/deposit/slot/jumpPoint/…): байты значений + байты имён ключей —
- *      диагностика «где сидят байты» для будущих оптимизаций.
- *   4. Считает объекты: системы, планеты, луны, гексы, залежи, слоты.
- *   5. gzip-замеры (транспорт R-26) обеих форм.
+ *      и собирает GameState «свежей игры» (без колоний; R-29: гексы без
+ *      залежей — ленивые).
+ *   2. Сериализует: v3-кодек (фактический формат сейва после R-29) для
+ *      трёх сценариев: свежая игра / ранние колонии (5 колонизированы) /
+ *      верхняя граница (ВСЕ тела материализованы).
+ *   3. Разлагает объектную форму по полям сущностей — «где сидят байты».
+ *   4. Считает объекты и gzip-замеры (транспорт R-26).
  *
  * Run: bun run save:size
  */
@@ -25,6 +23,8 @@ import '@/core/immer-setup'; // enableMapSet + setAutoFreeze(false) — нуже
 import { gzipSync } from 'node:zlib';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { generateGalaxy } from '@/galaxy';
+import { materializePlanetDeposits } from '@/galaxy/generate-resources';
+import { colonizePlanet } from '@/economy/engine';
 import { serializeGameState } from '@/stores/game-store';
 import { createDefaultResearchState } from '@/research/engine';
 import type { GameState } from '@/core/types';
@@ -171,37 +171,59 @@ function analyze(root: any): { agg: Agg; counts: Counts } {
 
 function main(): void {
   console.log('═════════════════════════════════════════════════════════════');
-  console.log('  R-28: Анализ размера сейва (свежая галактика, без колоний)');
+  console.log('  R-29: Анализ размера сейва (ленивые залежи, fmt v3)');
   console.log('═════════════════════════════════════════════════════════════');
 
   const state = buildFreshState(200, 42);
 
-  // v2 — фактический сейв (кодек R-28)
-  const v2json = serializeGameState(state);
-  const v2gz = gzipSync(Buffer.from(v2json, 'utf8'));
+  // Сценарий А: свежая игра — гексы без залежей (ленивые, R-29)
+  const freshJson = serializeGameState(state);
+  const freshGz = gzipSync(Buffer.from(freshJson, 'utf8'));
 
-  // v1-базлайн — объектная форма до R-28 (для диагностики полей)
-  const { systemMap: _sm, bakedModel: _bm, ...galaxyWithoutMap } = state.galaxy;
-  const v1json = JSON.stringify({
-    ...state,
+  // Сценарий Б: ранние колонии — колонизируем 5 подходящих планет
+  let colonized = 0;
+  for (const sys of state.galaxy.systems) {
+    for (const p of sys.planets) {
+      if (colonized >= 5) break;
+      if (p.type !== 'gas_giant' && !p.owner && p.hexes.length >= 37) {
+        if (colonizePlanet(p)) colonized++;
+      }
+    }
+    if (colonized >= 5) break;
+  }
+  const earlyJson = serializeGameState(state);
+  const earlyGz = gzipSync(Buffer.from(earlyJson, 'utf8'));
+
+  // Сценарий В: верхняя граница — материализуем ВСЕ тела (как до R-29)
+  for (const sys of state.galaxy.systems) {
+    for (const p of sys.planets) {
+      materializePlanetDeposits(p);
+      for (const m of p.moons) materializePlanetDeposits(m);
+    }
+  }
+  const fullJson = serializeGameState(state);
+  const fullGz = gzipSync(Buffer.from(fullJson, 'utf8'));
+
+  // Объектная форма (для полевого разбора) — на СВЕЖЕМ ленивом состоянии
+  const lazyState = buildFreshState(200, 42);
+  const { systemMap: _sm, bakedModel: _bm, ...galaxyWithoutMap } = lazyState.galaxy;
+  const plainJson = JSON.stringify({
+    ...lazyState,
     galaxy: galaxyWithoutMap,
     productionQueues: [],
     shipDesigns: [],
     shipyardQueues: [],
     ships: [],
   });
-  const v1gz = gzipSync(Buffer.from(v1json, 'utf8'));
-  const reduction = ((1 - v2json.length / v1json.length) * 100).toFixed(1);
-
-  // Поле-ориентированный разбор — на v1-форме
-  const root = JSON.parse(v1json);
+  const root = JSON.parse(plainJson);
   const { agg, counts } = analyze(root);
 
-  console.log(`  v1 (до R-28):   ${mb(v1json.length)} МБ plain · ${mb(v1gz.length)} МБ gzip`);
-  console.log(`  v2 (кодек):     ${mb(v2json.length)} МБ plain · ${mb(v2gz.length)} МБ gzip`);
-  console.log(`  Экономия:       −${reduction}% plain · gzip ${mb(v1gz.length)} → ${mb(v2gz.length)} МБ`);
+  console.log('  ── Сценарии (fmt v3, кодек serializeGameState) ──');
+  console.log(`  А. Свежая игра (лениво):   ${mb(freshJson.length)} МБ plain · ${mb(freshGz.length)} МБ gzip`);
+  console.log(`  Б. 5 колоний:              ${mb(earlyJson.length)} МБ plain · ${mb(earlyGz.length)} МБ gzip`);
+  console.log(`  В. ВСЁ материализовано:    ${mb(fullJson.length)} МБ plain · ${mb(fullGz.length)} МБ gzip (≈ до R-29)`);
   console.log(`  Объектов: ${counts.systems} систем · ${counts.stars} звёзд · ${counts.planets} планет · ${counts.moons} лун`);
-  console.log(`  Гексов: ${counts.hexes} (планеты) + ${counts.moonHexes} (луны) · залежей: ${counts.deposits} + ${counts.moonDeposits}`);
+  console.log(`  Гексов: ${counts.hexes} (планеты) + ${counts.moonHexes} (луны) · залежей в сейве А: 0 (лениво)`);
   console.log(`  Слотов: орб ${counts.orbitSlots} (пустых ${counts.emptyOrbitSlots}) · атмос ${counts.atmosSlots} · с постройками ${counts.builtSlots}`);
   console.log(`  JP: ${counts.jumpPoints} · планет со складом: ${counts.planetsWithWarehouse}`);
   console.log(`  Планеты по размерам: ${Object.entries(counts.planetsBySize).map(([k, v]) => `${k}=${v}`).join(' ')}`);
@@ -213,15 +235,16 @@ function main(): void {
     entityTotals.set(entity, (entityTotals.get(entity) ?? 0) + s.valueBytes + s.keyBytes);
   }
 
-  console.log('  ── Байты по сущностям (форма v1 — где сидят байты) ──');
+  console.log('  ── Байты по сущностям (объектная форма свежего состояния) ──');
   const lines: string[] = [];
-  lines.push('# R-28: Анализ размера сейва', '');
-  lines.push(`- Свежая игра: seed 42, 200 систем (конфиг newGame), tick 0`);
-  lines.push(`- v1 (до R-28): **${mb(v1json.length)} МБ** plain · ${mb(v1gz.length)} МБ gzip`);
-  lines.push(`- v2 (кодек R-28): **${mb(v2json.length)} МБ** plain · ${mb(v2gz.length)} МБ gzip (−${reduction}%)`);
-  lines.push(`- ${counts.systems} систем · ${counts.planets} планет · ${counts.moons} лун · ${counts.hexes + counts.moonHexes} гексов · ${counts.deposits + counts.moonDeposits} залежей · ${counts.orbitSlots + counts.atmosSlots} слотов (${counts.builtSlots} застроенных)`);
+  lines.push('# R-29: Анализ размера сейва (ленивые залежи)', '');
+  lines.push(`- Свежая игра: seed 42, 200 систем (конфиг newGame), tick 0, fmt v3`);
+  lines.push(`- А. Свежая игра (лениво): **${mb(freshJson.length)} МБ** plain · ${mb(freshGz.length)} МБ gzip`);
+  lines.push(`- Б. 5 колоний: **${mb(earlyJson.length)} МБ** plain · ${mb(earlyGz.length)} МБ gzip`);
+  lines.push(`- В. Все тела материализованы (верхняя граница, ≈ до R-29): **${mb(fullJson.length)} МБ** plain · ${mb(fullGz.length)} МБ gzip`);
+  lines.push(`- ${counts.systems} систем · ${counts.planets} планет · ${counts.moons} лун · ${counts.hexes + counts.moonHexes} гексов (залежи — только у материализованных тел) · ${counts.orbitSlots + counts.atmosSlots} слотов (${counts.builtSlots} застроенных)`);
   lines.push('');
-  lines.push('## Байты по сущностям (форма v1 — где сидят байты)');
+  lines.push('## Байты по сущностям (объектная форма)');
   lines.push('');
   lines.push('| Сущность | МБ |');
   lines.push('|---|---|');
@@ -232,7 +255,7 @@ function main(): void {
   }
   console.log('');
 
-  lines.push('', '## Детализация по полям (форма v1)');
+  lines.push('', '## Детализация по полям (объектная форма)');
   lines.push('');
   for (const [entity, label] of [
     ['planet', 'Планета'], ['hex', 'Гекс планеты'], ['deposit', 'Залежь (гекс)'],
@@ -260,11 +283,16 @@ function main(): void {
     lines.push('');
   }
 
-  lines.push('## Кодек v2 (R-28) — что изменилось', '');
+  lines.push('## Кодек v3 (R-29) — что изменилось относительно v2', '');
+  lines.push('- Ленивые залежи: в сейв попадают только гексы материализованных (колонизированных) тел; свежая игра хранит лишь свод-пул + RNG-снимок `ds`.');
+  lines.push('- Истощённые залежи (qty<=0) не пишутся; флаг `dm` исключает повторную материализацию.');
+  lines.push('- Словарь `galaxy.dict`: кортежи залежей/свода пишут индекс id вместо строки.');
+  lines.push('', '## Кодек v2 (R-28) — что изменился относительно v1', '');
   lines.push('| Форма | Plain | gzip |');
   lines.push('|---|---|---|');
-  lines.push(`| v1 (объекты, до R-28) | ${mb(v1json.length)} | ${mb(v1gz.length)} |`);
-  lines.push(`| v2 (кортежи + округления + без coord/пустых полей) | ${mb(v2json.length)} | ${mb(v2gz.length)} |`);
+  lines.push(`| v3 А (ленивая свежая, R-29) | ${mb(freshJson.length)} | ${mb(freshGz.length)} |`);
+  lines.push(`| v3 В (все материализованы) | ${mb(fullJson.length)} | ${mb(fullGz.length)} |`);
+  lines.push(`| Объектная форма (эталон полей) | ${mb(plainJson.length)} | — |`);
   lines.push('', '- Залежи → кортежи `[elementId, availability(3 зн.), quantity, depth]` — убраны ~11 МБ имён ключей (×276 тыс.) и ~8 МБ хвостов availability (ср. 18.4 симв. → 5).');
   lines.push('- Свод resourceDeposits → кортежи `[elementId, total, avg, tierIdx, hexCount, max]` — RNG-контент агрегата (гарантированные элементы + ультраредкие) сохраняется полностью, меняется только форма.');
   lines.push('- Гексы: без `coord` (восстановление из сетки по индексу массива), без `buildingId:null`/`buildingLevel:0` и `deposits:[]` у пустых.');

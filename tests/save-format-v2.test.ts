@@ -3,6 +3,13 @@
  * R-28 (2026-08-31): тесты компактного формата сейва v2
  * (src/lib/save-format-v2.ts).
  *
+ * R-29: продовый сериализатор теперь пишет v3, но v2-ДЕКОДЕР
+ * (expandSaveV2 + миграция флагов) — живой путь загрузки старых сейвов
+ * (например, сейв владельца Galaxy #213397). Поэтому тесты переключены
+ * на unit-уровень: JSON формата v2 строится компакт-кодеком v2
+ * (compactSaveV2) на материализованном состоянии (как выглядели сейвы
+ * до R-29 — со запечёнными залежами).
+ *
  * Тесты:
  *   1. Round-trip структуры: залежи-кортежи → объекты (все поля, включая
  *      processor-поля застроенных гексов), coord восстанавливается из сетки.
@@ -23,9 +30,10 @@
 import { test, expect, describe } from 'bun:test';
 import '@/core/immer-setup';
 import { generateGalaxy } from '@/galaxy';
-import { serializeGameState, deserializeGameState } from '@/stores/game-store';
+import { deserializeGameState } from '@/stores/game-store';
 import { compactSaveV2, expandSaveV2, SAVE_FORMAT_VERSION, isSaveFormatV2 } from '@/lib/save-format-v2';
 import { generateHexCoords } from '@/galaxy/hex-grid';
+import { materializePlanetDeposits } from '@/galaxy/generate-resources';
 import { createDefaultResearchState } from '@/research/engine';
 import type { GameState, Planet, HexCell, ResourceDeposit } from '@/core/types';
 
@@ -39,9 +47,9 @@ function firstPlanetWithHexes(state: GameState, minHexes = 1): Planet {
   throw new Error('нет планет с гексами');
 }
 
-function buildFreshState(systemCount: number): GameState {
+function buildFreshState(systemCount: number, materialize = false): GameState {
   const galaxy = generateGalaxy({ seed: 42, systemCount });
-  return {
+  const state: GameState = {
     time: { tick: 7, dayInYear: 100, year: 2 },
     speed: 1,
     phase: 'playing',
@@ -54,6 +62,39 @@ function buildFreshState(systemCount: number): GameState {
     ships: new Map(),
     researchState: createDefaultResearchState(),
   };
+  // R-29: свежая генерация теперь ЛЕНИВАЯ (залежей в гексах нет). Для
+  // тестов v2-кодека воспроизводим ДО-R-29 вид: все тела материализованы
+  // (как выглядели старые сейвы).
+  if (materialize) materializeAllBodies(state);
+  return state;
+}
+
+/** Материализовать залежи всех тел (планеты + луны) — как до R-29. */
+function materializeAllBodies(state: GameState): void {
+  for (const sys of state.galaxy.systems) {
+    for (const p of sys.planets) {
+      materializePlanetDeposits(p);
+      for (const m of p.moons) materializePlanetDeposits(m);
+    }
+  }
+}
+
+/**
+ * R-29: JSON в формате v2 (как писали до R-29): компакт-кодек v2 поверх
+ * сериализуемой формы — тот же пайплайн, что был в serializeGameState
+ * до перехода на v3.
+ */
+function serializeV2(state: GameState): string {
+  const { systemMap: _systemMap, bakedModel: _bakedModel, ...galaxyWithoutMap } = state.galaxy;
+  const serializable = {
+    ...state,
+    galaxy: galaxyWithoutMap,
+    productionQueues: Array.from(state.productionQueues.entries()),
+    shipDesigns: Array.from(state.shipDesigns.entries()),
+    shipyardQueues: Array.from(state.shipyardQueues.entries()),
+    ships: Array.from(state.ships.entries()),
+  };
+  return JSON.stringify(compactSaveV2(serializable as unknown as Record<string, unknown>));
 }
 
 /** Все планеты и луны всех систем. */
@@ -68,8 +109,8 @@ function* allBodies(state: GameState): Generator<Planet> {
 
 describe('R-28: формат сейва v2', () => {
   test('1. Round-trip: кортежи залежей → объекты, coord из сетки, структура целa', () => {
-    const original = buildFreshState(20);
-    const json = serializeGameState(original);
+    const original = buildFreshState(20, true);
+    const json = serializeV2(original);
     expect(isSaveFormatV2(json)).toBe(true);
 
     const restored = deserializeGameState(json);
@@ -125,7 +166,7 @@ describe('R-28: формат сейва v2', () => {
 
   test('2. Свод resourceDeposits: кортежи → объекты, tier восстановлен', () => {
     const original = buildFreshState(10);
-    const json = serializeGameState(original);
+    const json = serializeV2(original);
     const restored = deserializeGameState(json);
 
     // В сериализованном JSON свод — кортежи
@@ -159,8 +200,8 @@ describe('R-28: формат сейва v2', () => {
   });
 
   test('3. Размер: v2 минимум на 40% меньше объектной формы', () => {
-    const state = buildFreshState(30);
-    const v2 = serializeGameState(state);
+    const state = buildFreshState(30, true);
+    const v2 = serializeV2(state);
 
     // v1-форма: то же состояние без компактора (как до R-28)
     const { systemMap: _sm, bakedModel: _bm, ...galaxyWithoutMap } = state.galaxy;
@@ -182,15 +223,15 @@ describe('R-28: формат сейва v2', () => {
   });
 
   test('4. Идемпотентность: serialize(deserialize(serialize(s))) === serialize(s)', () => {
-    const state = buildFreshState(10);
-    const json1 = serializeGameState(state);
+    const state = buildFreshState(10, true);
+    const json1 = serializeV2(state);
     const roundTripped = deserializeGameState(json1);
-    const json2 = serializeGameState(roundTripped);
+    const json2 = serializeV2(roundTripped);
     expect(json2).toBe(json1);
   });
 
   test('5. Обратная совместимость: v1-JSON без fmt читается как раньше', () => {
-    const state = buildFreshState(15);
+    const state = buildFreshState(15, true);
     // Собираем v1-форму вручную (объектные залежи, coord на месте)
     const { systemMap: _sm, bakedModel: _bm, ...galaxyWithoutMap } = state.galaxy;
     const v1Raw = {
@@ -231,7 +272,7 @@ describe('R-28: формат сейва v2', () => {
     hex.specializationLevel = 3;
     hex.activeRecipes = ['iron_plate'];
 
-    const json = serializeGameState(state);
+    const json = serializeV2(state);
     const restored = deserializeGameState(json);
     const rPlanet = restored.galaxy.systems.flatMap((s) => s.planets).find((p) => p.id === planet.id)!;
     const rHex = rPlanet.hexes[3]!;
@@ -251,7 +292,7 @@ describe('R-28: формат сейва v2', () => {
 
   test('7. Звёзды: float-хвосты обрезаны до 4 значащих цифр', () => {
     const state = buildFreshState(10);
-    const json = serializeGameState(state);
+    const json = serializeV2(state);
     const restored = deserializeGameState(json);
 
     const origStars = state.galaxy.systems.flatMap((s) => s.stars);
@@ -272,7 +313,7 @@ describe('R-28: формат сейва v2', () => {
     const gg = state.galaxy.systems.flatMap((s) => s.planets).find((p) => p.type === 'gas_giant');
     expect(gg).toBeDefined();
 
-    const json = serializeGameState(state);
+    const json = serializeV2(state);
     const restored = deserializeGameState(json);
     const rGg = restored.galaxy.systems.flatMap((s) => s.planets).find((p) => p.id === gg!.id)!;
 
@@ -293,7 +334,7 @@ describe('R-28: формат сейва v2', () => {
 
   test('9. Маркер fmt не протекает в восстановленный GameState', () => {
     const state = buildFreshState(5);
-    const json = serializeGameState(state);
+    const json = serializeV2(state);
     const restored = deserializeGameState(json) as unknown as Record<string, unknown>;
     expect(restored).not.toHaveProperty('fmt');
     expect((restored.galaxy as Record<string, unknown>)).not.toHaveProperty('fmt');
@@ -323,7 +364,7 @@ describe('R-28: формат сейва v2', () => {
   test('11. SAVE_FORMAT_VERSION = 2 и маркер в корне', () => {
     expect(SAVE_FORMAT_VERSION).toBe(2);
     const state = buildFreshState(5);
-    const parsed = JSON.parse(serializeGameState(state)) as { fmt?: number };
+    const parsed = JSON.parse(serializeV2(state)) as { fmt?: number };
     expect(parsed.fmt).toBe(2);
   });
 });

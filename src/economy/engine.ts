@@ -20,6 +20,7 @@ import {
   AUTO_SPECIALIZATIONS,
 } from '@/data/auto-processing';
 import { resolveProcessorCategory } from '@/data/processor-recipe-categories';
+import { materializePlanetDeposits } from '@/galaxy/generate-resources'; // R-29: ленивые залежи
 import { gameBus } from '@/core/typed-event-bus';
 import { getEnergyConsumptionMultiplier, getEnergyGenerationMultiplier, getMiningSpeedMultiplier, getProcessingSpeedMultiplier } from '@/economy/adjacency';
 
@@ -1499,6 +1500,13 @@ export function colonizePlanet(planet: Planet, system?: StarSystem): boolean {
   // Нельзя колонизировать газовый гигант (нет поверхности) или уже занятую планету
   if (planet.type === 'gas_giant') return false;
   if (planet.owner) return false;
+
+  // R-29: ленивая материализация залежей — ТОЛЬКО при колонизации.
+  // До этого момента гексы «не разведаны» (в сейве их нет), известен лишь
+  // свод-пул; replay assignResourceDeposits из depositRngState даёт те же
+  // залежи, что прогон при генерации. Идемпотентно: старые сейвы с
+  // запечёнными залежами помечены depositsMaterialized при загрузке.
+  materializePlanetDeposits(planet);
 
   // Найти лучший гекс для colony_hub:
   // Предпочтение: не-ocean гекс с максимальным количеством deposits

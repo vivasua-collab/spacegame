@@ -51,27 +51,27 @@ export const SAVE_FORMAT_VERSION = 2;
 
 // ============ Округление ============
 
-/** Округление до 3 знаков после запятой (0..1 диапазоны: availability). */
-function round3(v: number): number {
+/** Округление до 3 знаков после запятой (0..1 диапазоны: availability). Экспорт — переиспользуется форматом v3 (R-29). */
+export function round3(v: number): number {
   if (!Number.isFinite(v)) return v;
   return Math.round(v * 1000) / 1000;
 }
 
-/** 4 значащих цифры — для float любой magnitude (luminosity 2.3e-4 и т.п.). */
-function roundSig4(v: number): number {
+/** 4 значащих цифры — для float любой magnitude (luminosity 2.3e-4 и т.п.). Экспорт — переиспользуется форматом v3 (R-29). */
+export function roundSig4(v: number): number {
   if (!Number.isFinite(v) || v === 0) return v;
   return Number(v.toPrecision(4));
 }
 
 // ============ Tier ↔ индекс ============
 
-const TIER_TO_IDX: Record<PlanetResourceDeposit['tier'], number> = {
+export const TIER_TO_IDX: Record<PlanetResourceDeposit['tier'], number> = {
   profile: 0,
   rare: 1,
   ultra_rare: 2,
 };
 
-const TIER_FROM_IDX: readonly PlanetResourceDeposit['tier'][] = ['profile', 'rare', 'ultra_rare'];
+export const TIER_FROM_IDX: readonly PlanetResourceDeposit['tier'][] = ['profile', 'rare', 'ultra_rare'];
 
 // ============ Внутренние типы (работа с plain JSON) ============
 

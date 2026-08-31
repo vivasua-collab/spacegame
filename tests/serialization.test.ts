@@ -174,8 +174,8 @@ describe('Block 01 T5: Serialization round-trip', () => {
       productionQueues: unknown;
     };
 
-    // R-28: новый формат v2 — маркер присутствует.
-    expect(parsed.fmt).toBe(2);
+    // R-29: новый формат v3 (ленивые залежи + словарь) — маркер присутствует.
+    expect(parsed.fmt).toBe(3);
 
     // `serializeGameState` destructures `systemMap` and `bakedModel` out of
     // state.galaxy before JSON.stringify — so neither key should appear.

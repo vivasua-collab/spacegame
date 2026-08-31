@@ -125,6 +125,11 @@ export interface Moon {
   hexes: HexCell[];
   /** Ресурсные залежи (как у планет — упрощённо) */
   resourceDeposits: PlanetResourceDeposit[];
+  // ─── R-29: ленивая материализация залежей ──────────
+  /** Залежи гексов материализованы (колонизация/старый сейв)? undefined = false */
+  depositsMaterialized?: boolean;
+  /** Снимок состояния RNG залежей (4×uint32) для воспроизводимой материализации; null — нет гексов/не применимо */
+  depositRngState?: number[] | null;
   /** Владелец (factionId / playerId / null) */
   owner: EntityId | null;
 }
@@ -687,6 +692,20 @@ export interface Planet {
   moons: Moon[];
   /** Сводная таблица ресурсных залежей планеты (агрегация из гексов + атмосферных) */
   resourceDeposits: PlanetResourceDeposit[];
+  // ─── R-29: ленивая материализация залежей ──────────
+  /**
+   * Залежи гексов материализованы? undefined/false — нет (свежая планета:
+   * известен только свод-пул resourceDeposits). true — колонизирована
+   * (materializePlanetDeposits) либо загружена из старого сейва с запечёнными
+   * залежами. Предотвращает повторную материализацию (дубли залежей).
+   */
+  depositsMaterialized?: boolean;
+  /**
+   * Снимок состояния Xoshiro256 (4×uint32) ДО прогона генерации залежей.
+   * materializePlanetDeposits() воспроизводит залежи бит-в-бит.
+   * null/undefined — материализация невозможна (ГГ без гексов, старые сейвы).
+   */
+  depositRngState?: number[] | null;
   resources: Record<string, number>; // elementId → количество на складе
   /**
    * Block 05 (PR3-min): средневзвешенная чистота ресурсов на складе.

@@ -216,7 +216,17 @@ export function PlanetView() {
 
         {/* Content area */}
         {activeTab === 'map' ? (
-          <div className="flex-1 min-h-0">
+          <div className="flex-1 min-h-0 flex flex-col">
+            {/* R-29: ленивые залежи — до колонизации гексы «не разведаны» */}
+            {!planet.owner && planet.type !== 'gas_giant' && (
+              <div
+                className="px-3 py-1.5 text-[11px] leading-snug text-amber-200/90 bg-amber-500/10 border-b border-amber-400/20"
+                role="note"
+              >
+                Поверхность не разведана: залежи на гексах появятся после колонизации
+                планеты (свод ресурсов — на вкладке «Ресурсы»)
+              </div>
+            )}
             <HexGrid
               hexes={planet.hexes}
               onHexClick={handleHexClick}

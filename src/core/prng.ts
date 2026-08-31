@@ -92,6 +92,35 @@ export class Xoshiro256 {
   }
 
   /**
+   * R-29: снимок внутреннего состояния (4×uint32) — копия, не ссылка.
+   * Используется для ленивой материализации залежей: состояние снимается
+   * ДО прогона генерации, сохраняется в сейве (depositRngState), и позже
+   * `Xoshiro256.fromState()` воспроизводит тот же поток бит-в-бит.
+   */
+  snapshotState(): [number, number, number, number] {
+    return [this.state[0], this.state[1], this.state[2], this.state[3]];
+  }
+
+  /**
+   * R-29: восстановление генератора из снимка состояния (мимо SplitMix64).
+   * Единственное требование xoshiro256** — состояние не все нули; вход
+   * валидируется (null/undefined/не-числа → 0), все-нулёвое состояние
+   * заменяется на безопасное (как в derive()).
+   */
+  static fromState(state: readonly unknown[] | null | undefined): Xoshiro256 {
+    const words = [0, 1, 2, 3].map((i) => {
+      const w = state?.[i];
+      return typeof w === 'number' && Number.isFinite(w) ? w | 0 : 0;
+    }) as [number, number, number, number];
+    if (words[0] === 0 && words[1] === 0 && words[2] === 0 && words[3] === 0) {
+      words[0] = 1;
+    }
+    const rng = Object.create(Xoshiro256.prototype) as Xoshiro256;
+    (rng as unknown as { state: [number, number, number, number] }).state = words;
+    return rng;
+  }
+
+  /**
    * P1-29: Именованный под-seed.
    * hash(main_seed, name) — воспроизводимый дочерний генератор
    * с уникальным именем. Изменение в одном под-seed'е

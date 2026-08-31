@@ -528,9 +528,17 @@ export function generatePlanet(
     ? []
     : generateHexGrid(size, planetDef.terrainWeights, rng.derive('hexes'));
 
-  // Ресурсные залежи на гексах
+  // Ресурсные залежи на гексах — R-29: ЛЕНИВАЯ материализация.
+  // Прогон assignResourceDeposits на реальной сетке нужен только для расчёта
+  // свода-пула (aggregateResourceDeposits); снимок RNG берётся ДО прогона и
+  // хранится в depositRngState — materializePlanetDeposits() при колонизации
+  // воспроизводит те же залежи бит-в-бит. Сами залежи из гексов СТИРАЮТСЯ:
+  // «мёртвые» (не разведанные) гексы не попадают в сейв.
+  let depositRngState: number[] | null = null;
   if (hexes.length > 0) {
-    assignResourceDeposits(hexes, rng.derive('deposits'), planetDef.type);
+    const depositRng = rng.derive('deposits');
+    depositRngState = depositRng.snapshotState();
+    assignResourceDeposits(hexes, depositRng, planetDef.type);
   }
 
   // Атмосферные слоты (только для газовых гигантов)
@@ -559,8 +567,13 @@ export function generatePlanet(
   const typeName = TYPE_NAMES[planetDef.type] ?? planetDef.type;
   const planetName = `${systemName} ${toRoman(orbit)} — ${typeName}`;
 
-  // Сводная таблица ресурсов
+  // Сводная таблица ресурсов (верхнеуровневый пул — вычисляется из прогона,
+  // ДО стирания залежей: «сколько всего» известно и без колонизации)
   const resourceDeposits = aggregateResourceDeposits(hexes, planetDef.type, rng.derive('ultra'));
+
+  // R-29: залежи стираются — планета хранит пул + RNG-снимок; гексовые
+  // залежи материализуются при колонизации (materializePlanetDeposits).
+  for (const hex of hexes) hex.deposits = [];
 
   // Луны (только для газовых гигантов — Audit 2026-08-28)
   // Юпитер=95, Сатурн=146, Уран=28, Нептун=16. Для MVP — 2-7 лун.
@@ -588,6 +601,8 @@ export function generatePlanet(
     orbitSlots,
     moons,
     resourceDeposits,
+    depositsMaterialized: false,
+    depositRngState,
     resources: {},
     energyBalance: 0,
     owner: null,
@@ -693,10 +708,17 @@ function generateMoons(
         ? { plains: 40, mountains: 30, desert: 20, ice: 0, ocean: 0, volcano: 0, jungle: 10 }
         : { plains: 50, mountains: 30, desert: 0, ice: 20, ocean: 0, volcano: 0, jungle: 0 };
     const hexes = generateHexGrid(size, terrainWeights, moonRng.derive('hexes'), MOON_SIZE_HEX_COUNT);
+    // R-29: ленивая материализация (как у планет) — снимок ДО прогона,
+    // прогон для свода-пула, затем стирание. Материализация — при будущей
+    // колонизации лун (materializePlanetDeposits работает и для лун).
+    let moonDepositRngState: number[] | null = null;
     if (hexes.length > 0) {
-      assignResourceDeposits(hexes, moonRng.derive('deposits'), moonType);
+      const moonDepositRng = moonRng.derive('deposits');
+      moonDepositRngState = moonDepositRng.snapshotState();
+      assignResourceDeposits(hexes, moonDepositRng, moonType);
     }
     const resourceDeposits = aggregateResourceDeposits(hexes, moonType, moonRng.derive('ultra'));
+    for (const hex of hexes) hex.deposits = [];
 
     // Имя: «Epsilon Tauri IV-a», «Epsilon Tauri IV-b», ...
     const suffix = String.fromCharCode(97 + i); // a, b, c, ...
@@ -716,6 +738,8 @@ function generateMoons(
       orbitPeriodDays,
       hexes,
       resourceDeposits,
+      depositsMaterialized: false,
+      depositRngState: moonDepositRngState,
       owner: null,
     });
   }
