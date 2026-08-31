@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { SaveCreateSchema } from '@/lib/schemas/save-schema';
 import { checkRateLimit } from '@/lib/rate-limit';
+import { decodeStatePayload } from '@/lib/save-codec-server';
+import { MAX_STATE_BYTES } from '@/lib/schemas/save-schema';
 
 /**
  * GET /api/save — list all saves.
@@ -37,11 +39,17 @@ export async function GET() {
  *   1. Rate limit: 10 requests / minute / IP (token bucket).
  *      On exhaustion → 429 + `Retry-After: 60`.
  *   2. Body validation: zod `SaveCreateSchema` (name 1–100 chars, seed int,
- *      state ≤ 50 MB, tick ≤ 10 000 000). On validation failure → 400 with
+ *      state ≤ 50 MB raw, tick ≤ 10 000 000). On validation failure → 400 with
  *      structured zod issues.
  *
+ * R-26 (2026-08-31): `state` может приходить в кодировке `gzip-base64`
+ * (`stateEncoding`) — сериализованное состояние 200-системной галактики
+ * ~31 МБ превышает лимит шлюза 32 МБ (EntityTooLarge). Сервер декодирует
+ * ДО проверки лимита (лимит применяется к raw JSON) и хранит в БД
+ * plain JSON (version 1, совместимость с существующими сейвами).
+ *
  * The client `saveGame` action in `src/stores/game-store.ts` always sends
- * `{ name, seed, state, tick }` — all within the schema's accepted shape.
+ * `{ name, seed, state, stateEncoding?, tick }` — all within the schema's accepted shape.
  */
 export async function POST(request: Request) {
   // ─── Rate limit (gap-8) ────────────────────────────────────────────
@@ -82,15 +90,33 @@ export async function POST(request: Request) {
         { status: 400 },
       );
     }
-    const { name, seed, state, settings, tick } = parsed.data;
+    const { name, seed, state, stateEncoding, settings, tick } = parsed.data;
 
-    // ─── Persist ────────────────────────────────────────────────────
+    // ─── R-26: декодирование транспорта (gzip-base64 → plain JSON) ────
+    let stateJson: string;
+    try {
+      stateJson = decodeStatePayload(state ?? '{}', stateEncoding);
+    } catch {
+      return NextResponse.json(
+        { error: 'Invalid state payload: malformed gzip/base64' },
+        { status: 400 },
+      );
+    }
+    // Реальный лимит — на raw JSON (после декодирования), Block 08 gap-8
+    if (stateJson.length > MAX_STATE_BYTES) {
+      return NextResponse.json(
+        { error: `State too large after decoding: ${stateJson.length} bytes (max ${MAX_STATE_BYTES})` },
+        { status: 400 },
+      );
+    }
+
+    // ─── Persist (в БД — plain JSON, version 1) ─────────────────────
     const save = await db.gameSave.create({
       data: {
         name,
         seed,
         settings: settings ?? '{}',
-        state: state ?? '{}',
+        state: stateJson,
         tick: tick ?? 0,
         version: 1, // current serialization format version
       },

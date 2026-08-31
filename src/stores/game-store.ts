@@ -32,6 +32,7 @@ import { GalaxyModule } from '@/galaxy/galaxy-module';
 import { resetProductionItemCounter } from '@/economy/engine';
 import { BUILDING_MAP } from '@/data/buildings'; // Block 05 PR7 — migratePlanet
 import { SerializedGameStateSchema } from '@/lib/schemas/game-state-schema'; // Block 08 gap-9: state validation on deserialize
+import { gzipBase64, gunzipBase64, isBrowserCodecAvailable } from '@/lib/save-codec-browser'; // R-26: сжатый транспорт сейвов
 import { enqueueShipBuild as enqueueShipBuildFn, cancelShipyardItem as cancelShipyardItemFn } from '@/data/ships/shipyard-queue'; // Block 02 F6
 import { ShipsModule, resetShipCounter } from '@/ships/ships-module'; // Block 02 F5
 import { FleetModule } from '@/ships/fleet-module'; // Block 02 F5
@@ -1068,6 +1069,24 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
         const saveName = name || `Galaxy #${currentGameState.galaxy.seed}`;
         const stateJson = serializeGameState(currentGameState);
 
+        // ─── R-26 (2026-08-31): сжатый транспорт сохранений ────────────
+        // Сериализованное состояние 200-системной галактики ~31 МБ — шлюз
+        // ограничивает тело запроса 32 МБ (EntityTooLarge; жалоба владельца).
+        // Сжимаем gzip+base64 (≈ 5-7 МБ для 200 систем). Фолбэк: plain JSON
+        // (малые сейвы / нет CompressionStream) — сервер принимает оба.
+        let stateBody = stateJson;
+        let stateEncoding: 'gzip-base64' | undefined;
+        if (stateJson.length > 512 * 1024 && isBrowserCodecAvailable()) {
+          try {
+            stateBody = await gzipBase64(stateJson);
+            stateEncoding = 'gzip-base64';
+          } catch {
+            // Фолбэк: не сжалось — отправляем как есть
+            stateBody = stateJson;
+            stateEncoding = undefined;
+          }
+        }
+
         const fetchWithTimeout = async (url: string, options: RequestInit) => {
           const controller = new AbortController();
           const timeoutId = setTimeout(() => controller.abort(), 30000);
@@ -1083,7 +1102,7 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
           const res = await fetchWithTimeout(`/api/save/${currentSaveId}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name: saveName, state: stateJson, tick: currentGameState.time.tick }),
+            body: JSON.stringify({ name: saveName, state: stateBody, stateEncoding, tick: currentGameState.time.tick }),
           });
           if (!res.ok) {
             const errText = await res.text().catch(() => 'Unknown error');
@@ -1096,7 +1115,8 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
             body: JSON.stringify({
               name: saveName,
               seed: currentGameState.galaxy.seed,
-              state: stateJson,
+              state: stateBody,
+              stateEncoding,
               tick: currentGameState.time.tick,
             }),
           });
@@ -1137,7 +1157,12 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
         if (!res.ok) throw new Error('Failed to load save');
         const data = await res.json();
 
-        const loadedState = deserializeGameState(data.state);
+        // R-26: большие сейвы приходят сжатыми (stateEncoding='gzip-base64')
+        const stateJson = data.stateEncoding === 'gzip-base64'
+          ? await gunzipBase64(data.state)
+          : data.state as string;
+
+        const loadedState = deserializeGameState(stateJson);
 
         // Сброс детерминированного счётчика ProductionItem IDs (gap-6, P9)
         // при загрузке сейва — новые ID будут идти с 0, что упрощает расследование.

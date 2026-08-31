@@ -15,7 +15,7 @@
 
 import type { Xoshiro256 } from '@/core/prng';
 import type { Star, Planet, Moon, PlanetSize, BinaryType, Atmosphere, AtmosphereType, PlanetLife, LifeLevel, AtmosphericSlot, OrbitalSlot } from '@/core/types';
-import { PLANET_TYPES, ORBIT_SLOTS, ORBIT_SLOTS_BY_SIZE, GAS_GIANT_ATMOSPHERE_SLOTS, PLANET_DENSITY, PLANET_TYPE_RADIUS, getSizeFromRadius, LIFE_LEVEL_WEIGHTS, TYPE_NAMES, GAS_GIANT_MOON_COUNT, MOON_RADIUS, MOON_DENSITY, MOON_ORBIT_RADIUS_KM, MOON_TYPE_WEIGHTS, MOON_SIZE_HEX_COUNT } from '@/data/planet-types';
+import { PLANET_TYPES, ORBIT_SLOTS, ORBIT_SLOTS_BY_SIZE, GAS_GIANT_ATMOSPHERE_SLOTS, PLANET_DENSITY, PLANET_TYPE_RADIUS, getSizeFromRadius, getPlanetGravityForRadius, getMoonGravityForRadius, LIFE_LEVEL_WEIGHTS, TYPE_NAMES, GAS_GIANT_MOON_COUNT, MOON_RADIUS, MOON_DENSITY, MOON_ORBIT_RADIUS_KM, MOON_TYPE_WEIGHTS, MOON_SIZE_HEX_COUNT } from '@/data/planet-types';
 import { genId } from './gen-context';
 import { generateHexGrid } from './hex-grid';
 import { assignResourceDeposits, aggregateResourceDeposits } from './generate-resources';
@@ -482,10 +482,33 @@ export function generatePlanet(
     size = getSizeFromRadius(radiusKm);
   }
 
-  // Плотность и гравитация
+  // Плотность и гравитация — R-26 (2026-08-31, запрос владельца: чёткая
+  // градация по размерам в рамках геологического типа).
+  //
+  // Гравитация берётся из НЕПЕРЕСЕКАЮЩИХСЯ полос (тип × класс размера):
+  // внутри класса — линейная интерполяция по радиусу, между классами —
+  // строгое возрастание → «0.9g средняя vs 0.8g большая» и «лёд 0.4g
+  // большая» больше невозможны. Плотность ВЫВОДИТСЯ из пары (g, R):
+  // ρ = g×5.51/R — физически согласована (та же формула docs §2.2) и
+  // остаётся в диапазоне типа (полосы спроектированы с проверкой).
+  //
+  // RNG: выборка плотности СОХРАНЕНА (используется в fallback), чтобы
+  // не сдвигать детерминированную последовательность генерации
+  // (снапшот-тесты seed=42).
   const densityRange = PLANET_DENSITY[planetDef.type] ?? { min: 3.0, max: 6.0, avg: 4.5 };
-  const density = densityRange.min + rng.nextFloat() * (densityRange.max - densityRange.min);
-  const gravity = (radiusKm / 6371) * (density / 5.51);
+  const densityRoll = densityRange.min + rng.nextFloat() * (densityRange.max - densityRange.min);
+  const bandedGravity = getPlanetGravityForRadius(planetDef.type, radiusKm, size);
+  let gravity: number;
+  let density: number;
+  if (bandedGravity !== null) {
+    gravity = bandedGravity;
+    density = (gravity * 5.51 * 6371) / radiusKm;
+  } else {
+    // Фолбэк (класс без полосы — не достигается текущими диапазонами типов):
+    // прежняя физика со случайной плотностью.
+    density = densityRoll;
+    gravity = (radiusKm / 6371) * (density / 5.51);
+  }
 
   // Орбитальный период (3-й закон Кеплера)
   const orbitalPeriodYears = Math.sqrt(Math.pow(orbitalRadius, 3) / primaryStar.mass);
@@ -625,11 +648,10 @@ function generateMoons(
       }
     }
 
-    // Радиус и плотность
+    // Радиус и плотность (R-26: выборки сохранены — стабильность RNG-серии)
     const radiusKm = MOON_RADIUS.min + moonRng.nextFloat() * (MOON_RADIUS.max - MOON_RADIUS.min);
     const densityRange = MOON_DENSITY[moonType];
-    const density = densityRange.min + moonRng.nextFloat() * (densityRange.max - densityRange.min);
-    const gravity = (radiusKm / 6371) * (density / 5.51);
+    const densityRoll = densityRange.min + moonRng.nextFloat() * (densityRange.max - densityRange.min);
 
     // Размер луны: 2 уровня — tiny (< 0.15 R⊕) или small (остальные).
     // R-STARS-DATA (2026-08-31): луны используют выделенные МАЛЫЕ сетки
@@ -639,6 +661,19 @@ function generateMoons(
     // получают «small» = 19 гексов.
     const R_Earth = radiusKm / 6371;
     const size: PlanetSize = R_Earth < 0.15 ? 'tiny' : 'small';
+
+    // Гравитация — R-26: те же типовые полосы (tiny/small НЕ пересекаются,
+    // внутри класса линейно по радиусу); плотность выводится из (g, R).
+    const moonBandedGravity = getMoonGravityForRadius(moonType, radiusKm, size);
+    let gravity: number;
+    let density: number;
+    if (moonBandedGravity !== null) {
+      gravity = moonBandedGravity;
+      density = (gravity * 5.51 * 6371) / radiusKm;
+    } else {
+      density = densityRoll;
+      gravity = (radiusKm / 6371) * (density / 5.51);
+    }
 
     // Орбитальный радиус вокруг планеты — строго монотонный
     const jitter = moonRng.nextFloat() * maxJitter;
