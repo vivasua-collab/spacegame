@@ -145,7 +145,7 @@
 
 ## ~~5. Расхождение в ID: nuclear_plant vs nuclear_reactor~~
 
-> ✅ **Закрыто (Block 01 C8):** код переименован `nuclear_plant` → `nuclear_reactor`. См. `checkpoints/audit_2026_08_27_01_foundation.md` §C8. Раздел оставлен как историческая запись.
+> ✅ **Закрыто (Block 01 C8):** код переименован `nuclear_plant` → `nuclear_reactor`. См. `checkpoints/08_27_audit_01_foundation.md` §C8. Раздел оставлен как историческая запись.
 
 ---
 
@@ -263,7 +263,7 @@
 
 1. ~~**ID `nuclear_plant` vs `nuclear_reactor`**~~ — ✅ Закрыто (Block 01 C8): код переименован в `nuclear_reactor`.
 2. ~~`smelter`/`chemical_plant`/`petrochem_plant`~~ — ✅ Закрыто (Block 05): переименованы в `processor`/`synthesizer`/`refinery`.
-3. ~~ID руд (`Fe-ore` vs `hematite`)~~ — ✅ Закрыто (Block 01 P1): `baked-lookups.ts`. См. `checkpoints/audit_2026_08_27_01_foundation.md`.
+3. ~~ID руд (`Fe-ore` vs `hematite`)~~ — ✅ Закрыто (Block 01 P1): `baked-lookups.ts`. См. `checkpoints/08_27_audit_01_foundation.md`.
 
 ### 8.2 Отсутствующие здания в 40-buildings.md
 2. **Сканер** — здание из архитектуры, не описанное в детальном документе. Нужно добавить в 40-buildings.md (post-MVP).
@@ -281,4 +281,4 @@
 ### 8.4 Общая оценка
 40-buildings.md — это **качественная детализация** грубого черновика 00-ARCHITECTURE.md. Все обобщённые категории архитектуры раскрыты в конкретные специализированные здания. Расширения (геотермальная, антиматерия, орбитальная верфь, генератор антиматерии) логичны и не противоречат архитектуре. Три здания (сканер, оборонительная платформа, торговый хуб) из архитектуры не вошли в детальный документ и должны быть добавлены в будущих версиях.
 
-> ⚠️ **Обновление (2026-08-27, audit Pass 3):** канонический код содержит **15 из 27** зданий. Все исторические расхождения ID (`nuclear_plant`, `smelter`/`chemical_plant`/`petrochem_plant`, `Fe-ore`) — ✅ закрыты (Block 01-05). См. `checkpoints/audit_2026_08_27_0{1,2,3,4}_*.md`.
+> ⚠️ **Обновление (2026-08-27, audit Pass 3):** канонический код содержит **15 из 27** зданий. Все исторические расхождения ID (`nuclear_plant`, `smelter`/`chemical_plant`/`petrochem_plant`, `Fe-ore`) — ✅ закрыты (Block 01-05). См. `checkpoints/08_27_audit_0{1,2,3,4}_*.md`.

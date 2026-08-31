@@ -1846,3 +1846,69 @@ Stage Summary:
   верификации, оставлен работать для превью владельца.
 - Следующий шаг (если владелец одобрит): возврат кросс-типовых правил
   (одна запись в synergy.json) или Etap 4.2 — планетарный каталог.
+---
+Task ID: 25
+Agent: main
+Task: Уборка и корректировка (запрос владельца): (1) чекпоинты, созданные 27-31.08 с именами
+audit_YYYY_MM_DD_NN_*.md, не соответствуют checkpoints/RULES.md (формат ММ_ДД_цель.md) —
+переименовать; (2) добавить в README.md прямые ссылки на ВСЕ связанные документы процесса
+(RULES.md и пр.), чтобы при холодном старте агент их читал; (3) отразить в docs все логические
+изменения, внесённые 2026-08-31 (R-STARS-DATA, R-23, R-24); (4) уборка мусорных папок.
+
+Work Log:
+- АНАЛИЗ: HEAD a4c942e (R-24 запушен, дерево чистое). 11 файлов-нарушителей в checkpoints/
+  (все tracked). Ссылки на них: README.md, docs/STATUS.md, docs/audit-history.md,
+  docs/buildings-verification.md, docs/data-driven-architecture.md + внутренние self-refs.
+  worklog.md содержит старые имена — append-only, НЕ переписывался (решение зафиксировано).
+- RENAME (git mv, 11 файлов; маппинг — в checkpoints/08_31_cleanup_docs_sync.md):
+  audit_2026_08_27_01..04 → 08_27_audit_01..04; audit_2026_08_28_05..09 → 08_28_audit_05..09;
+  audit_2026_08_31_10..11 → 08_31_audit_10..11. Всего в checkpoints/ теперь 40 файлов.
+- ССЫЛКИ: 26 literal-замен (python) в README, docs/* и самих чекпоинтах (вкл. glob-паттерны
+  0{1,2,3,4}_* и самоссылку foundation). Скан (README/docs/checkpoints/scripts/src/tests)
+  — старых имён не осталось. RULES.md не менялся (правила владельца составлены верно).
+- README.md: НОВАЯ секция «📋 Документы процесса (обязательны к прочтению при старте сессии)» —
+  прямые ссылки: checkpoints/RULES.md, plans/README.md, worklog.md, checkpoints/ROADMAP.md,
+  docs/!listing.md, docs/STATUS.md + порядок холодного старта (worklog-хвост → последний план
+  → таблица). Актуализация: Текущий статус (Etap 4.1 ✅, 513/513, синергия v2, R-SPLIT),
+  дерево (+worklog.md, +plans/, −doc_temp/), Назначение папок, стек (справочники = data-driven
+  JSON), метрики 2026-08-31 (147 файлов src, ~29K LOC, 29 docs, 40 чекпоинтов, 17 зданий,
+  513 тестов, 4 валидатора, lint 0/48).
+- docs/STATUS.md: header (Изменён 2026-08-31), сводка (Etap 4.1 ✅; след. 4.2; 513/513; 48
+  warnings; +Валидаторы 4), §6.1/6.2/6.3 метрики, §7.2 приоритеты (NEXT = Etap 4.2 планетарный
+  каталог; AI-фракции → BACKLOG — порядок этапов пересмотрен; +NEXT-2 возврат кросс-типовой
+  синергии; P0-1 сохранён), история изменений +5 строк (08-28 passes 5-9 + R-BLD-MOD/R-SHIPS-DATA;
+  08-31: R-STARS-DATA, R-23, R-24, cleanup-25).
+- docs/data-driven-architecture.md → v1.2: НОВЫЙ §2.5 Synergy (R-23/R-24: synergy.json v2 —
+  типовая модель sourceTypes/neighborTypes/sameSubtypeOnly, 4 активных правила
+  lab_cluster/power_grid/power_boost/mining_cluster, подтипы изолированы, кросс-типы отложены;
+  loader synergy.ts; движок adjacency.ts — runtime); §5 валидаторы (+validate:stars;
+  validate:buildings += synergy; validate:all «все четыре»); ссылки на чекпоинты обновлены.
+- docs/!listing.md: дата 2026-08-31 + totals (~23 700 строк); строки/статусы: 20-stars (1497,
+  §7.2 каталог), 30-planets (1883, grids.json), 40-buildings (1805, 63%), 60-research (1376,
+  ✅ MVP R-SPLIT — было «❌ 0%»!), data-driven-architecture (437, v1.2), STATUS (378).
+- УБОРКА: doc_temp/ удалён (README папки санкционировал удаление; все 4 перенесённых файла
+  проверены в docs/), tool-results/ удалён (незатреканные дампы чтения), .gitignore: убрана
+  устаревшая /doc_temp/*.bak.
+- Чекпоинт: checkpoints/08_31_cleanup_docs_sync.md (по RULES: ММ_ДД_цель.md, статус complete,
+  + таблица маппинга старое→новое имя для разрешения ссылок из истории worklog).
+- ГЕЙТЫ: lint 0 errors/48 warnings (=); tsc 156 (= R-24); bun test 513/513 (=);
+  validate:all 4/4 (stars: 12 типов, доля specials 3.997%, сетки 19/37/61/91/127 + 7/19).
+- Браузерная верификация не проводилась: изменены только .md/.gitignore — рантайм-код не
+  затронут (гейты подтверждают неизменность базлайна).
+- Commit + push.
+
+Stage Summary:
+- Все 4 запроса владельца выполнены:
+  1. Именование чекпоинтов приведено к checkpoints/RULES.md: 11 файлов → ММ_ДД_цель.md
+     (08_27_audit_01..04, 08_28_audit_05..09, 08_31_audit_10..11); 26 ссылок обновлены;
+     маппинг зафиксирован (чекпоинт 08_31 + эта запись) для истории worklog, который не
+     переписывался (append-only).
+  2. README.md — прямые ссылки на ВСЕ документы процесса + порядок чтения при холодном старте:
+     проблема «не смог прочитать RULES при старте» устранена на уровне discoverability.
+  3. docs отражают все логические изменения 2026-08-31: STATUS.md (сводка/метрики/приоритеты/
+     история), data-driven-architecture.md §2.5 Synergy v1.2, !listing.md; 40-buildings /
+     60-research / 20-stars / 30-planets были синхронизированы в своих коммитах ранее.
+  4. Уборка: doc_temp/ и tool-results/ удалены, .gitignore вычищен.
+- Гейты на базлайне: lint 0/48, tsc 156, 513/513, validate:all 4/4.
+- Следующий шаг (если владелец одобрит): Etap 4.2 — планетарный каталог (planet-types.ts →
+  planets/types.json, рек. Pass 9) или возврат кросс-типовых правил синергии (NEXT-2).

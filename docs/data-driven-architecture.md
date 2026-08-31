@@ -3,9 +3,9 @@
 > **Архитектурный документ.** Описывает модульную систему хранения статических игровых данных во внешних человекочитаемых JSON-файлах с тонкими TS-loader'ами, валидаторами и общей бонус-системой.
 >
 > **Создан:** 2026-08-28 (R-SHIPS-DATA)
-> **Изменён:** 2026-08-31 (R-STARS-DATA — добавлен §2.4 stars + planet grids)
-> **Версия:** 1.1
-> **Статус:** ✅ Реализовано для buildings (R-BLD-MOD), research (R-RES), ships (R-SHIPS-DATA), stars + planet grids (R-STARS-DATA / Etap 4.1)
+> **Изменён:** 2026-08-31 (R-STARS-DATA — §2.4 stars + planet grids; R-23/R-24 — §2.5 synergy v2, §5 валидаторы)
+> **Версия:** 1.2
+> **Статус:** ✅ Реализовано для buildings (R-BLD-MOD), research (R-RES), ships (R-SHIPS-DATA), stars + planet grids (R-STARS-DATA / Etap 4.1), synergy (R-23/R-24)
 > **Зависимости:** [00-ARCHITECTURE.md](./00-ARCHITECTURE.md), [03-project-structure.md](./03-project-structure.md), [40-buildings.md](./40-buildings.md) §R-BLD-MOD, [50-ships.md](./50-ships.md) §11, [60-research.md](./60-research.md), [20-stars.md](./20-stars.md) §7.2, [architecture/modular-bus.md](./architecture/modular-bus.md), [modularity.md](./modularity.md)
 
 ---
@@ -90,7 +90,7 @@
 
 **Особенность:** разделение по **слою размещения** (surface/orbit/space) — каждый файл соответствует физическому месту, где строится здание. Loader (`buildings/index.ts`) мержит все 3 файла в единый `BUILDINGS` массив (порядок surface→orbit→space) и строит `BUILDING_MAP`.
 
-**Подробнее:** [40-buildings.md](./40-buildings.md) + checkpoint `audit_2026_08_28_07_modular_buildings.md`.
+**Подробнее:** [40-buildings.md](./40-buildings.md) + checkpoint `08_28_audit_07_modular_buildings.md`.
 
 ### 2.2 Research (R-RES, 2026-08-28)
 
@@ -106,7 +106,7 @@
 
 **Особенность:** R-RES добавил **очередь исследований** (active tech + queue) вместо модели прямого списания RP. Окно дерева авто-масштабируется под количество технологий.
 
-**Подробнее:** [60-research.md](./60-research.md) + checkpoint `audit_2026_08_28_06_research_redesign.md`.
+**Подробнее:** [60-research.md](./60-research.md) + checkpoint `08_28_audit_06_research_redesign.md`.
 
 ### 2.3 Ships (R-SHIPS-DATA, 2026-08-28)
 
@@ -145,7 +145,30 @@
 
 **Валидатор:** `scripts/validate-stars.ts` (`bun run validate:stars`) — 29 проверок (цепочка, доля specials, монотонность T/M/L, ranges, центрированные гекс-числа, loader API, обратная совместимость). Тесты: `tests/galaxy/star-catalog.test.ts` (22 теста).
 
-**Подробнее:** [20-stars.md](./20-stars.md) §7.2 + checkpoint `audit_2026_08_31_10_stars_extraction.md`.
+**Подробнее:** [20-stars.md](./20-stars.md) §7.2 + checkpoint `08_31_audit_10_stars_extraction.md`.
+
+### 2.5 Synergy (R-23 / R-24, 2026-08-31)
+
+| Файл | Что содержит | Записей |
+|------|--------------|---------|
+| `src/data/buildings/synergy.json` | Правила Синергии v2 — типовые бонусы смежности (adjacency) | 4 активных (+2 отложенных в `comment`) |
+
+**Поля правила** (`SynergyRule` в `core/types.ts`): `id`, `description`, `sourceTypes[]` (типы зданий, которые ПОЛУЧАЮТ бонус), `neighborTypes[]` (типы, которые ДАЮТ бонус, стоя в смежном гексе), `sameSubtypeOnly` (подтип = `buildingId`: solar_plant ≠ nuclear_reactor, mine ≠ quarry), `bonusTarget` (`research_rate` | `processing_speed` | `energy_consumption` | `energy_generation` | `mining_speed`), `value`, `stackDecay` (n-й сосед даёт `value × stackDecay^(n−1)`, docs §5.2).
+
+**Активные правила (типовая модель v2):**
+- `lab_cluster` — research+research (same subtype): **+10% research_rate**
+- `power_grid` — consumer ← generator: **−5% energy_consumption**
+- `power_boost` — generator ← consumer: **+5% energy_generation** (бонус генерации электростанции от смежного потребителя)
+- `mining_cluster` — extractor+extractor (same subtype): **+10% mining_speed** (бонус скорости добычи, а не энергопотребления)
+
+**Типы зданий** — производные от `category` каталога: `generator` / `extractor` / `processor` / `research` / `storage` / `production` / `colony` / `military` + псевдо-роль `consumer` (любое здание с `energyConsumption > 0`; генераторы не потребляют → solar ↔ nuclear НЕ бустят друг друга). Кросс-типовые правила (`mine_processor`, `warehouse_production`) ОТЛОЖЕНЫ владельцем — возврат = дописать записи в JSON без правок кода (см. 40-buildings.md §5.5).
+
+**Особенности:**
+- Loader `src/data/buildings/synergy.ts`: `SYNERGY_RULES`, `SYNERGY_RULES_BY_TARGET`, `SYNERGY_BUILDING_TYPES`, `getSynergyBuildingType()`, `isEnergyConsumer()`.
+- Движок смежности — `src/economy/adjacency.ts` (runtime-логика, не данные): 6 соседей гекса, учитываются только построенные здания (level ≥ 1), только гексы поверхности.
+- Валидация правил (типы из каталога, диапазоны value/stackDecay) — в `scripts/validate-buildings.ts`.
+
+**Подробнее:** [40-buildings.md](./40-buildings.md) §5 (типовая таблица) + §5.5 (отложенные) + checkpoint `08_31_audit_11_synergy_demolish_split.md`.
 
 ---
 
@@ -286,9 +309,10 @@ result = (1 + Σ add) × Π multiply
 | Команда | Скрипт | Что проверяет |
 |---------|--------|---------------|
 | `bun run validate:recipes` | `scripts/validate-recipes.ts` | Целостность рецептов крафта (75 рецептов) |
-| `bun run validate:buildings` | `scripts/validate-buildings.ts` | 17 зданий: уникальность ID, layer/category/size/terrain валидность, ссылки requiresTechs на TECH_MAP, корректность bonuses |
+| `bun run validate:buildings` | `scripts/validate-buildings.ts` | 17 зданий: уникальность ID, layer/category/size/terrain валидность, ссылки requiresTechs на TECH_MAP, корректность bonuses + правила синергии (типы из каталога, диапазоны value/stackDecay, sameSubtypeOnly) |
 | `bun run validate:ships` | `scripts/validate-ships.ts` | 4 корпуса + 20 модулей + fuel-map: уникальность ID, валидность всех per-category полей, ссылки requiredTechs, корректность bonuses, согласованность fuel-map |
-| `bun run validate:all` | — | Запускает все три подряд |
+| `bun run validate:stars` | `scripts/validate-stars.ts` | Звёздный каталог (7 ГП + 5 special): цепочка O→M, доля specials ~4%, монотонность T/M/L, ranges, центрированные гекс-числа сеток планет/лун (grids.json), loader API, обратная совместимость |
+| `bun run validate:all` | — | Запускает все четыре подряд |
 
 Валидаторы запускаются на CI / перед коммитом. Они — **первая линия защиты** от неконсистентных данных (поскольку TS-каст через `unknown` не проверяет семантику, только структуру).
 

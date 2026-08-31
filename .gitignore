@@ -68,9 +68,6 @@ server.log
 # Временные выходы скриптов
 /scripts/output/
 
-# Временные документы (мигрированы в docs/, папка оставлена как архив)
-/doc_temp/*.bak
-
 # Runtime files (local only)
 .zscripts/dev.pid
 tool-results/

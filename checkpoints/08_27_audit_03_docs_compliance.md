@@ -23,7 +23,7 @@
 - **Recipe validation:** 75/75 ✅
 
 ### 1.3 Файлы, прочитанные в заходе 3
-- **Pass 1/2 целиком:** `audit_2026_08_27_01_foundation.md` (678 строк), `audit_2026_08_27_02_code_quality.md` (804 строки)
+- **Pass 1/2 целиком:** `08_27_audit_01_foundation.md` (678 строк), `08_27_audit_02_code_quality.md` (804 строки)
 - **Core docs (7):** `00-ARCHITECTURE.md` (703), `01-tech-stack.md` (142), `02-dev-process.md` (184), `03-project-structure.md` (175), `04-performance.md` (150), `05-appendices.md` (94), `!listing.md` (293)
 - **Game systems docs (12):** `10-galaxy.md` (908), `20-stars.md` (1438), `30-planets.md` (1878), `31-resources.md` (451), `32-mendeleev.md` (386), `33-chemistry.md` (799), `34-ores.md` (1328), `35-warehouse-and-logistics.md` (794), `40-buildings.md` (1726), `50-ships.md` (1466), `60-research.md` (1350), `70-ai.md` (2354)
 - **Auxiliary docs (8):** `STATUS.md` (334), `audit-history.md` (170), `buildings-verification.md` (266), `galaxy-bake.md` (530), `galaxy-generation-audit.md` (863), `modularity.md` (463), `planet-generation-science.md` (918), `research-unification.md` (638), `architecture/modular-bus.md` (2050)
@@ -575,7 +575,7 @@ Per Pass 1 §1.2 + worklog: после 2026-05-03 произошли major из�
 
 **Влияние:** Косметика / historical — но создаёт путаницу.
 
-**Рекомендация:** В audit-history.md header добавить: «⚠️ Исторический документ от 2026-05-03. Для актуального статуса см. `audit_2026_08_27_0{1,2,3}_*.md` (Pass 1/2/3)».
+**Рекомендация:** В audit-history.md header добавить: «⚠️ Исторический документ от 2026-05-03. Для актуального статуса см. `08_27_audit_0{1,2,3}_*.md` (Pass 1/2/3)».
 
 ---
 
@@ -791,7 +791,7 @@ Based on Pass 3 findings, Pass 4 should focus on:
 
 ## Изменённые файлы
 
-- `checkpoints/audit_2026_08_27_03_docs_compliance.md` (этот файл — отчёт Pass 3)
+- `checkpoints/08_27_audit_03_docs_compliance.md` (этот файл — отчёт Pass 3)
 
 > **Замечание:** Pass 3 — read-only аудит. Никакие исходные файлы кода или документации не модифицированы. Все правки рекомендованы как backlog для главного координатора после всех 4 проходов.
 

@@ -1,6 +1,6 @@
 # Финальный аудит SpaceGame — Post-Fix Verification
 
-> ⚠️ **Исторический документ от 2026-05-03.** Этот аудит отражает состояние проекта ДО Blocks 01-08 (стабилизация, modular integration, engineering quality, security/data, processors, fleet, research). Для актуального статуса см. `checkpoints/audit_2026_08_27_0{1,2,3,4}_*.md` (Pass 1/2/3/4 аудита 2026-08-27) и `docs/STATUS.md`.
+> ⚠️ **Исторический документ от 2026-05-03.** Этот аудит отражает состояние проекта ДО Blocks 01-08 (стабилизация, modular integration, engineering quality, security/data, processors, fleet, research). Для актуального статуса см. `checkpoints/08_27_audit_0{1,2,3,4}_*.md` (Pass 1/2/3/4 аудита 2026-08-27) и `docs/STATUS.md`.
 >
 > Содержание ниже оставлено без изменений как историческая запись.
 

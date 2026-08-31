@@ -293,7 +293,7 @@
 
 ## 6. Файлы, изменённые в этом аудите
 
-- `checkpoints/audit_2026_08_28_09_post_r_ships_galaxy_eval.md` (NEW — этот файл)
+- `checkpoints/08_28_audit_09_post_r_ships_galaxy_eval.md` (NEW — этот файл)
 - `worklog.md` (NEW section: Task ID 21 — main audit coordinator)
 
 **Кода не изменено.** Аудит чисто исследовательский. Все recommendations будут выполняться в отдельных задачах (если владелец одобрит).

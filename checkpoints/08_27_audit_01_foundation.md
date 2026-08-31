@@ -674,4 +674,4 @@ export type ModuleDef = ShipModule;
 ---
 
 ## Изменённые файлы
-- `checkpoints/audit_2026_08_27_01_foundation.md` (этот файл)
+- `checkpoints/08_27_audit_01_foundation.md` (этот файл)

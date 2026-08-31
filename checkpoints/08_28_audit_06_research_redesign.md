@@ -25,7 +25,7 @@
 - `src/research/bonus-resolver.ts` — `resolveBonuses(state, target)` pure function
 - `tests/research/queue-and-rp.test.ts` — 15 tests (queue, available RP)
 - `tests/research/bonus-resolver.test.ts` — 12 tests (bonus resolution)
-- `checkpoints/audit_2026_08_28_06_research_redesign.md` (this file)
+- `checkpoints/08_28_audit_06_research_redesign.md` (this file)
 
 ## Files modified
 - `src/components/ui/badge.tsx` — `outline` variant: `text-foreground` → `text-slate-200 border-white/20 bg-white/5` (fixes black-on-black globally)
