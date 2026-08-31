@@ -13,6 +13,7 @@
     "validate:ships": "bun run scripts/validate-ships.ts",
     "validate:stars": "bun run scripts/validate-stars.ts",
     "save:inspect": "bun run scripts/inspect-save.ts",
+    "save:size": "bun run scripts/save-size-analysis.ts",
     "validate:all": "bun run validate:recipes && bun run validate:buildings && bun run validate:ships && bun run validate:stars",
     "db:push": "prisma db push",
     "db:generate": "prisma generate",

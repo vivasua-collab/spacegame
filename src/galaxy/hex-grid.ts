@@ -48,8 +48,14 @@ export function generateHexGrid(
   });
 }
 
-/** Генерация координат гексов (центр + кольца) */
-function generateHexCoords(count: number): AxialCoord[] {
+/**
+ * Генерация координат гексов (центр + кольца).
+ *
+ * R-28: экспортируется для сейв-кодека v2 — массив координат детерминирован
+ * по количеству гексов, поэтому в сейве хранится только порядок (индекс
+ * массива = индекс сетки), а координаты восстанавливаются этой функцией.
+ */
+export function generateHexCoords(count: number): AxialCoord[] {
   const result: AxialCoord[] = [{ q: 0, r: 0 }];
 
   let ring = 1;

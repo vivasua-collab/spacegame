@@ -75,6 +75,44 @@ function stripBakedModelCreatedAt(state: GameState): GameState {
   };
 }
 
+/**
+ * R-28 (формат сейва v2): глубокое сравнение с допуском на числа.
+ *
+ * Округления кодека v2 осмысленно теряют точность: availability залежей —
+ * 3 знака (abs ≤ 0.0005), звёздные mass/luminosity/temperature/radius —
+ * 4 значащих цифры (rel ≤ 0.0005). Структура (ключи, длины массивов,
+ * строки) — строго. Map сравниваются тривиально (Object.keys пуст) —
+ * для точного сравнения Map есть spot-check'и toEqual ниже.
+ */
+function deepAlmostEqual(a: unknown, b: unknown, path = ''): void {
+  if (typeof a === 'number' && typeof b === 'number') {
+    const tol = Math.max(1e-3, 1e-3 * Math.max(Math.abs(a), Math.abs(b)));
+    if (!Number.isFinite(a) || !Number.isFinite(b) || Math.abs(a - b) > tol) {
+      throw new Error(`number mismatch at ${path}: ${a} vs ${b}`);
+    }
+    return;
+  }
+  if (a === null || b === null || a === undefined || b === undefined) {
+    expect(a).toBe(b);
+    return;
+  }
+  if (Array.isArray(a) && Array.isArray(b)) {
+    if (a.length !== b.length) throw new Error(`array length mismatch at ${path}: ${a.length} vs ${b.length}`);
+    a.forEach((v, i) => deepAlmostEqual(v, b[i], `${path}[${i}]`));
+    return;
+  }
+  if (typeof a === 'object' && typeof b === 'object') {
+    const ka = Object.keys(a as object).sort();
+    const kb = Object.keys(b as object).sort();
+    if (ka.join(',') !== kb.join(',')) throw new Error(`keys mismatch at ${path}: [${ka}] vs [${kb}]`);
+    for (const k of ka) {
+      deepAlmostEqual((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k], `${path}.${k}`);
+    }
+    return;
+  }
+  expect(a).toBe(b);
+}
+
 describe('Block 01 T5: Serialization round-trip', () => {
   let mediator: GameMediator;
 
@@ -97,15 +135,15 @@ describe('Block 01 T5: Serialization round-trip', () => {
     const roundTripped = deserializeGameState(json);
 
     // Assert: structural equality (all fields except bakedModel.createdAt).
-    // `toEqual` performs a recursive deep-equal that handles Map (Bun/Jest
-    // compatible) — so productionQueues (Map) and systemMap (Map) compare by
-    // contents, not by reference.
-    expect(stripBakedModelCreatedAt(roundTripped)).toEqual(stripBakedModelCreatedAt(original));
+    // R-28: числа сравниваются с допуском — кодек v2 округляет availability
+    // до 3 знаков и звёздные float до 4 значащих цифр (осмысленная потеря
+    // хвостов float-арифметики генератора). Структура — строго.
+    deepAlmostEqual(stripBakedModelCreatedAt(roundTripped), stripBakedModelCreatedAt(original), 'state');
 
     // Explicit spot-checks for the most important fields:
     expect(roundTripped.galaxy.seed).toBe(original.galaxy.seed);
     expect(roundTripped.galaxy.id).toBe(original.galaxy.id);
-    expect(roundTripped.galaxy.systems).toEqual(original.galaxy.systems);
+    deepAlmostEqual(roundTripped.galaxy.systems, original.galaxy.systems, 'systems');
     expect(roundTripped.galaxy.systemMap.size).toBe(original.galaxy.systemMap.size);
     expect(roundTripped.time).toEqual(original.time);
     expect(roundTripped.phase).toBe(original.phase);
@@ -131,9 +169,13 @@ describe('Block 01 T5: Serialization round-trip', () => {
     const state = freshMediatorWithGame({ seed: 42, systemCount: 5 });
     const json = serializeGameState(state);
     const parsed = JSON.parse(json) as {
+      fmt?: number;
       galaxy: Record<string, unknown>;
       productionQueues: unknown;
     };
+
+    // R-28: новый формат v2 — маркер присутствует.
+    expect(parsed.fmt).toBe(2);
 
     // `serializeGameState` destructures `systemMap` and `bakedModel` out of
     // state.galaxy before JSON.stringify — so neither key should appear.

@@ -8,10 +8,10 @@ import { BUILDING_MAP } from '@/data/buildings';
 import { RECIPE_MAP } from '@/data/recipes';
 import { ELEMENT_MAP } from '@/data/elements';
 import { getCurrentLookups, findResourceDisplay } from '@/data/baked-lookups';
+import { getCraftedMaterial } from '@/data/crafted-materials';
 import { CATEGORY_LABELS } from '@/data/element-helpers';
 import { getUsedCapacity, getUsedCapacityByType, calculateWarehouseCapacities, getOrbitBufferUsed, getSpecInfo, getResourceType, getResourceCategory } from '@/data/warehouse';
 import { BuildingDialog, type BuildingDialogTarget } from './building-dialog';
-import { ResourcePanel } from './resource-panel';
 import { ShipyardDialog } from './shipyard-dialog';
 import { ProductionQueuePanel } from './production-queue-panel';
 import { ProductionQueue } from './production-queue';
@@ -935,9 +935,9 @@ function WarehousePanel({ planet }: { planet: Planet }) {
   const gameState = useGameStore((s) => s.gameState);
 
   // Block 02 (F7): compute fleet fuel summary (sum across all player fleets).
-  // Each fuelStore entry per fleet is summed by type. Shown in ResourcePanel
-  // as the «Топливо флотов» section — gives player at-a-glance view of
-  // strategic fuel reserves when checking planet warehouse.
+  // Each fuelStore entry per fleet is summed by type. Rendered компактно в
+  // конце единого списка «Хранилище» (R-28) — стратегический обзор топлива
+  // при проверке склада планеты.
   // NOTE: hooks must be called unconditionally — see Rules of Hooks.
   const fleetFuelSummary = useMemo(() => {
     if (!gameState) return [];
@@ -1059,42 +1059,6 @@ function WarehousePanel({ planet }: { planet: Planet }) {
         </div>
       </div>
 
-      {/* Reserves list */}
-      {reserveEntries.length > 0 && (
-        <div className="space-y-1.5">
-          <span className="text-[10px] text-slate-500 uppercase tracking-wider">Резервы</span>
-          <div className="max-h-48 overflow-y-auto space-y-0.5 pr-1 custom-scrollbar">
-            {reserveEntries.map(reserve => {
-              const current = planet.resources[reserve.resourceId] ?? 0;
-              const isBelowMin = current < reserve.minimum;
-              // Определяем отображаемое имя через BakedGalaxyModel
-              const lookups = getCurrentLookups();
-              const resourceInfo = findResourceDisplay(lookups, reserve.resourceId);
-              const elDef = ELEMENT_MAP.get(reserve.resourceId);
-              const displayName = resourceInfo?.name ?? elDef?.name ?? reserve.resourceId;
-              const resType = getResourceType(reserve.resourceId);
-              const typeBadge = resType === 'ore' ? '⛏' : resType === 'atmospheric' ? '💨' : resType === 'ice' ? '❄' : '';
-              return (
-                <div key={reserve.resourceId} className="flex items-center justify-between text-[10px] py-0.5">
-                  <span className={`${isBelowMin ? 'text-red-400' : 'text-slate-300'} truncate`} title={reserve.resourceId}>
-                    {typeBadge && <span className="mr-0.5">{typeBadge}</span>}
-                    {displayName}
-                  </span>
-                  <span className="flex items-center gap-1 shrink-0">
-                    <span className={`font-mono ${isBelowMin ? 'text-red-400' : 'text-slate-400'}`}>
-                      {Math.floor(current)}
-                    </span>
-                    <span className="text-slate-500">/</span>
-                    <span className="text-slate-400 font-mono">{reserve.minimum}</span>
-                    <span className="text-slate-500 ml-0.5">P{reserve.priority}</span>
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
       {/* Orbit buffer */}
       {wh.orbitBuffer.capacity > 0 && (
         <div className="space-y-1">
@@ -1111,23 +1075,81 @@ function WarehousePanel({ planet }: { planet: Planet }) {
         </div>
       )}
 
-      {/* Stored resources in warehouse */}
+      {/* R-28: ЕДИНЫЙ список «количество / резерв» — объединение бывших
+          раздельных секций «Резервы» и «Хранимые ресурсы» (запрос владельца:
+          «можно объединить, вывод упростить: количество / резерв, ниже
+          резерва — красный, выше — зелёный»). */}
       {(() => {
-        const storedEntries = Object.entries(planet.resources).filter(([, amount]) => amount > 0);
-        if (storedEntries.length === 0 && fleetFuelSummary.length === 0) return null;
+        const lookups = getCurrentLookups();
+        // lucide-react экспортирует иконку Map — затеняет глобальный Map,
+        // поэтому здесь простой Record вместо new Map()
+        const reserveMap: Record<string, { resourceId: string; minimum: number; priority: number }> = {};
+        for (const r of reserveEntries) reserveMap[r.resourceId] = r;
+        // Союз: все ресурсы на складе (кол-во > 0) + все резервы (даже при 0)
+        const ids = new Set<string>([
+          ...Object.keys(planet.resources).filter((id) => (planet.resources[id] ?? 0) > 0),
+          ...Object.keys(reserveMap),
+        ]);
+        const rows = [...ids].map((id) => {
+          const amount = planet.resources[id] ?? 0;
+          const reserve = reserveMap[id];
+          const resourceInfo = findResourceDisplay(lookups, id);
+          const elDef = ELEMENT_MAP.get(id);
+          const crafted = getCraftedMaterial(id);
+          const name = resourceInfo?.name ?? elDef?.name ?? crafted?.name ?? id.replace(/-/g, ' ');
+          const resType = getResourceType(id);
+          const badge = resType === 'ore' ? '⛏' : resType === 'atmospheric' ? '💨' : resType === 'ice' ? '❄' : '';
+          return { id, name, badge, amount, reserve };
+        });
+        // Резервные — первыми (по приоритету), затем по количеству
+        rows.sort((a, b) => {
+          const ra = a.reserve !== undefined;
+          const rb = b.reserve !== undefined;
+          if (ra !== rb) return ra ? -1 : 1;
+          if (ra && rb) return (b.reserve!.priority ?? 0) - (a.reserve!.priority ?? 0);
+          return b.amount - a.amount;
+        });
+        const fuelEntries = fleetFuelSummary.filter((e) => e.amount > 0);
+        if (rows.length === 0 && fuelEntries.length === 0) return null;
         return (
           <div className="space-y-1.5">
-            <span className="text-[10px] text-slate-500 uppercase tracking-wider">Хранимые ресурсы</span>
-            <Card className="bg-white/[0.03] border-white/5 py-3 gap-3">
-              <CardContent className="px-3 py-0">
-                <ResourcePanel
-                  resources={planet.resources}
-                  className="h-48"
-                  fleetFuelSummary={fleetFuelSummary}
-                  tick={gameState.time.tick}
-                />
-              </CardContent>
-            </Card>
+            <span className="text-[10px] text-slate-500 uppercase tracking-wider">
+              Хранилище · количество / резерв
+            </span>
+            <div className="max-h-64 overflow-y-auto space-y-0.5 pr-1 custom-scrollbar">
+              {rows.map((row) => {
+                const minimum = row.reserve?.minimum ?? 0;
+                const hasReserve = row.reserve !== undefined && minimum > 0;
+                const isBelow = hasReserve && row.amount < minimum;
+                const amountColor = !hasReserve
+                  ? 'text-slate-300'
+                  : isBelow ? 'text-red-400' : 'text-emerald-400';
+                return (
+                  <div key={row.id} className="flex items-center justify-between text-[10px] py-0.5">
+                    <span className={`${isBelow ? 'text-red-400' : 'text-slate-300'} truncate`} title={row.id}>
+                      {row.badge && <span className="mr-0.5">{row.badge}</span>}
+                      {row.name}
+                    </span>
+                    <span className="flex items-center gap-1 shrink-0">
+                      <span className={`font-mono ${amountColor}`}>{Math.floor(row.amount)}</span>
+                      {hasReserve && (
+                        <>
+                          <span className="text-slate-500">/</span>
+                          <span className="text-slate-400 font-mono">{minimum}</span>
+                        </>
+                      )}
+                    </span>
+                  </div>
+                );
+              })}
+              {/* Block 02 (F7): топливо флотов — компактно, в конце списка */}
+              {fuelEntries.map((entry) => (
+                <div key={`fuel-${entry.fuelType}`} className="flex items-center justify-between text-[10px] py-0.5">
+                  <span className="text-cyan-300 truncate" title={entry.fuelType}>🚀 {entry.fuelType}</span>
+                  <span className="font-mono text-cyan-200">{Math.floor(entry.amount)}</span>
+                </div>
+              ))}
+            </div>
           </div>
         );
       })()}

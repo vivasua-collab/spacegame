@@ -32,6 +32,7 @@ import { GalaxyModule } from '@/galaxy/galaxy-module';
 import { resetProductionItemCounter } from '@/economy/engine';
 import { BUILDING_MAP } from '@/data/buildings'; // Block 05 PR7 — migratePlanet
 import { SerializedGameStateSchema } from '@/lib/schemas/game-state-schema'; // Block 08 gap-9: state validation on deserialize
+import { compactSaveV2, expandSaveV2 } from '@/lib/save-format-v2'; // R-28: компактный формат сейва v2
 import { gzipBase64, gunzipBase64, isBrowserCodecAvailable } from '@/lib/save-codec-browser'; // R-26: сжатый транспорт сейвов
 import { enqueueShipBuild as enqueueShipBuildFn, cancelShipyardItem as cancelShipyardItemFn } from '@/data/ships/shipyard-queue'; // Block 02 F6
 import { ShipsModule, resetShipCounter } from '@/ships/ships-module'; // Block 02 F5
@@ -353,7 +354,10 @@ export function serializeGameState(state: GameState): string {
     shipyardQueues: Array.from(state.shipyardQueues.entries()),
     ships: Array.from(state.ships.entries()),
   };
-  return JSON.stringify(serializable);
+  // R-28: компактный формат v2 — залежи/свод кортежами, без coord, без
+  // пустых полей застройки (−73% размера). Чистая функция: живое state не
+  // мутируется (строятся новые объекты system/star/planet/hex).
+  return JSON.stringify(compactSaveV2(serializable as unknown as Record<string, unknown>));
 }
 
 /**
@@ -380,6 +384,12 @@ export function serializeGameState(state: GameState): string {
  */
 export function deserializeGameState(json: string): GameState {
   const raw = JSON.parse(json);
+
+  // ─── R-28: компактный формат v2 → каноничная объектная форма ────
+  // Мутирует raw на месте (объект свежий из JSON.parse — владеем им):
+  // кортежи залежей/свода → объекты, coord восстанавливается из сетки.
+  // Сейвы без fmt:2 не затрагиваются (полная обратная совместимость).
+  expandSaveV2(raw);
 
   // ─── Block 08 gap-9: top-level schema validation ──────────────────
   // Best-effort: log issues but don't throw — preserves backward compat

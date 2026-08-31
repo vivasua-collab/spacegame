@@ -28,7 +28,7 @@
 | Критические баги | 1 (P0-1: Store→mediator sync — 21 прямое действие) |
 | Спецификации без реализации | 1 (AI-фракции; флот+исследования завершены как MVP) |
 | Lint-ошибок | 0 ✅ (48 warnings) |
-| Тестов | 555 / 555 ✅ (0 failing) |
+| Тестов | 566 / 566 ✅ (0 failing) |
 | Рецепты | 75 / 75 ✅ (validate:recipes) |
 | Валидаторы каталогов | 4 ✅ (buildings+synergy / recipes / ships / stars — `validate:all`) |
 
@@ -135,9 +135,16 @@
 |-----------|------------|--------|
 | Prisma schema (GameSave) | `prisma/schema.prisma` | ✅ |
 | API routes | `/api/save` (GET/POST/PUT/DELETE) | ✅ |
-| Сериализация (systemMap excl.) | `game-store.ts:serializeGameState` | ✅ |
+| Сериализация (systemMap excl.) + **компактный формат v2 (R-28)** | `game-store.ts:serializeGameState` + `src/lib/save-format-v2.ts` | ✅ |
 | Таймаут 30с + AbortController | `game-store.ts:saveGame` | ✅ |
 | Toast-уведомления | `game-layout.tsx:SaveButton` | ✅ |
+
+> **R-28 (2026-08-31) — формат сейва v2:** залежи и свод resourceDeposits —
+> кортежами, гексы без `coord` (восстанавливается из сетки), без пустых
+> полей застройки, звёздные float — 4 значащих цифры. 200 систем:
+> **31.4 → 8.9 МБ plain (−72%)**, gzip-транспорт 5.3 → 2.3 МБ; БД хранит v2.
+> Обратная совместимость: сейвы без `fmt:2` читаются как раньше.
+> Анализ: `bun run save:size` (`scripts/save-size-analysis.ts`).
 
 ---
 
@@ -289,7 +296,7 @@
 | Типов звёзд | 12 / 12 ✅ (data-driven: `src/data/stars/types.json`) |
 | Типов планет | 7 / 7 ✅ + сетки планет/лун из `src/data/planets/grids.json` |
 | Компонентов UI (game/) | 17 |
-| Тестов | 555 / 555 ✅ (0 failing) |
+| Тестов | 566 / 566 ✅ (0 failing) |
 | Lint-ошибок | 0 ✅ (48 warnings) |
 
 ### 6.2 Документация
@@ -308,7 +315,7 @@
 | Git-коммитов | 7+ (history rewritten per audit Pass 1) |
 | Активных дней разработки | 11+ (2026-05-03, 04, 12, 13, 22, 06-26, 08-27 + Block 01-08, 08-28, 08-31) |
 | Lint-ошибок | 0 ✅ (48 warnings) |
-| Тестов | 555 / 555 ✅ (0 failing) |
+| Тестов | 566 / 566 ✅ (0 failing) |
 
 ---
 
@@ -366,6 +373,7 @@
 
 | Дата | Автор | Изменение |
 |------|-------|-----------|
+| 2026-08-31 | R-28 (Task ID 28) | Компактный формат сейва v2 (`src/lib/save-format-v2.ts`): залежи/агрегаты кортежами, гексы без coord (восстановление из сетки), без пустых полей застройки, округление availability/звёздных float — 200 систем **31.4 → 8.9 МБ (−72%)**, gzip 5.3 → 2.3 МБ; анализ размера `bun run save:size`; UI: единый список «Хранилище · количество / резерв» (слияние «Резервов» и «Хранимых ресурсов», красный/зелёный). Docs: STATUS §2.7, 35-warehouse §1.4.2. План: `plans/2026-08-31-task28-save-format-v2.md` |
 | 2026-08-31 | R-27 (Task ID 27) | Авто-переработка базовых строительных руд (Fe/Si/Al/C/Cu/Ti) переработчиками без очереди (жалоба №2/№3/№4); газовый склад v3.1 2000 ед. (жалоба №5/№7 — газы больше не забивают рудный); принуждение резервов в canStoreResource (долг минимумов, жалоба №6); синергия generator_cluster + возврат mine_processor/warehouse_production (жалоба №1). Docs: 40-buildings.md §5/§11.4, 35-warehouse §1.3/§1.4. План: `plans/2026-08-31-task27-auto-processing-gas-warehouse.md` |
 | 2026-08-31 | R-26 (Task ID 26) | Гравитационная градация планет по классам размера (полосы тип×класс, без инверсий; плотность выводится из g×R); сжатый транспорт сейвов gzip-base64 (фикс EntityTooLarge 32 МБ шлюза); инспектор дампа `bun run save:inspect`. Docs: 30-planets.md §2.2.1. План: `plans/2026-08-31-task26-planet-gravity-save.md` |
 | 2026-08-31 | cleanup (Task ID 25) | Чекпоинты `audit_YYYY_MM_DD_NN_*` переименованы под `checkpoints/RULES.md` → `ММ_ДД_цель.md` (11 файлов); README: секция «Документы процесса»; STATUS-актуализация. План: `plans/2026-08-31-task25-checkpoint-cleanup-docs-sync.md` |
