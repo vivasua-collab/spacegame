@@ -109,7 +109,7 @@ export interface Moon {
   name: string;
   /** Тип луны — rocky / ice / dwarf (не газовый гигант) */
   type: 'rocky' | 'ice' | 'dwarf';
-  /** Размер луны — tiny / small (реже medium) */
+  /** Размер луны — tiny / small (2 выделенные малые сетки из planets/grids.json: 7/19 гексов) */
   size: PlanetSize;
   /** Радиус в км */
   radiusKm: number;

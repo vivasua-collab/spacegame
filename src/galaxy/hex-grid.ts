@@ -1,14 +1,34 @@
 /**
  * Гексагональная сетка (axial coordinates).
+ *
+ * R-STARS-DATA (2026-08-31): размерности сеток — data-driven из
+ * `src/data/planets/grids.json`: 5 планетарных (SIZE_HEX_COUNT, по умолчанию)
+ * + 2 малые для спутников (MOON_SIZE_HEX_COUNT, передаются параметром
+ * gridMap при генерации лун).
  */
 
 import type { AxialCoord, HexCell, HexTerrain, PlanetSize } from '@/core/types';
 import { Xoshiro256 } from '@/core/prng';
 import { SIZE_HEX_COUNT, ALL_TERRAINS } from '@/data/planet-types';
 
-/** Генерация гексов для планеты заданного размера */
-export function generateHexGrid(size: PlanetSize, terrainWeights: Record<HexTerrain, number>, rng: Xoshiro256): HexCell[] {
-  const hexCount = SIZE_HEX_COUNT[size];
+/**
+ * Генерация гексов для планеты заданного размера.
+ *
+ * @param size     — класс размера (индекс в gridMap)
+ * @param weights  — веса местности
+ * @param rng      — детерминированный ГПСЧ
+ * @param gridMap  — размерность сеток: по умолчанию планетарные
+ *                   (SIZE_HEX_COUNT из grids.json); для лун передаётся
+ *                   MOON_SIZE_HEX_COUNT (2 малые сетки). Если для size нет
+ *                   записи — fallback на планетарную сетку.
+ */
+export function generateHexGrid(
+  size: PlanetSize,
+  terrainWeights: Record<HexTerrain, number>,
+  rng: Xoshiro256,
+  gridMap: Partial<Record<PlanetSize, number>> = SIZE_HEX_COUNT,
+): HexCell[] {
+  const hexCount = gridMap[size] ?? SIZE_HEX_COUNT[size];
   const coords = generateHexCoords(hexCount);
   const terrains = ALL_TERRAINS;
   const weights = terrains.map(t => terrainWeights[t] ?? 0);

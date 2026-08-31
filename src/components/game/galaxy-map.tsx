@@ -3,6 +3,7 @@
 import { useCallback, useMemo, useState, useRef, useEffect } from 'react';
 import { useGameStore } from '@/stores/game-store';
 import type { StarSystem } from '@/core/types';
+import { MAIN_SEQUENCE_STAR_TYPES } from '@/data/stars';
 import { FleetRouteOverlay } from './fleet-route-overlay';
 import { Rocket, Crosshair } from 'lucide-react';
 
@@ -532,14 +533,12 @@ export function GalaxyMap() {
             Stabilized
           </span>
         </div>
+        {/* Спектральная цепочка O→B→A→F→G→K→M — data-driven из каталога звёзд
+            (src/data/stars/types.json): порядок и цвета берутся автоматически. */}
         <div className="flex flex-wrap gap-x-2 gap-y-0.5 text-[9px]">
-          <span className="flex items-center gap-0.5"><span className="inline-block w-2 h-2 rounded-full" style={{ backgroundColor: '#6e8eff' }} />O</span>
-          <span className="flex items-center gap-0.5"><span className="inline-block w-2 h-2 rounded-full" style={{ backgroundColor: '#8ea4ff' }} />B</span>
-          <span className="flex items-center gap-0.5"><span className="inline-block w-2 h-2 rounded-full" style={{ backgroundColor: '#c8d4ff' }} />A</span>
-          <span className="flex items-center gap-0.5"><span className="inline-block w-2 h-2 rounded-full" style={{ backgroundColor: '#f5f0e8' }} />F</span>
-          <span className="flex items-center gap-0.5"><span className="inline-block w-2 h-2 rounded-full" style={{ backgroundColor: '#ffe8a0' }} />G</span>
-          <span className="flex items-center gap-0.5"><span className="inline-block w-2 h-2 rounded-full" style={{ backgroundColor: '#ffba6a' }} />K</span>
-          <span className="flex items-center gap-0.5"><span className="inline-block w-2 h-2 rounded-full" style={{ backgroundColor: '#ff6a3d' }} />M</span>
+          {MAIN_SEQUENCE_STAR_TYPES.map((s) => (
+            <span key={s.type} className="flex items-center gap-0.5"><span className="inline-block w-2 h-2 rounded-full" style={{ backgroundColor: s.color }} />{s.type.replace('STAR_', '')}</span>
+          ))}
         </div>
       </div>
 

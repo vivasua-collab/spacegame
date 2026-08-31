@@ -2,7 +2,7 @@
 
 import { useGameStore } from '@/stores/game-store';
 import { TYPE_NAMES, SIZE_NAMES } from '@/data/planet-types';
-import { STAR_TYPE_MAP } from '@/data/star-types';
+import { STAR_TYPE_MAP } from '@/data/stars';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';

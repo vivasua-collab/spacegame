@@ -15,7 +15,7 @@
 
 import type { Xoshiro256 } from '@/core/prng';
 import type { Star, Planet, Moon, PlanetSize, BinaryType, Atmosphere, AtmosphereType, PlanetLife, LifeLevel, AtmosphericSlot, OrbitalSlot } from '@/core/types';
-import { PLANET_TYPES, ORBIT_SLOTS, ORBIT_SLOTS_BY_SIZE, GAS_GIANT_ATMOSPHERE_SLOTS, PLANET_DENSITY, PLANET_TYPE_RADIUS, getSizeFromRadius, LIFE_LEVEL_WEIGHTS, TYPE_NAMES, GAS_GIANT_MOON_COUNT, MOON_RADIUS, MOON_DENSITY, MOON_ORBIT_RADIUS_KM, MOON_TYPE_WEIGHTS } from '@/data/planet-types';
+import { PLANET_TYPES, ORBIT_SLOTS, ORBIT_SLOTS_BY_SIZE, GAS_GIANT_ATMOSPHERE_SLOTS, PLANET_DENSITY, PLANET_TYPE_RADIUS, getSizeFromRadius, LIFE_LEVEL_WEIGHTS, TYPE_NAMES, GAS_GIANT_MOON_COUNT, MOON_RADIUS, MOON_DENSITY, MOON_ORBIT_RADIUS_KM, MOON_TYPE_WEIGHTS, MOON_SIZE_HEX_COUNT } from '@/data/planet-types';
 import { genId } from './gen-context';
 import { generateHexGrid } from './hex-grid';
 import { assignResourceDeposits, aggregateResourceDeposits } from './generate-resources';
@@ -631,12 +631,14 @@ function generateMoons(
     const density = densityRange.min + moonRng.nextFloat() * (densityRange.max - densityRange.min);
     const gravity = (radiusKm / 6371) * (density / 5.51);
 
-    // Размер (по радиусу в R_Earth)
+    // Размер луны: 2 уровня — tiny (< 0.15 R⊕) или small (остальные).
+    // R-STARS-DATA (2026-08-31): луны используют выделенные МАЛЫЕ сетки
+    // (MOON_SIZE_HEX_COUNT из planets/grids.json: 7/19 гексов), а НЕ
+    // планетарные (требование владельца: минимум 5 планетарных сеток +
+    // 2 маленькие для спутников). Крупные луны (Ганимед-класс, ≥0.15 R⊕)
+    // получают «small» = 19 гексов.
     const R_Earth = radiusKm / 6371;
-    let size: PlanetSize;
-    if (R_Earth < 0.15) size = 'tiny';
-    else if (R_Earth < 0.4) size = 'small';
-    else size = 'medium';
+    const size: PlanetSize = R_Earth < 0.15 ? 'tiny' : 'small';
 
     // Орбитальный радиус вокруг планеты — строго монотонный
     const jitter = moonRng.nextFloat() * maxJitter;
@@ -649,13 +651,13 @@ function generateMoons(
     // P = 1.77 × (a/421700)^(3/2) дней.
     const orbitPeriodDays = Math.round(1.77 * Math.pow(orbitRadiusKm / 421700, 1.5));
 
-    // Гекс-сетка (для будущей колонизации)
+    // Гекс-сетка луны — МАЛЫЕ сетки (7/19 гексов, data-driven)
     const terrainWeights = moonType === 'ice'
       ? { plains: 25, mountains: 25, desert: 0, ice: 50, ocean: 0, volcano: 0, jungle: 0 }
       : moonType === 'rocky'
         ? { plains: 40, mountains: 30, desert: 20, ice: 0, ocean: 0, volcano: 0, jungle: 10 }
         : { plains: 50, mountains: 30, desert: 0, ice: 20, ocean: 0, volcano: 0, jungle: 0 };
-    const hexes = generateHexGrid(size, terrainWeights, moonRng.derive('hexes'));
+    const hexes = generateHexGrid(size, terrainWeights, moonRng.derive('hexes'), MOON_SIZE_HEX_COUNT);
     if (hexes.length > 0) {
       assignResourceDeposits(hexes, moonRng.derive('deposits'), moonType);
     }

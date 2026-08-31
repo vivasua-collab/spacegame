@@ -1562,3 +1562,105 @@ Stage Summary:
 - Кода не изменено. Аудит чисто исследовательский. Все recommendations будут
   выполняться в отдельных задачах (если владелец одобрит).
 
+
+---
+Task ID: 22
+Agent: main
+Task: Новый день. Проверить актуальность кода (возможен откат окружения). Начать экстракцию звёздного каталога. Проверить использования цепочки спектральных классов O–B–A–F–G–K–M. Добавить несколько процентов (не больше 5) звёздных объектов вне основной диаграммы классов. Планеты генерируются процедурно, но размерность сетки (количество гексов) — во внешнем файле: минимум 5 планетарных сеток и 2 маленькие для спутников.
+
+Work Log:
+- Системная дата: 2026-08-31 09:55 MSK. Проверен HEAD: ea389c7 = пере-коммит
+  аудита Pass 9 (тот же message/606 insertions; хеш сменился с 2d51ea8 из-за
+  отката окружения). Working tree чист, tests 417/0 — контент цел.
+- GREP потребителей star-types/STAR_TYPES/MAIN_SEQUENCE/SIZE_HEX_COUNT/
+  generateHexGrid: найдено 4 импортёра star-types + цепочка используется в
+  5 местах (slice(0,7), selectCompanionStar indexOf, MAIN_SEQUENCE_TYPES Set,
+  system-view STAR_TYPE_MAP, galaxy-map легенда hardcode).
+- Создан src/data/stars/types.json: 12 типов звёзд — mainSequence (7,
+  ОБЯЗАТЕЛЬНЫЙ порядок O→B→A→F→G→K→M) + special (5: WD/RG/NS/PULSAR/BH
+  с ranges). Веса specials подняты с 0.8% до 4.0% (WD 1.5/RG 1.0/NS 0.68/
+  PULSAR 0.35/BH 0.6 = 3.997% от общего — требование владельца ≤ 5%).
+  ГП-веса не менялись (M=76 доминирует).
+- Создан src/data/stars/index.ts — тонкий loader (as unknown as): публичный
+  API старого модуля (STAR_TYPES/STAR_TYPE_MAP/STAR_WEIGHTS/getStarTypeDef)
+  + новые экспорты (MAIN_SEQUENCE_STAR_TYPES/WEIGHTS, SPECIAL_STAR_TYPES,
+  SPECIAL_STAR_RANGES, MAIN_SEQUENCE_TYPES, SPECTRAL_CHAIN,
+  specialStarFraction).
+- Удалён src/data/star-types.ts; 4 потребителя обновлены напрямую (без шима):
+  system-view.tsx, generate-systems.ts, star-dist-test.ts, audit-generator.ts.
+- generate-systems.ts: удалены 3 локальных hardcode-дубликата (MAIN_SEQUENCE
+  _STAR_TYPES/WEIGHTS, SPECIAL_STAR_RANGES, MAIN_SEQUENCE_TYPES Set) —
+  единый источник теперь каталог. Физика (Стефан-Больцман, R=M^0.8/0.57,
+  T_SUN=5778) осталась в коде (по рекомендации аудита Pass 9).
+- Создан src/data/planets/grids.json: planetGrids — 5 планетарных сеток
+  (tiny=19/small=37/medium=61/large=91/huge=127, центрированные гекс-числа
+  1+3k(k+1)) + moonGrids — 2 малые лунные (tiny=7, small=19). Требование
+  владельца «минимум 5 + 2 маленькие» выполнено.
+- Создан src/data/planets/grids.ts (PLANET_GRIDS/MOON_GRIDS). planet-types.ts:
+  SIZE_HEX_COUNT = PLANET_GRIDS (обратная совместимость, значения те же) +
+  новый MOON_SIZE_HEX_COUNT. hex-grid.ts: generateHexGrid получил опциональный
+  параметр gridMap (default планетарные). generate-planets.ts: размер луны
+  теперь 2-уровневый (R<0.15 R⊕ → tiny=7; иначе small=19; раньше 3 уровня
+  до medium=61 — луны использовали планетарные сетки, противоречило
+  требованию).
+- Создан scripts/validate-stars.ts — 29 проверок: спектральная цепочка в
+  точном порядке, доля specials 2%≤x≤5%, монотонность T/M/L, ranges,
+  уникальность ID, hex-цвета, loader API, slice(0,7)-инвариант, сетки
+  (≥5/≥2, центрированные гекс-числа, возрастание, малость лунных,
+  обратная совместимость). package.json: validate:stars + validate:all (4
+  валидатора).
+- Создан tests/galaxy/star-catalog.test.ts — 22 теста (3 describe):
+  каталог (цепочка/доля/API/фикстуры), сетки (7/19/61 + fallback),
+  интеграция (луны hexes∈{7,19}, детерминизм, компаньоны только ГП).
+- Обновлён tests/galaxy-snapshot.test.ts: EXPECTED_STAR_TYPES перезаписан
+  (11 типов — добавились NS/PULSAR/RG при поднятии весов; политика breakage
+  документирована в шапке теста).
+- galaxy-map.tsx: легенда спектральных классов O B A F G K M рефакторнута
+  с 7 hardcode-строк на MAIN_SEQUENCE_STAR_TYPES.map() — порядок и цвета
+  автоматически из каталога (5-й потребитель цепочки стал data-driven).
+- Документация: data-driven-architecture.md v1.1 (NEW §2.4 stars+grids,
+  §6.5/§6.6 DATA-DRIVEN инструкции, §8.1/8.2 roadmap); 20-stars.md §7.1
+  (частоты specials), §7.2 (РЕАЛИЗОВАНО — фактический формат + инварианты,
+  старый концепт в details), §7.3 (научная vs игровая палитра); 30-planets.md
+  §2.1 (примечание grids.json).
+- Smoke-тест: seed=42, 500 систем — 710 звёзд (спец. 26 = 3.66% фактической
+  выборки), 1003 луны только {7,19} гексов, планеты {19,37,61,91,127}+0(ГГ).
+- PRNG-детерминизм подтверждён: weightedChoice = 1 nextFloat() на вызов
+  (alignment стабильный); лунные derived-стримы изолированы. Тесты
+  детерминизма зелёные.
+- Качественные метрики: lint 0/49 (=), tsc 159 (= baseline, паттерн кодов
+  идентичен), tests 439/0 (+22), validate:all — 4 валидатора зелёные
+  (recipes 75/75, buildings 17/17, ships 4+20+4, stars 12+7).
+- Agent-browser: меню → Launch (seed 298447) → карта (легенда O B A F G K M
+  из каталога) → система (звёзды «Жёлто-белая»/«Жёлтый карлик»/«Красный
+  карлик» из STAR_TYPE_MAP) → Omega Virginis IV (газовый гигант): «ЛУНЫ
+  ГАЗОВОГО ГИГАНТА (2)»: IV-a 19 гекс, IV-b 19 гекс — лунные сетки из
+  grids.json в UI. Справка → Планеты: 61/37/19 гексов из data-driven
+  SIZE_HEX_COUNT. errors/console/dev.log чисты. Скриншот
+  /tmp/stars-verification.png.
+- Checkpoint: checkpoints/audit_2026_08_31_10_stars_extraction.md.
+
+Stage Summary:
+- Требования владельца выполнены полностью:
+  1. ✅ Экстракция звёздного каталога: src/data/stars/types.json (12 типов)
+     + тонкий loader + валидатор + 22 теста. Старый star-types.ts удалён.
+  2. ✅ Цепочка O–B–A–F–G–K–M проверена: 5 потребителей найдено; порядок
+     залочен валидатором и тестами; легенда карты галактики стала
+     data-driven (hardcode-дубликат убран).
+  3. ✅ Специальные звёзды (WD/RG/NS/PULSAR/BH): суммарная доля 3.997% ≤ 5%
+     (было 0.8%); weights data-driven, инвариант в валидаторе.
+  4. ✅ Сетки: planets/grids.json — 5 планетарных (19/37/61/91/127) + 2
+     малые лунные (7/19); луны 2-уровневые, используют ТОЛЬКО малые сетки.
+- Планеты по-прежнему процедурные (тип/атмосфера/температура/жизнь), но
+  размерность сетки — из внешнего файла (как просил владелец).
+- Физика (Стефан-Больцман, Кеплер, масс-радиус) осталась в коде — научные
+  формулы, не данные (рекомендация аудита Pass 9).
+- Качественные метрики: lint 0/49 (=), tsc 159 (=), tests 439/0 (+22),
+  validate:all — 4 валидатора.
+- PRNG-детерминизм сохранён (weightedChoice = 1 nextFloat; derived-стримы);
+  снапшот обновлён один раз по документированной политике breakage.
+- Создано 6 файлов, изменено 14, удалено 1. Конфликтов нет: публичный API
+  сохранён, consumers обновлены напрямую, UI-легенда синхронна каталогу.
+- Следующий шаг (если владелец одобрит): Etap 4.2 — планетарный каталог
+  (planet-types.ts → planets/types.json) по рекомендации аудита Pass 9.
+

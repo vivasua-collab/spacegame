@@ -6,7 +6,7 @@
  */
 
 import { generateGalaxy } from '@/galaxy/generator';
-import { STAR_TYPES, STAR_WEIGHTS } from '@/data/star-types';
+import { STAR_TYPES, STAR_WEIGHTS } from '@/data/stars';
 import { PLANET_TYPES, SIZE_HEX_COUNT } from '@/data/planet-types';
 import type { StarType, PlanetType, PlanetSize, Galaxy, StarSystem, Planet } from '@/core/types';
 

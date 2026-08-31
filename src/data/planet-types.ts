@@ -6,9 +6,15 @@
  * G-01 fix: lifeChance приведены к спецификации §1.2
  * G-04/G-06 fix: добавлен PLANET_TYPE_RADIUS и getSizeFromRadius() — размер из R⊕
  * G-15/G-23 fix: добавлен ORBIT_SLOTS_BY_SIZE — орбитальные слоты по размеру
+ *
+ * R-STARS-DATA (2026-08-31): размерности гекс-сеток вынесены в
+ * `src/data/planets/grids.json` (data-driven): SIZE_HEX_COUNT — планетарные
+ * сетки (5), MOON_SIZE_HEX_COUNT — 2 малые сетки для спутников. Остальной
+ * каталог типов планет — inline TS (Etap 4.2 — вынос в JSON).
  */
 
 import type { PlanetDef, PlanetType, PlanetSize, HexTerrain } from '@/core/types';
+import { PLANET_GRIDS, MOON_GRIDS } from './planets/grids';
 
 /** Диапазоны плотности по типу планеты (г/см³).
  * Из научных данных: Seager et al. 2007, Zeng et al. 2016, Fulton et al. 2017.
@@ -236,14 +242,19 @@ export const PLANET_TYPE_MAP = new Map(PLANET_TYPES.map(p => [p.type, p]));
 /**
  * Количество гексов по классу размера.
  * Из документации 03-planets.md §2.1 (единый источник истины).
+ *
+ * R-STARS-DATA (2026-08-31): data-driven — значения из
+ * `src/data/planets/grids.json` (planetGrids). 5 планетарных сеток.
  */
-export const SIZE_HEX_COUNT: Record<PlanetSize, number> = {
-  tiny: 19,
-  small: 37,
-  medium: 61,
-  large: 91,
-  huge: 127,
-};
+export const SIZE_HEX_COUNT: Record<PlanetSize, number> = PLANET_GRIDS;
+
+/**
+ * Размерности гекс-сеток для ЛУН газовых гигантов — 2 малые сетки
+ * (tiny=7, small=19), data-driven из `src/data/planets/grids.json`
+ * (moonGrids). Луны не используют планетарные сетки (требование
+ * владельца 2026-08-31). Размер луны: R<0.15 R⊕ → tiny, иначе small.
+ */
+export const MOON_SIZE_HEX_COUNT: Partial<Record<PlanetSize, number>> = MOON_GRIDS;
 
 /**
  * Все типы местности — 7 типов (без crater, P1-20).
