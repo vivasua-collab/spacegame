@@ -1504,8 +1504,7 @@ export function colonizePlanet(planet: Planet, system?: StarSystem): boolean {
   // R-29: ленивая материализация залежей — ТОЛЬКО при колонизации.
   // До этого момента гексы «не разведаны» (в сейве их нет), известен лишь
   // свод-пул; replay assignResourceDeposits из depositRngState даёт те же
-  // залежи, что прогон при генерации. Идемпотентно: старые сейвы с
-  // запечёнными залежами помечены depositsMaterialized при загрузке.
+  // залежи, что прогон при генерации. Идемпотентно (depositsMaterialized).
   materializePlanetDeposits(planet);
 
   // Найти лучший гекс для colony_hub:

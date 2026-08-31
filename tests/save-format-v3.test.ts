@@ -15,8 +15,8 @@
  *   6. Round-trip v3 (после колонизации): залежи идентичны, dm=true.
  *   7. Истощённые залежи (qty<=0) не пишутся; после загрузки их нет.
  *   8. Словарь: кортежи пишут индексы; decode восстанавливает elementId.
- *   9. Совместимость v2: старый формат (compactSaveV2) загружается,
- *      запечённые тела помечены материализованными, залежи целы.
+ *   9. R-30: старые форматы (fmt:2 / без fmt) отклоняются явной ошибкой
+ *      (декодеры v1/v2 удалены — старые сейвы стёрты владельцем).
  *  10. Идемпотентность: serialize(deserialize(serialize(s))) === serialize(s).
  *  11. Луны тоже ленивые: depositRngState есть, материализация работает.
  *  12. Размер: свежий сейв 200 систем заметно меньше v2-эталона (8.86 МБ).
@@ -29,7 +29,6 @@ import '@/core/immer-setup';
 import { generateGalaxy } from '@/galaxy';
 import { serializeGameState, deserializeGameState } from '@/stores/game-store';
 import { isSaveFormatV3, SAVE_FORMAT_V3_VERSION } from '@/lib/save-format-v3';
-import { compactSaveV2 } from '@/lib/save-format-v2';
 import { materializePlanetDeposits } from '@/galaxy/generate-resources';
 import { assignResourceDeposits } from '@/galaxy/generate-resources';
 import { Xoshiro256 } from '@/core/prng';
@@ -292,49 +291,31 @@ describe('R-29: ленивые залежи + формат v3', () => {
     expect(rHex.deposits[0]!.elementId).toBe(parsed.galaxy.dict[tuple[0] as number]);
   });
 
-  test('9. Совместимость v2: запечённые тела помечаются материализованными', () => {
+  test('9. R-30: старые форматы (fmt:2 / без fmt) отклоняются явной ошибкой', () => {
     const state = buildFreshState(10);
-    // Материализуем всё — как выглядели сейвы до R-29
-    for (const body of allBodies(state)) materializePlanetDeposits(body);
+    const planet = firstColonizable(state);
+    colonizePlanet(planet);
 
-    // Пишем в СТАРОМ формате v2 (как писали до R-29)
+    // Минимальная по форме сохранёнка на основе живого состояния (содержимое
+    // значения не имеет — decode обязан отклонить ДО какого-либо разбора).
     const { systemMap: _sm, bakedModel: _bm, ...galaxyWithoutMap } = state.galaxy;
-    const serializable = {
-      ...state,
+    const base = {
+      time: state.time,
+      speed: state.speed,
+      phase: state.phase,
       galaxy: galaxyWithoutMap,
-      productionQueues: Array.from(state.productionQueues.entries()),
-      shipDesigns: Array.from(state.shipDesigns.entries()),
-      shipyardQueues: Array.from(state.shipyardQueues.entries()),
-      ships: Array.from(state.ships.entries()),
+      productionQueues: [],
+      fleets: [],
+      playerFactionId: 'player',
     };
-    const v2Json = JSON.stringify(compactSaveV2(serializable as unknown as Record<string, unknown>));
 
-    const restored = deserializeGameState(v2Json);
-    const origBodies = [...allBodies(state)];
-    const restBodies = [...allBodies(restored)];
-    let checkedDeposits = 0;
-    for (let i = 0; i < restBodies.length; i++) {
-      const o = origBodies[i]!;
-      const r = restBodies[i]!;
-      // Запечённые тела → материализованы (replay невозможен — дублей не будет);
-      // ГГ без гексов не материализуются никогда — это корректно
-      expect(r.depositsMaterialized).toBe(o.hexes.length > 0);
-      if (o.hexes.length > 0) {
-        expect(materializePlanetDeposits(r)).toBe(false);
-      }
-      // Залежи целы
-      for (let h = 0; h < o.hexes.length; h++) {
-        const od = o.hexes[h]!.deposits;
-        const rd = r.hexes[h]!.deposits;
-        expect(rd.length).toBe(od.length);
-        for (let d = 0; d < od.length; d++) {
-          expect(rd[d]!.elementId).toBe(od[d]!.elementId);
-          expect(rd[d]!.quantity).toBe(od[d]!.quantity);
-          checkedDeposits++;
-        }
-      }
-    }
-    expect(checkedDeposits).toBeGreaterThan(500);
+    // fmt:2 (сейвы R-28) — явная ошибка, не молчаливая порча состояния
+    const v2Json = JSON.stringify({ ...base, fmt: 2 });
+    expect(() => deserializeGameState(v2Json)).toThrow('Неподдерживаемый формат сейва');
+
+    // без маркера fmt (сейвы до R-28) — тот же отказ
+    const v1Json = JSON.stringify(base);
+    expect(() => deserializeGameState(v1Json)).toThrow('Неподдерживаемый формат сейва');
   });
 
   test('10. Идемпотентность: serialize(deserialize(serialize(s))) === serialize(s)', () => {

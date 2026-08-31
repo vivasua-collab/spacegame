@@ -17,6 +17,7 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
 import { getGameMediator } from '@/core/game-mediator';
+import { toast } from '@/hooks/use-toast';
 
 /**
  * Deterministic pseudo-random number generator (simple LCG).
@@ -89,10 +90,19 @@ export default function Home() {
   }, [loadSaveList]);
 
   // Handle load
+  // R-30: отказ загрузки — видимый тост (например, сейв старого формата:
+  // deserializeGameState отклоняет fmt≠3 явной ошибкой).
   const handleLoad = useCallback(async (id: string) => {
     setLoadingSaveId(id);
-    await loadGame(id);
+    const ok = await loadGame(id);
     setLoadingSaveId(null);
+    if (!ok) {
+      toast({
+        title: 'Не удалось загрузить сейв',
+        description: 'Сейв повреждён или записан в старом формате (v1/v2 не поддерживаются). Подробности — в консоли.',
+        variant: 'destructive',
+      });
+    }
   }, [loadGame]);
 
   // Handle delete

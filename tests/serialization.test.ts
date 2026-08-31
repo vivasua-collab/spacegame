@@ -194,9 +194,11 @@ describe('Block 01 T5: Serialization round-trip', () => {
     expect(Array.isArray(parsed.productionQueues)).toBe(true);
   });
 
-  test('3. Backward compatibility — v1 (dayInYear) and v0 (day) time formats deserialize without crashing', () => {
-    // v1 format: uses `time.dayInYear` (current format) — should be used as-is.
+  test('3. Time formats — dayInYear (v3) and legacy `day` both deserialize without crashing', () => {
+    // R-30: deserializeGameState принимает только fmt:3 — ручные fixtures
+    // оборачиваются маркером v3. Текущая форма времени — `time.dayInYear`.
     const v1Json = JSON.stringify({
+      fmt: 3,
       time: { tick: 100, dayInYear: 200, year: 1 },
       speed: 1,
       phase: 'playing',
@@ -211,9 +213,10 @@ describe('Block 01 T5: Serialization round-trip', () => {
     expect(v1State.time.dayInYear).toBe(200);
     expect(v1State.time.year).toBe(1);
 
-    // v0 format: uses `time.day` instead of `time.dayInYear` —
-    // `deserializeGameState` migrates: dayInYear = day % 365.
+    // Legacy форма времени — `time.day` вместо `dayInYear`:
+    // `deserializeGameState` мигрирует: dayInYear = day % 365.
     const v0Json = JSON.stringify({
+      fmt: 3,
       time: { tick: 100, day: 400, year: 1 },
       speed: 1,
       phase: 'playing',
@@ -326,6 +329,7 @@ describe('Block 01 T5: Serialization round-trip', () => {
     // `raw.galaxy.systems || []` etc., so an empty galaxy should still
     // produce a usable GameState (with empty systems list).
     const schemaInvalidJson = JSON.stringify({
+      fmt: 3,
       time: { tick: 0, dayInYear: 0, year: 1 },
       speed: 1,
       phase: 'NOT_A_REAL_PHASE', // invalid literal — schema rejects

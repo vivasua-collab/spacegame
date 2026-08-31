@@ -1,9 +1,6 @@
 /**
  * R-29 (2026-08-31): формат сейва v3 — ленивые залежи.
  *
- * Основа — v2 (кортежи залежей/свода, coord из сетки, округления,
- * звёзды 4 знач. цифры). Новое:
- *
  *   1. `galaxy.dict: string[]` — словарь id элементов/руд (порядок
  *      первого вхождения при обходе). Кортежи залежей и свода пишут
  *      ИНДЕКС словаря вместо строки: [idx, avail3, qty, depth] и
@@ -17,10 +14,11 @@
  *   3. Истощённые залежи (qty<=0) НЕ пишутся: добыча их пропускает,
  *      пул-агрегат не пересчитывается — «проще на поздних стадиях».
  *
- * Обратная совместимость: сейвы fmt:2 разворачиваются expandSaveV2,
- * затем migrateLegacyDepositFlags помечает тела с запечёнными залежами
- * (depositsMaterialized=true) — повторная материализация невозможна.
- * Сейвы без fmt (v1) идут тем же путём после объектного парса.
+ * R-30 (2026-08-31): v3 — ЕДИНСТВЕННЫЙ формат. Совместимость с v1/v2
+ * (fmt-детект, expandSaveV2, миграция флагов) удалена: старые сейвы
+ * стёрты владельцем, decode-заглушки не нужны. Загрузка строго требует
+ * `fmt: 3` — сейвы старых форматов отклоняются явной ошибкой (вместо
+ * молчаливой порчи состояния кортежами/формой v2).
  *
  * Идемпотентность: encode(decode(encode(s))) === encode(s) — обход
  * детерминирован, словарь строится в стабильном порядке, округления
@@ -29,10 +27,35 @@
 
 import { generateHexCoords } from '@/galaxy/hex-grid';
 import type { HexTerrain, PlanetResourceDeposit } from '@/core/types';
-import { round3, roundSig4, TIER_TO_IDX, TIER_FROM_IDX } from './save-format-v2';
 
 /** Версия формата v3 (маркер в корне JSON). */
 export const SAVE_FORMAT_V3_VERSION = 3;
+
+// ============ Округление (унаследовано из v2-кодека при удалении v2, R-30) ============
+
+/** Округление до 3 знаков после запятой (0..1 диапазоны: availability). */
+export function round3(v: number): number {
+  if (!Number.isFinite(v)) return v;
+  return Math.round(v * 1000) / 1000;
+}
+
+/** 4 значащих цифры — для float любой magnitude (luminosity 2.3e-4 и т.п.). */
+export function roundSig4(v: number): number {
+  if (!Number.isFinite(v) || v === 0) return v;
+  return Number(v.toPrecision(4));
+}
+
+// ============ Tier ↔ индекс ============
+
+export const TIER_TO_IDX: Record<PlanetResourceDeposit['tier'], number> = {
+  profile: 0,
+  rare: 1,
+  ultra_rare: 2,
+};
+
+export const TIER_FROM_IDX: readonly PlanetResourceDeposit['tier'][] = ['profile', 'rare', 'ultra_rare'];
+
+// ============ Внутренние типы (работа с plain JSON) ============
 
 /** Простой JSON-объект (после JSON.parse / перед JSON.stringify). */
 type Plain = Record<string, unknown>;
@@ -180,13 +203,25 @@ function compactHex(hex: PlainHex, idxOf: (id: unknown) => number): Plain {
 
 /**
  * Разворачивает v3-форму в каноничную объектную (которую ждёт остальная
- * часть deserializeGameState). Сейвы с fmt!==3 возвращаются как есть.
- * Мутирует raw на месте (объект свежий из JSON.parse — владеем им).
+ * часть deserializeGameState). Мутирует raw на месте (объект свежий из
+ * JSON.parse — владеем им).
+ *
+ * R-30: строгий контракт — `fmt` обязан быть 3. Сейвы старых форматов
+ * (fmt:2 или без маркера) отклоняются явной ошибкой: совместимость
+ * удалена, молчаливая интерпретация чужой формы портила бы состояние.
  */
 export function expandSaveV3<T extends Plain>(raw: T): T {
-  if (raw.fmt !== SAVE_FORMAT_V3_VERSION) return raw;
+  if (raw.fmt !== SAVE_FORMAT_V3_VERSION) {
+    throw new Error(
+      `Неподдерживаемый формат сейва: fmt=${String(raw.fmt)} (ожидается ${SAVE_FORMAT_V3_VERSION}). `
+      + 'Форматы v1/v2 больше не поддерживаются — начните новую игру.',
+    );
+  }
   const galaxy = raw.galaxy as Plain | undefined;
-  if (!galaxy || !Array.isArray(galaxy.systems)) return raw;
+  if (!galaxy || !Array.isArray(galaxy.systems)) {
+    delete raw.fmt;
+    return raw;
+  }
 
   const dict = (galaxy.dict as string[] | undefined) ?? [];
   const idOf = (i: unknown): string => {
@@ -264,47 +299,6 @@ function expandBody(body: Plain, idOf: (i: unknown) => string): void {
   body.depositRngState = Array.isArray(body.ds) ? (body.ds as number[]).slice() : null;
   delete body.dm;
   delete body.ds;
-}
-
-// ============ Миграция v1/v2 → флаги ленивых залежей ============
-
-/**
- * R-29: миграция сейвов ДО v3 (после их объектного разворота).
- *
- * Старые сейвы запекали залежи во все геки всех тел при генерации.
- * Тело, в гексах которого есть хоть одна залежь, считается
- * материализованным (depositsMaterialized=true) — materializePlanetDeposits
- * его не тронет (иначе повторный replay продублировал бы залежи).
- * Тело без залежей (ГГ, пустые фикстуры) — depositRngState=null:
- * материализация невозможна и не нужна.
- */
-export function migrateLegacyDepositFlags<T extends Plain>(raw: T): T {
-  const galaxy = raw.galaxy as Plain | undefined;
-  const systems = (galaxy?.systems as Plain[] | undefined) ?? [];
-  for (const sys of systems) {
-    const planets = sys.planets as Plain[] | undefined;
-    if (!Array.isArray(planets)) continue;
-    for (const p of planets) {
-      migrateBody(p as Plain);
-      const moons = p.moons as Plain[] | undefined;
-      if (Array.isArray(moons)) {
-        for (const m of moons) migrateBody(m as Plain);
-      }
-    }
-  }
-  return raw;
-}
-
-function migrateBody(body: Plain): void {
-  if (body.depositsMaterialized !== undefined) return; // уже помечено (fixture)
-  let materialized = false;
-  if (Array.isArray(body.hexes)) {
-    materialized = (body.hexes as PlainHex[]).some(
-      (h) => Array.isArray(h.deposits) && h.deposits.length > 0,
-    );
-  }
-  body.depositsMaterialized = materialized;
-  if (body.depositRngState === undefined) body.depositRngState = null;
 }
 
 // ============ Хелперы для тестов/инспекции ============

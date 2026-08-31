@@ -32,8 +32,7 @@ import { GalaxyModule } from '@/galaxy/galaxy-module';
 import { resetProductionItemCounter } from '@/economy/engine';
 import { BUILDING_MAP } from '@/data/buildings'; // Block 05 PR7 — migratePlanet
 import { SerializedGameStateSchema } from '@/lib/schemas/game-state-schema'; // Block 08 gap-9: state validation on deserialize
-import { expandSaveV2 } from '@/lib/save-format-v2'; // R-28: v2-декодер (загрузка старых сейвов)
-import { compactSaveV3, expandSaveV3, migrateLegacyDepositFlags } from '@/lib/save-format-v3'; // R-29: ленивые залежи + словарь
+import { compactSaveV3, expandSaveV3 } from '@/lib/save-format-v3'; // R-29: ленивые залежи + словарь; R-30: v3 — единственный формат
 import { gzipBase64, gunzipBase64, isBrowserCodecAvailable } from '@/lib/save-codec-browser'; // R-26: сжатый транспорт сейвов
 import { enqueueShipBuild as enqueueShipBuildFn, cancelShipyardItem as cancelShipyardItemFn } from '@/data/ships/shipyard-queue'; // Block 02 F6
 import { ShipsModule, resetShipCounter } from '@/ships/ships-module'; // Block 02 F5
@@ -386,19 +385,12 @@ export function serializeGameState(state: GameState): string {
 export function deserializeGameState(json: string): GameState {
   const raw = JSON.parse(json);
 
-  // ─── R-28/R-29: компактные форматы → каноничная объектная форма ────
+  // ─── R-29/R-30: разворот компактного формата v3 ────────────────
   // Мутирует raw на месте (объект свежий из JSON.parse — владеем им):
   // кортежи залежей/свода → объекты, coord восстанавливается из сетки.
-  //   fmt:3 → v3 (ленивые залежи: словарь id, ds/dm, без истощённых);
-  //   fmt:2 → v2, затем миграция флагов (запечённые тела помечаются
-  //           материализованными — повторный replay не дублирует залежи);
-  //   без fmt (v1) — объектная форма + та же миграция флагов.
-  if (raw.fmt === 3) {
-    expandSaveV3(raw);
-  } else {
-    expandSaveV2(raw);
-    migrateLegacyDepositFlags(raw);
-  }
+  // v3 — единственный формат: fmt≠3 отклоняется явной ошибкой
+  // (декодеры v1/v2 удалены в R-30 — старые сейвы стёрты владельцем).
+  expandSaveV3(raw);
 
   // ─── Block 08 gap-9: top-level schema validation ──────────────────
   // Best-effort: log issues but don't throw — preserves backward compat
