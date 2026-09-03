@@ -21,7 +21,7 @@
  * - engine.ts: формулы calculateProcessorOutputMultiplier.
  */
 
-import { calculateProcessorOutputMultiplier, findProcessorInstance } from '@/economy/engine';
+import { calculateProcessorOutputMultiplier } from '@/economy/engine';
 import { BUILDING_MAP } from '@/data/buildings';
 import { RECIPE_MAP } from '@/data/recipes';
 import type { Planet, ProcessorType, ProcessorRecipeCategory } from '@/core/types';

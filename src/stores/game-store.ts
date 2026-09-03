@@ -30,13 +30,11 @@ import { setCurrentLookups } from '@/data/baked-lookups';
 import { EconomyModule } from '@/economy/economy-module';
 import { GalaxyModule } from '@/galaxy/galaxy-module';
 import { resetProductionItemCounter } from '@/economy/engine';
-import { BUILDING_MAP } from '@/data/buildings'; // Block 05 PR7 — migratePlanet
 import { SerializedGameStateSchema } from '@/lib/schemas/game-state-schema'; // Block 08 gap-9: state validation on deserialize
 import { enqueueShipBuild as enqueueShipBuildFn, cancelShipyardItem as cancelShipyardItemFn } from '@/data/ships/shipyard-queue'; // Block 02 F6
 import { ShipsModule, resetShipCounter } from '@/ships/ships-module'; // Block 02 F5
 import { FleetModule } from '@/ships/fleet-module'; // Block 02 F5
 import { ResearchModule } from '@/research/research-module'; // Block 03 R7
-import { createDefaultResearchState as createDefaultResearchStateFn } from '@/research'; // Block 03 R7 — migration
 import {
   createFleet as createFleetFn,
   mergeFleets as mergeFleetsFn,
@@ -371,12 +369,16 @@ export function serializeGameState(state: GameState): string {
  * and regenerates `galaxy.bakedModel` from the galaxy seed when the field is
  * absent in the serialized JSON (always — `serializeGameState` strips it).
  *
- * Block 08 (audit §2.3, gap-9): top-level state structure is now validated
- * against `SerializedGameStateSchema` (zod). On validation failure, we log
- * the issues and fall back to the unvalidated parse — preserving backward
- * compat with test fixtures / hand-crafted saves that may not match the
- * strict v1 schema. Deep validation (Planet/System/Resources) is deferred
- * to Etap 4 per the audit recommendation.
+ * Block 08 (audit §2.3, gap-9): top-level state structure is validated
+ * against `SerializedGameStateSchema` (zod).
+ *
+ * R-26: слои совместимости со старыми форматами сейвов УДАЛЕНЫ
+ * (старые сейвы потерты, миграции не нужны):
+ *   - GameTimeV0 (`time.day`) больше не принимается — формат один;
+ *   - миграции researchState / процессорных полей планет (migratePlanet /
+ *     migrateProcessorInstance / migrateResearchState) убраны;
+ *   - fallback на unvalidated parse при ошибке валидации заменён на throw —
+ *     битый формат сейва это ошибка, а не «совместимость».
  *
  * NOTE: `bakeGalaxyModel` embeds `new Date().toISOString()` in `bakedModel.createdAt`,
  * so the deserialized state's `bakedModel.createdAt` will differ from the original
@@ -389,176 +391,44 @@ export function deserializeGameState(json: string): GameState {
   const raw = JSON.parse(json);
 
   // ─── Block 08 gap-9: top-level schema validation ──────────────────
-  // Best-effort: log issues but don't throw — preserves backward compat
-  // for any pre-existing saves that may not conform to the v1 schema.
+  // R-26: строгая проверка — невалидный формат сейва бросает ошибку
+  // (fallback-ветка на unvalidated parse удалена как мёртвый слой
+  // совместимости).
   const validationResult = SerializedGameStateSchema.safeParse(raw);
   if (!validationResult.success) {
-    console.warn(
-      'deserializeGameState: SerializedGameStateSchema validation failed — falling back to unvalidated parse. Issues:',
-      validationResult.error.issues,
-    );
+    const issues = validationResult.error.issues
+      .map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`)
+      .join('; ');
+    throw new Error(`deserializeGameState: невалидный формат сейва — ${issues}`);
   }
 
-  const systems: StarSystem[] = raw.galaxy.systems || [];
+  const systems: StarSystem[] = raw.galaxy.systems;
   const systemMap = new Map<string, StarSystem>();
-
-  if (systems.length > 0) {
-    for (const sys of systems) {
-      systemMap.set(sys.id, sys);
-    }
-  } else if (Array.isArray(raw.galaxy.systemMap)) {
-    const entries: [string, StarSystem][] = raw.galaxy.systemMap;
-    for (const [id, sys] of entries) {
-      systemMap.set(id, sys);
-    }
+  for (const sys of systems) {
+    systemMap.set(sys.id, sys);
   }
 
-  const queueEntries: [string, ProductionQueue][] = raw.productionQueues || [];
-  const productionQueues = new Map(queueEntries);
+  const productionQueues = new Map<string, ProductionQueue>(raw.productionQueues);
 
-  let bakedModel = raw.galaxy.bakedModel;
-  if (!bakedModel) {
-    bakedModel = bakeGalaxyModel(raw.galaxy.seed ?? 42, ELEMENTS);
-  }
-
+  const bakedModel = raw.galaxy.bakedModel ?? bakeGalaxyModel(raw.galaxy.seed ?? 42, ELEMENTS);
   setCurrentLookups(bakedModel);
-
-  // Block 05 PR7: миграция процессорных зданий в старых сейвах.
-  // У зданий processor/refinery/synthesizer должны быть установлены поля
-  // processorType/specialization/specializationLevel/activeRecipes, если
-  // их не было (старые сохранения до Блока 05). Также добавляется
-  // planet.resourcePurity — пустая карта (заполняется по мере производства).
-  const migratedSystems: StarSystem[] = (systems.length > 0
-    ? systems
-    : Array.from(systemMap.values())) as StarSystem[];
-  for (const system of migratedSystems) {
-    for (const planet of system.planets) {
-      migratePlanet(planet);
-    }
-  }
 
   return {
     ...raw,
     galaxy: {
       ...raw.galaxy,
       systemMap,
-      systems: migratedSystems,
+      systems,
       bakedModel,
     },
     productionQueues,
-    fleets: raw.fleets || [],
-    // Block 02 (F7): defensive parse — empty Map if missing or malformed
+    fleets: raw.fleets ?? [],
     shipDesigns: new Map(raw.shipDesigns ?? []),
     shipyardQueues: new Map(raw.shipyardQueues ?? []),
     ships: new Map(raw.ships ?? []),
-    // Block 03 (R7): migrate researchState — initialize default if missing
-    // (pre-Block-03 saves had no researchState). createDefaultResearchState
-    // gives all fundamentals=0, empty researched/activeSlots, rpGenerated=0.
-    researchState: migrateResearchState(raw.researchState),
-    time: raw.time?.dayInYear !== undefined
-      ? raw.time
-      : { tick: raw.time?.tick ?? 0, dayInYear: (raw.time?.day ?? 0) % 365, year: raw.time?.year ?? 1 },
+    researchState: raw.researchState,
+    time: raw.time,
   };
-}
-
-/**
- * Block 03 (R7): миграция ResearchState при загрузке старых сейвов (до Блока 03).
- *
- * Если поле `researchState` отсутствует или malformed — создаём дефолтное
- * (все fundamentals = 0, researched = {}, activeSlots = [], rpGenerated = 0).
- *
- * Идемпотентна: если state уже валиден (все 6 fundamentals присутствуют), —
- * возвращаем как есть (с заполнением отсутствующих fundamentals нулями для
- * устойчивости).
- */
-function migrateResearchState(raw: unknown): ResearchState {
-  if (!raw || typeof raw !== 'object') {
-    return createDefaultResearchStateFn();
-  }
-  const r = raw as Partial<ResearchState>;
-  return {
-    fundamentalLevels: {
-      chemistry: r.fundamentalLevels?.chemistry ?? 0,
-      physics: r.fundamentalLevels?.physics ?? 0,
-      engineering: r.fundamentalLevels?.engineering ?? 0,
-      biology_fund: r.fundamentalLevels?.biology_fund ?? 0,
-      military_science: r.fundamentalLevels?.military_science ?? 0,
-      xenoarchaeology: r.fundamentalLevels?.xenoarchaeology ?? 0,
-    },
-    fundamentalRpInvested: r.fundamentalRpInvested ?? {},
-    researched: r.researched ?? {},
-    activeSlots: Array.isArray(r.activeSlots) ? r.activeSlots : [],
-    // R-RES §B: researchQueue migration — pre-R-RES saves had no queue.
-    researchQueue: Array.isArray(r.researchQueue) ? r.researchQueue : [],
-    totalRpGenerated: typeof r.totalRpGenerated === 'number' ? r.totalRpGenerated : 0,
-  };
-}
-
-/**
- * Block 05 PR7: миграция полей специализации переработчиков при загрузке
- * старых сейвов (до Блока 05).
- *
- * Для каждого здания processor/refinery/synthesizer:
- * - Если processorType уже установлен — оставляем как есть.
- * - Иначе берём defaults из BuildingDef:
- *   - refinery/synthesizer → specialized с defaultSpecialization
- *   - processor → universal
- * - activeRecipes ??= [] (пустой список).
- *
- * planet.resourcePurity НЕ добавляется здесь — оно создаётся лениво в
- * processProductionQueue при первой переработке (`if (!planet.resourcePurity)
- * planet.resourcePurity = {};`). Это сохраняет deep-equals invariant в
- * round-trip тестах (новая игра без зданий → serialize → deserialize →
- * нет изменений в структуре планеты).
- *
- * Идемпотентна: повторный вызов на уже-мигрированном сейве — no-op (использует ??=).
- * Запускать только в loadGame.
- */
-function migratePlanet(planet: Planet): void {
-  // Surface hexes
-  for (const hex of planet.hexes) {
-    migrateProcessorInstance(hex);
-  }
-  // Atmospheric slots
-  for (const slot of planet.atmosphericSlots) {
-    migrateProcessorInstance(slot);
-  }
-  // Orbit slots
-  for (const slot of planet.orbitSlots) {
-    migrateProcessorInstance(slot);
-  }
-}
-
-/**
- * Block 05 PR7: миграция одной ячейки здания (HexCell | AtmosphericSlot |
- * OrbitalSlot). Универсальный интерфейс — все три типа имеют поля
- * buildingId/buildingLevel/processorType/specialization/specializationLevel/
- * activeRecipes.
- */
-function migrateProcessorInstance(instance: {
-  buildingId: string | null;
-  buildingLevel: number;
-  processorType?: import('@/core/types').ProcessorType;
-  specialization?: import('@/core/types').ProcessorRecipeCategory;
-  specializationLevel?: number;
-  activeRecipes?: string[];
-}): void {
-  if (!instance.buildingId) return;
-  const def = BUILDING_MAP.get(instance.buildingId);
-  if (!def?.isUniversalProcessor) return;
-  // Если specialization уже есть — оставляем; иначе defaults
-  if (instance.processorType === undefined) {
-    instance.processorType = def.defaultProcessorType ?? 'universal';
-  }
-  if (instance.specialization === undefined && def.defaultSpecialization !== undefined) {
-    instance.specialization = def.defaultSpecialization;
-  }
-  if (instance.specializationLevel === undefined) {
-    instance.specializationLevel = def.defaultProcessorType === 'specialized' ? 1 : 0;
-  }
-  if (instance.activeRecipes === undefined) {
-    instance.activeRecipes = [];
-  }
 }
 
 // ============ Store ============

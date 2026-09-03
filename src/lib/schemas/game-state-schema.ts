@@ -14,31 +14,20 @@
  * shapes are validated loosely (z.unknown() + presence check) — Etap 4 can
  * tighten this once Planet/System types are stable.
  *
- * Migration:
- *   - v1 (current): top-level validation only.
- *   - v2+ (future): nested planet/system/resource validation.
+ * R-26: слои совместимости со старыми форматами удалены (старые сейвы
+ * потерты, совместимость не требуется): GameTimeV0 (поле `day` вместо
+ * `dayInYear`) и миграции в deserializeGameState убраны. Формат сейва —
+ * единственный текущий.
  */
 
 import { z } from 'zod';
 
-/** v1 time format — `tick` + `dayInYear` + `year`. */
-const GameTimeV1Schema = z.object({
+/** Текущий формат времени — `tick` + `dayInYear` + `year`. */
+const GameTimeSchema = z.object({
   tick: z.number().int().nonnegative(),
   dayInYear: z.number().int().nonnegative().max(364),
   year: z.number().int().positive(),
 });
-
-/**
- * v0 time format — used `time.day` instead of `time.dayInYear`.
- * `deserializeGameState` migrates this on load (dayInYear = day % 365).
- */
-const GameTimeV0Schema = z.object({
-  tick: z.number().int().nonnegative(),
-  day: z.number().int().nonnegative(),
-  year: z.number().int().positive(),
-});
-
-const GameTimeSchema = z.union([GameTimeV1Schema, GameTimeV0Schema]);
 
 const GameSpeedSchema = z.union([
   z.literal(0),

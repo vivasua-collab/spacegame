@@ -8,8 +8,20 @@ import { getCurrentLookups, findResourceDisplay } from '@/data/baked-lookups';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Badge } from '@/components/ui/badge';
-import { X, Repeat } from 'lucide-react';
+import { X, Repeat, Factory } from 'lucide-react';
 import type { EntityId, ProductionItem } from '@/core/types';
+
+/**
+ * R-26 (баги 3–4): декодировать ключ экземпляра-исполнителя в человеко-читаемый
+ * бейдж. key: hexIndex (>= 0) — гекс поверхности; -1-i — атмосферный слот;
+ * -100-i — орбитальный слот (та же конвенция, что в hexIndex-событиях).
+ */
+function describeAssignment(key: number | undefined): string | null {
+  if (key === undefined) return null;
+  if (key >= 0) return `гекс #${key + 1}`;
+  if (key > -100) return `атм. слот #${-1 - key + 1}`;
+  return `орб. слот #${-100 - key + 1}`;
+}
 
 /**
  * ProductionQueue — список элементов очереди производства с прогресс-баром
@@ -59,11 +71,25 @@ export function ProductionQueue({ planetId, items }: ProductionQueueProps) {
               className="rounded-md border border-white/10 bg-white/[0.03] p-2 space-y-1"
               data-testid={`production-queue-item-${idx}`}
             >
-              {/* Header: name + repeat icon + cancel button */}
+              {/* Header: name + assignment + repeat icon + cancel button */}
               <div className="flex items-center gap-1.5">
                 <span className="text-[11px] text-slate-200 font-medium truncate flex-1" title={recipeName}>
                   {recipeName}
                 </span>
+                {/* R-26 (баги 3–4): бейдж экземпляра-исполнителя (карусель). */}
+                {(() => {
+                  const assigned = describeAssignment(item.assignedTo);
+                  return assigned ? (
+                    <Badge
+                      variant="outline"
+                      className="text-[9px] h-4 px-1 bg-amber-900/30 text-amber-300 border-amber-700/40 flex items-center gap-0.5"
+                      title={`Исполнитель: ${assigned}`}
+                    >
+                      <Factory className="size-2.5" />
+                      {assigned}
+                    </Badge>
+                  ) : null;
+                })()}
                 {item.repeat && (
                   <Badge
                     variant="outline"

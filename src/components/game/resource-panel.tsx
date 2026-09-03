@@ -41,6 +41,13 @@ interface ResourcePanelProps {
    * or falling. Optional — omitted in static contexts (no tick).
    */
   tick?: number;
+  /**
+   * R-26: карта резервов (resourceId → минимум). При заданном значении
+   * строка ресурса выводится в формате «количество / резерв»: ниже
+   * резерва — красный текст, выше — зелёный. Ресурсы с резервом, но
+   * нулевым запасом, включаются в список (0 / резерв, красным).
+   */
+  reserves?: Record<string, number>;
 }
 
 interface PanelEntry {
@@ -56,7 +63,7 @@ interface PanelEntry {
  */
 const DELTA_EPSILON = 0.001;
 
-export function ResourcePanel({ resources, className, fleetFuelSummary, tick }: ResourcePanelProps) {
+export function ResourcePanel({ resources, className, fleetFuelSummary, tick, reserves }: ResourcePanelProps) {
   // ── Per-tick delta tracker (usePrevious pattern) ────────────────────────
   // Snapshot of (tick, resources) from the previous committed render. We
   // read it inside useMemo to derive deltas — delta[id] = (cur - prev) /
@@ -92,6 +99,17 @@ export function ResourcePanel({ resources, className, fleetFuelSummary, tick }: 
   }, [resources, tick]);
 
   const entries = Object.entries(resources).filter(([, amount]) => amount > 0);
+
+  // R-26: включить ресурсы с резервом, но нулевым запасом — они попадают
+  // в список как «0 / резерв» (красным), чтобы дефицит был виден сразу.
+  if (reserves) {
+    const known = new Set(entries.map(([id]) => id));
+    for (const id of Object.keys(reserves)) {
+      if (!known.has(id) && (resources[id] ?? 0) <= 0) {
+        entries.push([id, 0]);
+      }
+    }
+  }
 
   // Group by category
   const grouped = new Map<ElementCategory, PanelEntry[]>();
@@ -195,9 +213,7 @@ export function ResourcePanel({ resources, className, fleetFuelSummary, tick }: 
                       </span>
                       <span className="flex items-center gap-1.5">
                         {d !== undefined && <DeltaBadge delta={d} />}
-                        <span className="font-mono text-white/95 whitespace-nowrap">
-                          {formatAmount(item.amount)}
-                        </span>
+                        <AmountCell id={item.id} amount={item.amount} reserves={reserves} />
                       </span>
                     </div>
                   );
@@ -220,9 +236,7 @@ export function ResourcePanel({ resources, className, fleetFuelSummary, tick }: 
                     <span className="text-slate-300 truncate mr-2">{item.name}</span>
                     <span className="flex items-center gap-1.5">
                       {d !== undefined && <DeltaBadge delta={d} />}
-                      <span className="font-mono text-white/95 whitespace-nowrap">
-                        {formatAmount(item.amount)}
-                      </span>
+                      <AmountCell id={item.id} amount={item.amount} reserves={reserves} />
                     </span>
                   </div>
                 );
@@ -232,6 +246,28 @@ export function ResourcePanel({ resources, className, fleetFuelSummary, tick }: 
         )}
       </div>
     </ScrollArea>
+  );
+}
+
+/**
+ * R-26: AmountCell — количество с опциональным резервом.
+ * Без резерва: «123.4» (нейтральный white).
+ * С резервом: «количество / резерв» — красным, если количество ниже
+ * резерва, зелёным — если резерв выполнен.
+ */
+function AmountCell({ id, amount, reserves }: { id: string; amount: number; reserves?: Record<string, number> }) {
+  const reserve = reserves?.[id];
+  if (reserve === undefined) {
+    return <span className="font-mono text-white/95 whitespace-nowrap">{formatAmount(amount)}</span>;
+  }
+  const below = amount < reserve;
+  return (
+    <span
+      className={`font-mono whitespace-nowrap ${below ? 'text-red-400' : 'text-emerald-400'}`}
+      title={below ? 'Ниже резерва — расход заблокирован правилами склада' : 'Резерв выполнен'}
+    >
+      {formatAmount(amount)} / {formatAmount(reserve)}
+    </span>
   );
 }
 

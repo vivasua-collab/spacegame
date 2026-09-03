@@ -8,6 +8,7 @@ import type { Planet, HexCell, ProductionQueue, ProductionItem, EntityId, StarSy
 import { BUILDING_MAP, areBuildingTechsMet } from '@/data/buildings';
 import { RECIPE_MAP } from '@/data/recipes';
 import { PROCESSOR_CATEGORIES } from '@/data/processor-categories';
+import { resolveProcessorCategory } from '@/data/processor-recipe-categories';
 import { ELEMENT_MAP } from '@/data/elements';
 import { getCurrentLookups } from '@/data/baked-lookups';
 import { canStoreResource, calculateWarehouseCapacity, calculateWarehouseCapacities, getOrbitBufferCapacity, ensureReservesForResources } from '@/data/warehouse';
@@ -197,222 +198,326 @@ function getAtmosphereEfficiency(type: string): number {
  *
  * (gap-7, C7 — добавлен emit `economy:production-cancelled` при удалении элемента
  * из очереди. Раньше рецепт «терялся молча» — audit §2.3.)
+ */
+/**
+ * R-26 (баги 3–4): карусель производства с параллелизмом.
  *
- * Block 05 (PR3-min): перед записью выходов в `planet.resources` найти
- * экземпляр здания-исполнителя (`recipe.buildingId`) на планете и применить
- * `calculateProcessorOutputMultiplier`. Умножить `amount` на `yieldMult`
- * и записать средневзвешенную чистоту в `planet.resourcePurity`.
+ * Одновременно работает столько задач, сколько экземпляров здания
+ * (recipe.buildingId) построено на планете. Назначение задач на экземпляры
+ * (выбран вариант 1 — «приоритет специализации в общей карусели», как
+ * наименее багоопасный: без смены схемы сейва и без отдельного UI):
  *
- * Альтернатива per-building cycles (PR3-full) — отложена; в PR3-min
- * используется «одна очередь на планету» + поиск экземпляра по buildingId.
+ *   1) Приоритет специализации — специализированный переработчик в первую
+ *      очередь берёт задачи СВОЕЙ категории рецептов (в порядке очереди),
+ *      правило карусели для него отменяется. Специализированный экземпляр
+ *      берёт ТОЛЬКО задачи своей категории — если их нет, он простаивает.
+ *   2) Липкое назначение — задача в процессе выполнения остаётся на своём
+ *      экземпляре (стабильность множителя выхода и прогресс-бара).
+ *   3) Карусель — оставшиеся задачи раздаются свободным универсальным
+ *      экземплярам в порядке очереди (FIFO): 2 переработчика + 3 задачи →
+ *      работают 2, третья ждёт освобождения слота.
+ *
+ * Автоповтор занимает свой слот постоянно: задача остаётся в очереди и
+ * каждый тик продолжается назначенным экземпляром. Два автоповтора при
+ * двух переработчиках работают одновременно (баг 3 исправлен).
  */
 function processProductionQueue(planet: Planet, queues: Map<EntityId, ProductionQueue>): void {
   const queue = queues.get(planet.id);
   if (!queue || queue.items.length === 0) return;
 
-  const item = queue.items[0];
-  const recipe = RECIPE_MAP.get(item.recipeId);
-  if (!recipe) {
-    // (gap-7, C7) — эмитить событие об отмене, прежде чем удалить
-    gameBus.emit('economy:production-cancelled', {
-      planetId: planet.id,
-      recipeId: item.recipeId,
-      queueItemId: item.id,
-      reason: 'recipe_not_found',
-    });
-    queue.items.shift();
-    return;
-  }
+  // 1. Назначить задачи на экземпляры зданий (spec-priority → sticky → carousel).
+  const assignments = assignQueueTasks(planet, queue.items);
 
-  // P3-02: проверяем энергобаланс по стоимости за тик, а не по полной стоимости рецепта
-  const perTickCost = recipe.energyCost / item.total;
-  if (planet.energyBalance < perTickCost && recipe.energyCost > 0) {
-    return;
-  }
-
-  // Обновляем прогресс
-  item.progress--;
-
-  // Тратим энергию
-  if (recipe.energyCost > 0) {
-    planet.energyBalance -= recipe.energyCost / item.total;
-  }
-
-  // Рецепт завершён
-  if (item.progress <= 0) {
-    let canProduce = true;
-    for (const [resourceId, amount] of Object.entries(recipe.inputs)) {
-      if ((planet.resources[resourceId] ?? 0) < amount) {
-        canProduce = false;
-        break;
-      }
+  // 2. Прогресс каждой назначенной задачи (параллельно).
+  for (const { item, instance } of assignments) {
+    const recipe = RECIPE_MAP.get(item.recipeId);
+    if (!recipe) {
+      // (gap-7, C7) — эмитить событие об отмене, прежде чем удалить
+      gameBus.emit('economy:production-cancelled', {
+        planetId: planet.id,
+        recipeId: item.recipeId,
+        queueItemId: item.id,
+        reason: 'recipe_not_found',
+      });
+      const idx = queue.items.indexOf(item);
+      if (idx >= 0) queue.items.splice(idx, 1);
+      continue;
     }
 
-    if (canProduce) {
+    // P3-02: проверяем энергобаланс по стоимости за тик, а не по полной стоимости рецепта
+    const perTickCost = recipe.energyCost / item.total;
+    if (recipe.energyCost > 0 && planet.energyBalance < perTickCost) {
+      continue; // нет энергии — задача ждёт, слот не освобождается
+    }
+
+    // Обновляем прогресс + запоминаем назначение (для UI-бейджа)
+    item.progress--;
+    item.assignedTo = instance.key;
+
+    // Тратим энергию
+    if (recipe.energyCost > 0) {
+      planet.energyBalance -= perTickCost;
+    }
+
+    // Рецепт завершён
+    if (item.progress <= 0) {
+      let canProduce = true;
       for (const [resourceId, amount] of Object.entries(recipe.inputs)) {
-        planet.resources[resourceId] = (planet.resources[resourceId] ?? 0) - amount;
-      }
-
-      // ─── Block 05 PR3-min: множитель выхода процессора ──────────────
-      // Найти экземпляр здания-исполнителя на планете (любой с подходящим
-      // buildingId). Это «минимальное» решение — без per-building cycles.
-      // Если таких зданий несколько, берём первое. PR3-full будет фильтровать
-      // по специализации: specialised здание для этой категории приоритетнее.
-      const buildingInstance = findProcessorInstance(planet, recipe.buildingId, recipe.processorCategory);
-      const buildingDef = BUILDING_MAP.get(recipe.buildingId);
-      let yieldMult = 1.0;
-      let purity = 1.0;
-      if (buildingDef?.isUniversalProcessor && buildingInstance) {
-        const result = calculateProcessorOutputMultiplier(buildingDef, buildingInstance);
-        yieldMult = result.yieldMult;
-        purity = result.purity;
-      }
-
-      // Применить множитель к выходам и записать чистоту (средневзвешенно).
-      if (!planet.resourcePurity) planet.resourcePurity = {};
-      for (const [resourceId, amount] of Object.entries(recipe.outputs)) {
-        const producedAmount = amount * yieldMult;
-        const prevAmount = planet.resources[resourceId] ?? 0;
-        const prevPurity = planet.resourcePurity[resourceId] ?? 1.0;
-        // Средневзвешенная чистота (только если был предыдущий запас).
-        const newTotal = prevAmount + producedAmount;
-        const newPurity = newTotal > 0
-          ? (prevPurity * prevAmount + purity * producedAmount) / newTotal
-          : purity;
-        planet.resources[resourceId] = newTotal;
-        if (newTotal > 0) {
-          planet.resourcePurity[resourceId] = newPurity;
-        } else {
-          delete planet.resourcePurity[resourceId];
+        if ((planet.resources[resourceId] ?? 0) < amount) {
+          canProduce = false;
+          break;
         }
       }
 
-      gameBus.emit('economy:production-complete', { planetId: planet.id, recipeId: recipe.id });
-    } else {
-      // (gap-7, C7) — недостаточно входных ресурсов; эмитить об отмене
-      gameBus.emit('economy:production-cancelled', {
-        planetId: planet.id,
-        recipeId: recipe.id,
-        queueItemId: item.id,
-        reason: 'insufficient_inputs',
-      });
-    }
+      if (canProduce) {
+        for (const [resourceId, amount] of Object.entries(recipe.inputs)) {
+          planet.resources[resourceId] = (planet.resources[resourceId] ?? 0) - amount;
+        }
 
-    if (item.repeat) {
-      item.progress = item.total;
-    } else {
-      queue.items.shift();
+        // ─── R-26: множитель выхода по НАЗНАЧЕННОМУ экземпляру ──────────
+        // (раньше брался «первый попавшийся» процессор и приоритет
+        // специализации не работал: recipe.processorCategory всегда
+        // undefined). Специализированный экземпляр с подходящей категорией
+        // теперь реально получает свою задачу и свой бонус.
+        const buildingDef = BUILDING_MAP.get(recipe.buildingId);
+        let yieldMult = 1.0;
+        let purity = 1.0;
+        if (buildingDef?.isUniversalProcessor) {
+          const result = calculateProcessorOutputMultiplier(buildingDef, instance);
+          yieldMult = result.yieldMult;
+          purity = result.purity;
+        }
+
+        // Применить множитель к выходам и записать чистоту (средневзвешенно).
+        if (!planet.resourcePurity) planet.resourcePurity = {};
+        for (const [resourceId, amount] of Object.entries(recipe.outputs)) {
+          const producedAmount = amount * yieldMult;
+          const prevAmount = planet.resources[resourceId] ?? 0;
+          const prevPurity = planet.resourcePurity[resourceId] ?? 1.0;
+          // Средневзвешенная чистота (только если был предыдущий запас).
+          const newTotal = prevAmount + producedAmount;
+          const newPurity = newTotal > 0
+            ? (prevPurity * prevAmount + purity * producedAmount) / newTotal
+            : purity;
+          planet.resources[resourceId] = newTotal;
+          if (newTotal > 0) {
+            planet.resourcePurity[resourceId] = newPurity;
+          } else {
+            delete planet.resourcePurity[resourceId];
+          }
+        }
+
+        gameBus.emit('economy:production-complete', { planetId: planet.id, recipeId: recipe.id });
+      } else {
+        // (gap-7, C7) — недостаточно входных ресурсов; эмитить об отмене
+        gameBus.emit('economy:production-cancelled', {
+          planetId: planet.id,
+          recipeId: recipe.id,
+          queueItemId: item.id,
+          reason: 'insufficient_inputs',
+        });
+      }
+
+      if (item.repeat) {
+        item.progress = item.total;
+      } else {
+        const idx = queue.items.indexOf(item);
+        if (idx >= 0) queue.items.splice(idx, 1);
+      }
     }
   }
 }
 
+// ─── R-26 (баги 3–4): экземпляры зданий-производственников ───────────────
+
 /**
- * Block 05 (PR3-min): найти экземпляр процессорного здания на планете
- * по buildingId, предпочтительно с specialization, соответствующей
- * recipe.processorCategory (если указана).
+ * Ссылка на экземпляр здания-производственника на планете.
  *
- * Сканы: planet.hexes (surface) + planet.atmosphericSlots + planet.orbitSlots.
- * Возвращает структуру с полями, нужными calculateProcessorOutputMultiplier.
+ * key — стабильный идентификатор для UI и назначений:
+ *   hexIndex       — гекс поверхности (>= 0);
+ *   -1 - i         — атмосферный слот #i;
+ *   -100 - i       — орбитальный слот #i
+ * (та же конвенция, что и в hexIndex-событиях economy:building-constructed).
  *
- * @param planet                — планета с построенными зданиями
- * @param buildingId            — какой buildingId искать (processor/refinery/synthesizer)
- * @param preferredCategory     — если указана, приоритет specialized зданию с этой специализацией
+ * cell — прямая ссылка на HexCell | AtmosphericSlot | OrbitalSlot в draft
+ * (для записи activeRecipes по факту назначения задач).
  */
-export function findProcessorInstance(
-  planet: Planet,
-  buildingId: string,
-  preferredCategory?: ProcessorRecipeCategory,
-): {
+export interface ProcessorInstanceRef {
+  buildingId: string;
+  key: number;
+  layer: 'surface' | 'atmosphere' | 'orbit';
+  slotIndex: number;
   processorType: ProcessorType;
   specialization?: ProcessorRecipeCategory;
   specializationLevel: number;
-  activeRecipes?: string[];
-  hexIndex: number;
-} | null {
-  // Собираем все экземпляры с указанным buildingId.
-  type Candidate = {
-    processorType: ProcessorType;
+  activeRecipes: string[];
+  cell: {
+    buildingId: string | null;
+    buildingLevel: number;
+    processorType?: ProcessorType;
     specialization?: ProcessorRecipeCategory;
-    specializationLevel: number;
+    specializationLevel?: number;
     activeRecipes?: string[];
-    hexIndex: number;
   };
-  const candidates: Candidate[] = [];
+}
 
-  // Surface hexes
-  for (let i = 0; i < planet.hexes.length; i++) {
-    const hex = planet.hexes[i];
-    if (hex.buildingId === buildingId && hex.processorType) {
-      candidates.push({
-        processorType: hex.processorType,
-        specialization: hex.specialization,
-        specializationLevel: hex.specializationLevel ?? 0,
-        activeRecipes: hex.activeRecipes,
-        hexIndex: i,
-      });
-    } else if (hex.buildingId === buildingId) {
-      // Building exists but processorType not set (e.g. migration deferred).
-      // Defaults: universal, level 0, no activeRecipes.
-      candidates.push({
-        processorType: 'universal' as ProcessorType,
-        specializationLevel: 0,
-        hexIndex: i,
-      });
+/**
+ * Собрать ВСЕ экземпляры здания buildingId на планете (поверхность +
+ * атмосфера + орбита) с их процессорными полями. Для экземпляров без
+ * явного processorType берутся дефолты из BuildingDef (processor →
+ * universal; refinery/synthesizer → specialized с defaultSpecialization).
+ */
+export function collectProcessorInstances(planet: Planet, buildingId: string): ProcessorInstanceRef[] {
+  const def = BUILDING_MAP.get(buildingId);
+  const instances: ProcessorInstanceRef[] = [];
+
+  const resolveType = (cell: ProcessorInstanceRef['cell']): Pick<ProcessorInstanceRef, 'processorType' | 'specialization' | 'specializationLevel'> => {
+    if (cell.processorType !== undefined) {
+      return {
+        processorType: cell.processorType,
+        specialization: cell.specialization,
+        specializationLevel: cell.specializationLevel ?? 0,
+      };
+    }
+    // Дефолты из BuildingDef (для зданий, построенных до инициализации полей)
+    if (def?.defaultProcessorType === 'specialized') {
+      return {
+        processorType: 'specialized' as ProcessorType,
+        specialization: def.defaultSpecialization,
+        specializationLevel: 1,
+      };
+    }
+    return { processorType: 'universal' as ProcessorType, specializationLevel: 0 };
+  };
+
+  planet.hexes.forEach((hex, i) => {
+    if (hex.buildingId !== buildingId) return;
+    instances.push({
+      buildingId,
+      key: i,
+      layer: 'surface',
+      slotIndex: i,
+      activeRecipes: hex.activeRecipes ?? [],
+      cell: hex,
+      ...resolveType(hex),
+    });
+  });
+
+  planet.atmosphericSlots.forEach((slot, i) => {
+    if (slot.buildingId !== buildingId) return;
+    instances.push({
+      buildingId,
+      key: -1 - i,
+      layer: 'atmosphere',
+      slotIndex: i,
+      activeRecipes: slot.activeRecipes ?? [],
+      cell: slot,
+      ...resolveType(slot),
+    });
+  });
+
+  planet.orbitSlots.forEach((slot, i) => {
+    if (slot.buildingId !== buildingId) return;
+    instances.push({
+      buildingId,
+      key: -100 - i,
+      layer: 'orbit',
+      slotIndex: i,
+      activeRecipes: slot.activeRecipes ?? [],
+      cell: slot,
+      ...resolveType(slot),
+    });
+  });
+
+  return instances;
+}
+
+/**
+ * Назначить задачи очереди на экземпляры зданий (R-26, баги 3–4).
+ *
+ * Возвращает список «задача → экземпляр». Одновременно обрабатывается не
+ * больше задач, чем экземпляров здания. Порядок назначения:
+ *   1. Специализация — specialized экземпляр забирает первую в очереди
+ *      задачу своей категории (carousel-правило для него отменено).
+ *   2. Липкость — задача с назначением (assignedTo) остаётся на своём
+ *      экземпляре, если он свободен.
+ *   3. Карусель — оставшиеся задачи (в порядке очереди) раздаются
+ *      свободным универсальным экземплярам (surface → atmosphere → orbit).
+ *
+ * Побочно обновляет cell.activeRecipes каждого задействованного экземпляра
+ * списком назначенных рецептов (реальная картина для UI и мульти-рецептного
+ * штрафа universal-процессора).
+ */
+function assignQueueTasks(
+  planet: Planet,
+  items: ProductionItem[],
+): Array<{ item: ProductionItem; instance: ProcessorInstanceRef }> {
+  // Группируем задачи по buildingId рецепта (у каждой группы — свои экземпляры).
+  const itemsByBuilding = new Map<string, ProductionItem[]>();
+  for (const item of items) {
+    const recipe = RECIPE_MAP.get(item.recipeId);
+    if (!recipe) continue; // recipe_not_found обрабатывается в processProductionQueue
+    const group = itemsByBuilding.get(recipe.buildingId);
+    if (group) group.push(item);
+    else itemsByBuilding.set(recipe.buildingId, [item]);
+  }
+
+  const assignments: Array<{ item: ProductionItem; instance: ProcessorInstanceRef }> = [];
+
+  for (const [buildingId, groupItems] of itemsByBuilding) {
+    const instances = collectProcessorInstances(planet, buildingId);
+    if (instances.length === 0) continue; // здания нет — задачи стоят
+
+    const free = new Set<ProcessorInstanceRef>(instances);
+    const unassigned = new Set<ProductionItem>(groupItems);
+    const assignedRecipes = new Map<ProcessorInstanceRef, Set<string>>();
+
+    const assign = (item: ProductionItem, instance: ProcessorInstanceRef): void => {
+      assignments.push({ item, instance });
+      free.delete(instance);
+      unassigned.delete(item);
+      const recipes = assignedRecipes.get(instance) ?? new Set<string>();
+      recipes.add(item.recipeId);
+      assignedRecipes.set(instance, recipes);
+    };
+
+    // ── Pass 1: приоритет специализации ──────────────────────────────
+    for (const instance of instances) {
+      if (instance.processorType !== 'specialized' || !instance.specialization) continue;
+      for (const item of groupItems) {
+        if (!unassigned.has(item)) continue;
+        const category = resolveProcessorCategory(item.recipeId, buildingId)?.category;
+        if (category === instance.specialization) {
+          assign(item, instance);
+          break; // экземпляр занят одной задачей
+        }
+      }
+    }
+
+    // ── Pass 2: липкие назначения (задача в процессе остаётся на экземпляре) ──
+    for (const item of groupItems) {
+      if (!unassigned.has(item) || item.assignedTo === undefined) continue;
+      const instance = [...free].find((inst) => inst.key === item.assignedTo);
+      if (instance && instance.processorType !== 'specialized') {
+        assign(item, instance);
+      }
+    }
+
+    // ── Pass 3: карусель — свободные задачи → свободные универсальные экземпляры ──
+    const freeUniversal = [...free].filter((inst) => inst.processorType !== 'specialized');
+    const remaining = groupItems.filter((item) => unassigned.has(item));
+    const n = Math.min(freeUniversal.length, remaining.length);
+    for (let i = 0; i < n; i++) {
+      assign(remaining[i], freeUniversal[i]);
+    }
+
+    // Записать активные рецепты в ячейки зданий (реальная картина).
+    for (const [instance, recipes] of assignedRecipes) {
+      instance.cell.activeRecipes = [...recipes];
     }
   }
-  // Atmosphere slots
-  for (let i = 0; i < planet.atmosphericSlots.length; i++) {
-    const slot = planet.atmosphericSlots[i];
-    if (slot.buildingId === buildingId && slot.processorType) {
-      candidates.push({
-        processorType: slot.processorType,
-        specialization: slot.specialization,
-        specializationLevel: slot.specializationLevel ?? 0,
-        activeRecipes: slot.activeRecipes,
-        hexIndex: -1 - i,
-      });
-    } else if (slot.buildingId === buildingId) {
-      candidates.push({
-        processorType: 'universal' as ProcessorType,
-        specializationLevel: 0,
-        hexIndex: -1 - i,
-      });
-    }
-  }
-  // Orbit slots
-  for (let i = 0; i < planet.orbitSlots.length; i++) {
-    const slot = planet.orbitSlots[i];
-    if (slot.buildingId === buildingId && slot.processorType) {
-      candidates.push({
-        processorType: slot.processorType,
-        specialization: slot.specialization,
-        specializationLevel: slot.specializationLevel ?? 0,
-        activeRecipes: slot.activeRecipes,
-        hexIndex: -100 - i,
-      });
-    } else if (slot.buildingId === buildingId) {
-      candidates.push({
-        processorType: 'universal' as ProcessorType,
-        specializationLevel: 0,
-        hexIndex: -100 - i,
-      });
-    }
-  }
 
-  if (candidates.length === 0) return null;
-
-  // Если есть preferredCategory — приоритет specialized зданию с этой специализацией.
-  if (preferredCategory) {
-    const matching = candidates.find(c =>
-      c.processorType === 'specialized' && c.specialization === preferredCategory,
-    );
-    if (matching) return matching;
-  }
-
-  // Fallback: первое попавшееся specialized, потом первое universal.
-  const specialized = candidates.find(c => c.processorType === 'specialized');
-  if (specialized) return specialized;
-  return candidates[0];
+  return assignments;
 }
 
 /**
@@ -462,8 +567,48 @@ export function calculateProcessorOutputMultiplier(
 }
 
 /**
+ * R-26: бонус синергии за одного соседа-солнечную станцию (+5%).
+ * «Мизерный, но реальный» бонус: 3 станции в ряд → у средней 2 соседа
+ * (+10%), у крайних по 1 (+5%) — итого +20% к суммарной выработке тройки.
+ */
+export const SOLAR_SYNERGY_PER_NEIGHBOR = 0.05;
+
+/**
+ * R-26: посчитать соседние солнечные станции на поверхности планеты
+ * (adjacency в аксиальных координатах гекс-сетки).
+ *
+ * Возвращает Map<hexIndex, neighborCount> только для гексов с solar_plant.
+ * Орбитальные и атмосферные станции синергии не получают (нет «соседства»).
+ *
+ * Соседство: аксиальное расстояние = (|dq| + |dr| + |dq+dr|) / 2 === 1
+ * (6 соседей: (±1,0), (0,±1), (+1,-1), (-1,+1)).
+ */
+export function countSolarNeighbors(planet: Planet): Map<number, number> {
+  const result = new Map<number, number>();
+  const solarHexes: Array<{ index: number; q: number; r: number }> = [];
+  planet.hexes.forEach((hex, i) => {
+    if (hex.buildingId === 'solar_plant') {
+      solarHexes.push({ index: i, q: hex.coord.q, r: hex.coord.r });
+    }
+  });
+  for (const a of solarHexes) {
+    let count = 0;
+    for (const b of solarHexes) {
+      if (a.index === b.index) continue;
+      const dq = Math.abs(a.q - b.q);
+      const dr = Math.abs(a.r - b.r);
+      const distance = (dq + dr + Math.abs((a.q - b.q) + (a.r - b.r))) / 2;
+      if (distance === 1) count++;
+    }
+    result.set(a.index, count);
+  }
+  return result;
+}
+
+/**
  * Пересчёт энергетического баланса планеты.
  * P1-26: Солнечная станция зависит от светимости звезды и расстояния.
+ * R-26: синергия соседних солнечных станций на поверхности (+5% за соседа).
  *
  * (C4 — audit §2.3: ранее 3 отдельных цикла по surface/atmosphere/orbit с дублированной
  * логикой. Объединены в один helper `processBuildingEnergy` + 3 коротких цикла.)
@@ -476,13 +621,18 @@ export function recalcEnergyBalance(planet: Planet, system?: StarSystem): void {
   const starLuminosity = Math.max(0.0001, system?.stars[0]?.luminosity ?? 1.0);
   const distanceFactor = Math.max(0.01, planet.orbitalRadius);
 
+  // R-26: карта синергии солнечных станций (hexIndex → число соседних станций).
+  const solarNeighbors = countSolarNeighbors(planet);
+
   // Helper: process one building's energy contribution (C4 — extracted from 3 inline copies).
   // layer: 'surface' | 'atmosphere' | 'orbit' — affects solar_plant bonus (orbit ×1.2)
   //        and colony_hub special-case (only on surface).
+  // hexIndex — индекс гекса (для surface, нужно для синергии солнечных станций).
   const processBuildingEnergy = (
     buildingId: string | null | undefined,
     buildingLevel: number,
     layer: 'surface' | 'atmosphere' | 'orbit',
+    hexIndex?: number,
   ): void => {
     if (!buildingId) return;
     const buildingDef = BUILDING_MAP.get(buildingId);
@@ -495,7 +645,13 @@ export function recalcEnergyBalance(planet: Planet, system?: StarSystem): void {
       if (buildingDef.id === 'solar_plant') {
         // P1-26: power_output = base_output × level × star_luminosity / distance_factor
         // Orbit solar plants work 1.2× better (no atmosphere attenuation).
-        production += 10 * levelMult * starLuminosity / distanceFactor * orbitBonus;
+        // R-26: синергия соседних солнечных станций (adjacency) — каждая соседняя
+        // станция на поверхности даёт +5% выработки (мизерный, но реальный бонус).
+        const neighbors = layer === 'surface' && hexIndex !== undefined
+          ? (solarNeighbors.get(hexIndex) ?? 0)
+          : 0;
+        const synergyBonus = 1 + SOLAR_SYNERGY_PER_NEIGHBOR * neighbors;
+        production += 10 * levelMult * starLuminosity / distanceFactor * orbitBonus * synergyBonus;
       } else if (buildingDef.id === 'nuclear_reactor') {
         // P2-06/P2-07: nuclear plant base output = 25, no luminosity factor
         production += 25 * levelMult;
@@ -513,9 +669,9 @@ export function recalcEnergyBalance(planet: Planet, system?: StarSystem): void {
   };
 
   // Surface buildings
-  for (const hex of planet.hexes) {
-    processBuildingEnergy(hex.buildingId, hex.buildingLevel, 'surface');
-  }
+  planet.hexes.forEach((hex, i) => {
+    processBuildingEnergy(hex.buildingId, hex.buildingLevel, 'surface', i);
+  });
 
   // Atmospheric slot buildings
   for (const slot of planet.atmosphericSlots) {
@@ -605,6 +761,15 @@ export function buildOnHex(
   hex.buildingId = buildingId;
   hex.buildingLevel = 1;
 
+  // R-26: инициализация процессорных полей при постройке (processor →
+  // universal; refinery/synthesizer → specialized с defaultSpecialization).
+  if (buildingDef.isUniversalProcessor) {
+    hex.processorType = buildingDef.defaultProcessorType ?? 'universal';
+    hex.specialization = buildingDef.defaultSpecialization;
+    hex.specializationLevel = buildingDef.defaultProcessorType === 'specialized' ? 1 : 0;
+    hex.activeRecipes = [];
+  }
+
   recalcEnergyBalance(planet);
   gameBus.emit('economy:building-constructed', { planetId: planet.id, hexIndex, buildingId });
 
@@ -655,6 +820,14 @@ export function buildOnAtmosphereSlot(
   slot.buildingId = buildingId;
   slot.buildingLevel = 1;
 
+  // R-26: инициализация процессорных полей при постройке (см. buildOnHex).
+  if (buildingDef.isUniversalProcessor) {
+    slot.processorType = buildingDef.defaultProcessorType ?? 'universal';
+    slot.specialization = buildingDef.defaultSpecialization;
+    slot.specializationLevel = buildingDef.defaultProcessorType === 'specialized' ? 1 : 0;
+    slot.activeRecipes = [];
+  }
+
   recalcEnergyBalance(planet);
   gameBus.emit('economy:building-constructed', { planetId: planet.id, hexIndex: -1 - slotIndex, buildingId });
   return true;
@@ -698,6 +871,14 @@ export function buildOnOrbitSlot(
 
   slot.buildingId = buildingId;
   slot.buildingLevel = 1;
+
+  // R-26: инициализация процессорных полей при постройке (см. buildOnHex).
+  if (buildingDef.isUniversalProcessor) {
+    slot.processorType = buildingDef.defaultProcessorType ?? 'universal';
+    slot.specialization = buildingDef.defaultSpecialization;
+    slot.specializationLevel = buildingDef.defaultProcessorType === 'specialized' ? 1 : 0;
+    slot.activeRecipes = [];
+  }
 
   recalcEnergyBalance(planet);
   gameBus.emit('economy:building-constructed', { planetId: planet.id, hexIndex: -100 - slotIndex, buildingId });

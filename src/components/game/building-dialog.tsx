@@ -11,18 +11,12 @@ import {
   DialogTitle,
   DialogDescription,
 } from '@/components/ui/dialog';
-import {
-  Tabs,
-  TabsList,
-  TabsTrigger,
-  TabsContent,
-} from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
-import { Hammer, Zap, ArrowUp, Wrench, RotateCcw, ArrowRight, FlaskConical } from 'lucide-react';
+import { Hammer, Zap, ArrowUp, Wrench, RotateCcw, ArrowRight, FlaskConical, Sun } from 'lucide-react';
 import type { Planet, HexTerrain, BuildingLayer, BuildingDef } from '@/core/types';
-import { calculateProcessorOutputMultiplier } from '@/economy/engine';
+import { calculateProcessorOutputMultiplier, countSolarNeighbors, SOLAR_SYNERGY_PER_NEIGHBOR } from '@/economy/engine';
 import { PROCESSOR_CATEGORIES } from '@/data/processor-categories';
 import { SpecializeDialog } from './specialize-dialog';
 import { ShipyardDialog } from './shipyard-dialog';
@@ -31,15 +25,20 @@ import { getResearchRate } from '@/research/engine'; // Block 03 R2: RP/sec дл
 /**
  * Target — what the user clicked to open the dialog.
  *
- * Block 01 P3: BuildingDialog теперь поддерживает строительство на
- * atmospheric/orbit слотах, не только на гексах поверхности.
+ * Block 01 P3: BuildingDialog поддерживает строительство на atmospheric/orbit
+ * слотах, не только на гексах поверхности.
  *
- * - `{ kind: 'hex'; hexIndex }` — гекс поверхности (поведение по умолчанию,
- *   backward-compat). Если на гексе уже есть здание — режим апгрейда.
+ * - `{ kind: 'hex'; hexIndex }` — гекс поверхности. Если на гексе уже есть
+ *   здание — режим апгрейда.
  * - `{ kind: 'atmosphere'; slotIndex }` — атмосферный слот (газовые гиганты).
  * - `{ kind: 'orbit'; slotIndex }` — орбитальный слот.
  *
- * Начальная активная вкладка Tabs соответствует `target.kind`.
+ * R-26 (баги 1–2): меню постройки показывает ТОЛЬКО здания слоя выбранной
+ * цели — единый плоский список без вкладок. Орбитальные объекты строятся
+ * из меню орбитальных слотов, атмосферные — из меню атмосферных слотов,
+ * газовый экстрактор доступен и в основном меню поверхности (его слой —
+ * ['surface', 'atmosphere']). Деление списка по группам будет введено
+ * на поздней стадии игры.
  */
 export type BuildingDialogTarget =
   | { kind: 'hex'; hexIndex: number }
@@ -74,9 +73,6 @@ export function BuildingDialog({ open, onOpenChange, planet, target }: BuildingD
   const researched = useGameStore((s) => s.gameState?.researchState.researched ?? {});
 
   if (!planet || !target) return null;
-
-  // Gas giants have no surface hexes — surface tab is disabled.
-  const planetIsGasGiant = isGasGiant(planet);
 
   // ===== Validate target =====
   if (target.kind === 'hex') {
@@ -123,9 +119,9 @@ export function BuildingDialog({ open, onOpenChange, planet, target }: BuildingD
       ? planet.atmosphericSlots[target.slotIndex]
       : planet.orbitSlots[target.slotIndex];
     const existingBuilding = slot.buildingId ? BUILDING_MAP.get(slot.buildingId) : null;
-    // If the slot is occupied, show a brief info card; player can still switch tabs to
-    // build elsewhere on the same planet via the Tabs (e.g. another empty slot — but
-    // the dialog doesn't know about other slots, so we just show the occupied slot info).
+    // If the slot is occupied, show a brief info card. Building elsewhere:
+    // the player clicks another empty slot/hex, which opens the dialog anew
+    // (R-26: вкладок слоёв больше нет — каждый слот открывает свой список).
     if (existingBuilding && slot.buildingId) {
       return (
         <Dialog open={open} onOpenChange={onOpenChange}>
@@ -178,24 +174,17 @@ export function BuildingDialog({ open, onOpenChange, planet, target }: BuildingD
     }
   }
 
-  // ===== Build mode — Tabs (Surface / Atmosphere / Orbit) =====
-  const tabsToShow: BuildingLayer[] = planetIsGasGiant
-    ? ['atmosphere', 'orbit']
-    : ['surface', 'atmosphere', 'orbit'];
-
-  // Compute the initial active tab from `target.kind`. Tabs is uncontrolled
-  // (defaultValue + key) — when the user clicks a different slot/hex the dialog
-  // is reopened with a new key, so the active tab resets to the target's layer.
+  // ===== Build mode — единый список по слою цели (R-26, баги 1–2) =====
+  // Вкладки слоёв (Поверхность/Атмосфера/Орбита) убраны: с клетки планеты
+  // больше нельзя построить орбитальный объект или открыть «атмосферное»
+  // меню — каждый слот открывает список зданий только своего слоя.
   const targetLayer: BuildingLayer = target.kind === 'hex' ? 'surface' : target.kind;
-  const initialLayer = tabsToShow.includes(targetLayer)
-    ? targetLayer
-    : tabsToShow[0];
 
-  // Stable key per target — remounts the Tabs subtree when target changes,
-  // so the defaultValue resets cleanly without useEffect.
-  const tabsKey = target.kind === 'hex'
-    ? `hex-${target.hexIndex}`
-    : `${target.kind}-${target.slotIndex}`;
+  const targetLabel = target.kind === 'hex'
+    ? `Гекс поверхности #${target.hexIndex + 1}`
+    : target.kind === 'atmosphere'
+      ? `Атмосферный слот #${target.slotIndex + 1}`
+      : `Орбитальный слот #${target.slotIndex + 1}`;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -206,41 +195,20 @@ export function BuildingDialog({ open, onOpenChange, planet, target }: BuildingD
             Построить здание
           </DialogTitle>
           <DialogDescription className="text-slate-400">
-            {planetIsGasGiant
-              ? 'Газовый гигант — постройка возможна только в атмосфере и на орбите'
-              : 'Выберите здание и слой для постройки'}
+            {targetLabel} · {LAYER_LABELS[targetLayer]}
           </DialogDescription>
         </DialogHeader>
 
-        <Tabs key={tabsKey} defaultValue={initialLayer}>
-          <TabsList className="bg-white/5 grid grid-cols-3 w-full">
-            {/* Surface — disabled on gas giants */}
-            <TabsTrigger
-              value="surface"
-              disabled={planetIsGasGiant}
-              className={planetIsGasGiant ? 'opacity-40 cursor-not-allowed' : ''}
-            >
-              {LAYER_LABELS.surface}
-            </TabsTrigger>
-            <TabsTrigger value="atmosphere">{LAYER_LABELS.atmosphere}</TabsTrigger>
-            <TabsTrigger value="orbit">{LAYER_LABELS.orbit}</TabsTrigger>
-          </TabsList>
-
-          {tabsToShow.map((layer) => (
-            <TabsContent key={layer} value={layer}>
-              <BuildList
-                planet={planet}
-                layer={layer}
-                target={target}
-                researched={researched}
-                buildOnHex={buildOnHex}
-                buildOnAtmosphereSlot={buildOnAtmosphereSlot}
-                buildOnOrbitSlot={buildOnOrbitSlot}
-                onClose={() => onOpenChange(false)}
-              />
-            </TabsContent>
-          ))}
-        </Tabs>
+        <BuildList
+          planet={planet}
+          layer={targetLayer}
+          target={target}
+          researched={researched}
+          buildOnHex={buildOnHex}
+          buildOnAtmosphereSlot={buildOnAtmosphereSlot}
+          buildOnOrbitSlot={buildOnOrbitSlot}
+          onClose={() => onOpenChange(false)}
+        />
       </DialogContent>
     </Dialog>
   );
@@ -368,6 +336,18 @@ function UpgradeMode({
                   Бонус местности: x{existingBuilding.terrainBonus[terrain]}
                 </div>
               )}
+
+              {/* ─── R-26: синергия соседних солнечных станций (adjacency) ─── */}
+              {existingBuilding.id === 'solar_plant' && (() => {
+                const neighbors = countSolarNeighbors(planet).get(hexIndex) ?? 0;
+                const bonusPct = Math.round(neighbors * SOLAR_SYNERGY_PER_NEIGHBOR * 100);
+                return (
+                  <div className={`text-sm flex items-center gap-1 ${neighbors > 0 ? 'text-yellow-300' : 'text-slate-500'}`}>
+                    <Sun className="size-3" />
+                    Синергия соседей: {neighbors > 0 ? `+${bonusPct}% (${neighbors} соседних станц.)` : 'нет (соседних солнечных станций нет)'}
+                  </div>
+                );
+              })()}
 
               {/* ─── Block 05 PR6 — панель специализации переработчика ─── */}
               {isProcessorBuilding && processorOutput && (

@@ -152,8 +152,8 @@ describe('Block 01 T5: Serialization round-trip', () => {
     expect(Array.isArray(parsed.productionQueues)).toBe(true);
   });
 
-  test('3. Backward compatibility — v1 (dayInYear) and v0 (day) time formats deserialize without crashing', () => {
-    // v1 format: uses `time.dayInYear` (current format) — should be used as-is.
+  test('3. R-26 — текущий формат (dayInYear) читается как есть; старый v0 (day) отклоняется', () => {
+    // Текущий формат: uses `time.dayInYear` — should be used as-is.
     const v1Json = JSON.stringify({
       time: { tick: 100, dayInYear: 200, year: 1 },
       speed: 1,
@@ -169,8 +169,9 @@ describe('Block 01 T5: Serialization round-trip', () => {
     expect(v1State.time.dayInYear).toBe(200);
     expect(v1State.time.year).toBe(1);
 
-    // v0 format: uses `time.day` instead of `time.dayInYear` —
-    // `deserializeGameState` migrates: dayInYear = day % 365.
+    // R-26: v0 формат (`time.day`) больше НЕ поддерживается — слой
+    // совместимости удалён (старые сейвы потерты). deserialize бросает
+    // ошибку валидации вместо молчаливой миграции.
     const v0Json = JSON.stringify({
       time: { tick: 100, day: 400, year: 1 },
       speed: 1,
@@ -181,11 +182,7 @@ describe('Block 01 T5: Serialization round-trip', () => {
       playerFactionId: 'player',
     });
 
-    const v0State = deserializeGameState(v0Json);
-    expect(v0State.time.tick).toBe(100);
-    // 400 % 365 = 35
-    expect(v0State.time.dayInYear).toBe(35);
-    expect(v0State.time.year).toBe(1);
+    expect(() => deserializeGameState(v0Json)).toThrow(/невалидный формат сейва/);
   });
 
   test('4. Idempotent — serialize(deserialize(serialize(s))) === serialize(s)', () => {
@@ -273,16 +270,10 @@ describe('Block 01 T5: Serialization round-trip', () => {
     expect(result3.success).toBe(true);
   });
 
-  test('7. deserializeGameState logs but does not throw on schema-invalid JSON (Block 08 gap-9 fallback)', () => {
-    // Construct a JSON that parses syntactically but fails the schema
-    // (e.g., `phase` is the wrong literal). The escape hatch in
-    // `deserializeGameState` should log a warning and return a
-    // best-effort parsed object — NOT throw.
-    //
-    // We use a minimal state shape with an invalid `phase` value; the
-    // existing `deserializeGameState` post-processing uses
-    // `raw.galaxy.systems || []` etc., so an empty galaxy should still
-    // produce a usable GameState (with empty systems list).
+  test('7. R-26 — deserializeGameState бросает на schema-невалидном JSON (строгий режим)', () => {
+    // R-26: fallback-ветка «log + parsed as-is» удалена вместе со слоями
+    // совместимости. Конструкция JSON, который парсится синтаксически,
+    // но не проходит схему (невалидный `phase`) — теперь это ошибка.
     const schemaInvalidJson = JSON.stringify({
       time: { tick: 0, dayInYear: 0, year: 1 },
       speed: 1,
@@ -293,16 +284,7 @@ describe('Block 01 T5: Serialization round-trip', () => {
       playerFactionId: 'player',
     });
 
-    // Should NOT throw — fallback path returns parsed as-is.
-    let state: GameState | undefined;
-    expect(() => {
-      state = deserializeGameState(schemaInvalidJson);
-    }).not.toThrow();
-
-    // The returned state still has the (invalid) phase value — we
-    // explicitly chose to log+continue rather than reject, to preserve
-    // backward compat with hand-crafted fixtures.
-    expect(state).toBeDefined();
-    expect(state?.phase).toBe('NOT_A_REAL_PHASE' as never);
+    // Should throw with a descriptive message (no fallback path).
+    expect(() => deserializeGameState(schemaInvalidJson)).toThrow(/невалидный формат сейва/);
   });
 });

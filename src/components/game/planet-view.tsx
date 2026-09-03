@@ -9,7 +9,7 @@ import { RECIPE_MAP } from '@/data/recipes';
 import { ELEMENT_MAP } from '@/data/elements';
 import { getCurrentLookups, findResourceDisplay } from '@/data/baked-lookups';
 import { CATEGORY_LABELS } from '@/data/element-helpers';
-import { getUsedCapacity, getOrbitBufferUsed, getSpecInfo, getResourceType, getResourceCategory } from '@/data/warehouse';
+import { getUsedCapacity, getOrbitBufferUsed, getSpecInfo, getResourceCategory } from '@/data/warehouse';
 import { BuildingDialog, type BuildingDialogTarget } from './building-dialog';
 import { ResourcePanel } from './resource-panel';
 import { ShipyardDialog } from './shipyard-dialog';
@@ -517,7 +517,9 @@ function ProductionTabContent({ planet }: { planet: Planet }) {
     <ScrollArea className="h-full max-h-[calc(100vh-160px)]">
       <div className="p-2 space-y-4">
         <div className="text-[10px] text-slate-600 italic px-1">
-          Очередь производства — по зданиям. Список рецептов доступен после постройки здания.
+          Очередь производства — по зданиям. Одновременно работает столько задач,
+          сколько построено переработчиков; специализированные берут задачи своей
+          категории в первую очередь, остальные идут по карусели.
         </div>
 
         {PRODUCTION_BUILDING_IDS.map((buildingId) => {
@@ -965,8 +967,12 @@ function WarehousePanel({ planet }: { planet: Planet }) {
   const orbitUsed = getOrbitBufferUsed(planet);
   const orbitPct = wh.orbitBuffer.capacity > 0 ? (orbitUsed / wh.orbitBuffer.capacity) * 100 : 0;
 
-  // Reserve entries sorted by priority (highest first)
-  const reserveEntries = Object.values(wh.reserves).sort((a, b) => b.priority - a.priority);
+  // R-26: карта резервов (resourceId → минимум) для объединённого списка
+  // «количество / резерв» в ResourcePanel. Отдельная секция «Резервы»
+  // удалена — резервы видны прямо в списке ресурсов (красный/зелёный).
+  const reserveMinimums = Object.fromEntries(
+    Object.values(wh.reserves).map((r) => [r.resourceId, r.minimum]),
+  );
 
   return (
     <div className="space-y-4">
@@ -1026,41 +1032,7 @@ function WarehousePanel({ planet }: { planet: Planet }) {
         </div>
       </div>
 
-      {/* Reserves list */}
-      {reserveEntries.length > 0 && (
-        <div className="space-y-1.5">
-          <span className="text-[10px] text-slate-500 uppercase tracking-wider">Резервы</span>
-          <div className="max-h-48 overflow-y-auto space-y-0.5 pr-1 custom-scrollbar">
-            {reserveEntries.map(reserve => {
-              const current = planet.resources[reserve.resourceId] ?? 0;
-              const isBelowMin = current < reserve.minimum;
-              // Определяем отображаемое имя через BakedGalaxyModel
-              const lookups = getCurrentLookups();
-              const resourceInfo = findResourceDisplay(lookups, reserve.resourceId);
-              const elDef = ELEMENT_MAP.get(reserve.resourceId);
-              const displayName = resourceInfo?.name ?? elDef?.name ?? reserve.resourceId;
-              const resType = getResourceType(reserve.resourceId);
-              const typeBadge = resType === 'ore' ? '⛏' : resType === 'atmospheric' ? '💨' : resType === 'ice' ? '❄' : '';
-              return (
-                <div key={reserve.resourceId} className="flex items-center justify-between text-[10px] py-0.5">
-                  <span className={`${isBelowMin ? 'text-red-400' : 'text-slate-300'} truncate`} title={reserve.resourceId}>
-                    {typeBadge && <span className="mr-0.5">{typeBadge}</span>}
-                    {displayName}
-                  </span>
-                  <span className="flex items-center gap-1 shrink-0">
-                    <span className={`font-mono ${isBelowMin ? 'text-red-400' : 'text-slate-400'}`}>
-                      {Math.floor(current)}
-                    </span>
-                    <span className="text-slate-500">/</span>
-                    <span className="text-slate-400 font-mono">{reserve.minimum}</span>
-                    <span className="text-slate-500 ml-0.5">P{reserve.priority}</span>
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
+      {/* Ресурсы склада — объединённый список с резервами (R-26) */}
 
       {/* Orbit buffer */}
       {wh.orbitBuffer.capacity > 0 && (
@@ -1078,17 +1050,21 @@ function WarehousePanel({ planet }: { planet: Planet }) {
         </div>
       )}
 
-      {/* Stored resources in warehouse */}
+      {/* Stored resources in warehouse — единый список «количество / резерв» */}
       {(() => {
         const storedEntries = Object.entries(planet.resources).filter(([, amount]) => amount > 0);
-        if (storedEntries.length === 0 && fleetFuelSummary.length === 0) return null;
+        const hasReserves = Object.keys(reserveMinimums).length > 0;
+        if (storedEntries.length === 0 && fleetFuelSummary.length === 0 && !hasReserves) return null;
         return (
           <div className="space-y-1.5">
-            <span className="text-[10px] text-slate-500 uppercase tracking-wider">Хранимые ресурсы</span>
+            <span className="text-[10px] text-slate-500 uppercase tracking-wider">
+              Ресурсы склада <span className="normal-case">(количество / резерв)</span>
+            </span>
             <Card className="bg-white/[0.03] border-white/5 py-3 gap-3">
               <CardContent className="px-3 py-0">
                 <ResourcePanel
                   resources={planet.resources}
+                  reserves={reserveMinimums}
                   className="h-48"
                   fleetFuelSummary={fleetFuelSummary}
                   tick={gameState.time.tick}

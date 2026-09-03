@@ -16,7 +16,8 @@ export {
   colonizePlanet,
   // Block 05 — специализация переработчиков
   calculateProcessorOutputMultiplier,
-  findProcessorInstance,
+  // R-26 — карусель производства (баги 3–4)
+  collectProcessorInstances,
   specializeBuilding,
   upgradeSpecialization,
 } from './engine';
