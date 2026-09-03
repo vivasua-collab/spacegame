@@ -5,13 +5,23 @@
 
 import type { Xoshiro256 } from '@/core/prng';
 import type { StarSystem, Star, Planet, EntityId, BinaryType } from '@/core/types';
-import { STAR_TYPES, STAR_WEIGHTS } from '@/data/star-types';
+// R-STARS-DATA (2026-08-31): каталог звёзд — data-driven из src/data/stars/types.json
+import {
+  STAR_TYPES,
+  STAR_WEIGHTS,
+  MAIN_SEQUENCE_STAR_TYPES,
+  MAIN_SEQUENCE_STAR_WEIGHTS,
+  MAIN_SEQUENCE_TYPES,
+  SPECIAL_STAR_RANGES,
+} from '@/data/stars';
 import { genId, usedNames } from './gen-context';
 import { generatePlanet, toRoman } from './generate-planets';
 
-/** G-12: Main sequence star types only (indices 0-6 in STAR_TYPES) */
-const MAIN_SEQUENCE_STAR_TYPES = STAR_TYPES.slice(0, 7);
-const MAIN_SEQUENCE_STAR_WEIGHTS = MAIN_SEQUENCE_STAR_TYPES.map(s => s.weight);
+// G-12: MAIN_SEQUENCE_STAR_TYPES (7 записей ГП в порядке O→B→A→F→G→K→M)
+// и SPECIAL_STAR_RANGES (диапазоны WD/RG/NS/PULSAR/BH) импортируются из
+// data-driven каталога '@/data/stars'. Раньше дублировались локальными
+// hardcode-константами (MAIN_SEQUENCE_TYPES Set + SPECIAL_STAR_RANGES Record).
+// Порядок цепочки O→B→A→F→G→K→M залочен валидатором validate-stars.ts.
 
 /** Пулы имён для систем (L-02) */
 const GREEK = ['Alpha', 'Beta', 'Gamma', 'Delta', 'Epsilon', 'Zeta', 'Eta', 'Theta', 'Iota', 'Kappa', 'Lambda', 'Mu', 'Nu', 'Xi', 'Omicron', 'Pi', 'Rho', 'Sigma', 'Tau', 'Upsilon', 'Phi', 'Chi', 'Psi', 'Omega'];
@@ -84,21 +94,9 @@ function selectCompanionStar(primaryDef: typeof STAR_TYPES[0], rng: Xoshiro256):
  * T☉ = 5778K
  */
 
-/** Диапазоны параметров для специальных типов звёзд (из 02-stars.md §2.1) */
-const SPECIAL_STAR_RANGES: Record<string, {
-  massMin: number; massMax: number;
-  tempMin: number; tempMax: number;
-  radiusMin: number; radiusMax: number;
-}> = {
-  STAR_WD:     { massMin: 0.5, massMax: 1.4, tempMin: 8000,  tempMax: 40000,  radiusMin: 0.008, radiusMax: 0.02 },
-  STAR_RG:     { massMin: 0.5, massMax: 8.0, tempMin: 3000,  tempMax: 5000,   radiusMin: 10,    radiusMax: 200 },
-  STAR_NS:     { massMin: 1.1, massMax: 2.1, tempMin: 500000, tempMax: 700000, radiusMin: 0.00001, radiusMax: 0.00001 },
-  STAR_PULSAR: { massMin: 1.1, massMax: 2.1, tempMin: 800000, tempMax: 1200000, radiusMin: 0.00001, radiusMax: 0.00001 },
-  STAR_BH:     { massMin: 3,   massMax: 50,  tempMin: 0,     tempMax: 0,      radiusMin: 0,     radiusMax: 0 },
-};
-
 /** Главная последовательность: индексы 0-6 в STAR_TYPES */
-const MAIN_SEQUENCE_TYPES = new Set(['STAR_O', 'STAR_B', 'STAR_A', 'STAR_F', 'STAR_G', 'STAR_K', 'STAR_M']);
+// (MAIN_SEQUENCE_TYPES импортируется из '@/data/stars' — раньше дублировался
+// локальным Set-хардкодом; SPECIAL_STAR_RANGES — тоже.)
 
 /** Стефан-Больцман: L/L☉ = (R/R☉)² × (T/T☉)⁴ */
 function stefanBoltzmannLuminosity(radiusRs: number, temperatureK: number): number {

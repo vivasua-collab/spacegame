@@ -150,11 +150,11 @@ describe('Block 08: API save POST', () => {
   // ─── Test 5: state size over 50 MB → 400 ───────────────────────────
 
   test('5. State size > MAX_STATE_BYTES → 400', async () => {
-    // Build a state string just over the limit (MAX_STATE_BYTES + 1 chars).
-    // We don't actually allocate 50MB — we mock the schema's `safeParse`
-    // by sending a `state` field whose `.length` exceeds the limit but
-    // is mostly a placeholder string of length MAX_STATE_BYTES + 1.
-    // NOTE: this allocates ~50 MB of memory; acceptable for a single test.
+    // R-26 (2026-08-31): raw-лимит 50 МБ теперь проверяется в РОУТЕ после
+    // транспортного декодирования (gzip-base64), а не на уровне zod-схемы
+    // (схема допускает до 100 МБ символов base64 — см. save-schema.ts и
+    // tests/api-save-encoding.test.ts). Семантика та же: oversized state
+    // отклоняется с 400, но ответ — 'State too large after decoding'.
     const oversizedState = 'x'.repeat(MAX_STATE_BYTES + 1);
     const req = makePostRequest(
       validPayload({ state: oversizedState }),
@@ -162,9 +162,7 @@ describe('Block 08: API save POST', () => {
     );
     const res = await POST(req);
     expect(res.status).toBe(400);
-    const body = await res.json() as { error: string; issues: Array<{ path: PropertyKey[]; message: string }> };
-    expect(body.error).toBe('Invalid input');
-    const stateIssue = body.issues.find((i) => i.path.includes('state'));
-    expect(stateIssue).toBeDefined();
+    const body = await res.json() as { error: string };
+    expect(body.error).toContain('too large');
   });
 });

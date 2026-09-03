@@ -18,11 +18,44 @@
  * (рецепт process_H2O) даёт водород + кислород.
  */
 
-import type { Xoshiro256 } from '@/core/prng';
+import { Xoshiro256 } from '@/core/prng';
 import type { HexCell, PlanetResourceDeposit } from '@/core/types';
 import { PROFILE_ELEMENTS, RARE_ELEMENTS, ULTRA_RARE_ELEMENTS } from '@/data/planet-types';
 import { ELEMENTS, ELEMENT_MAP } from '@/data/elements';
 import { getCurrentLookups, findContainedElements } from '@/data/baked-lookups';
+
+/** R-29: тело (планета/луна) с ленивыми залежами — минимальный интерфейс материализации. */
+export interface LazyDepositBody {
+  hexes: HexCell[];
+  type: string;
+  depositsMaterialized?: boolean;
+  depositRngState?: number[] | null;
+}
+
+/**
+ * R-29: ленивая материализация залежей гексов.
+ *
+ * До колонизации планета знает только свод-пул resourceDeposits («сколько
+ * всего»); гексы пусты (depositRngState хранит снимок RNG ДО прогона
+ * генерации). При колонизации этот проигрывает assignResourceDeposits из
+ * сохранённого состояния → бит-в-бит те же залежи, что дал бы полный
+ * прогон при генерации галактики.
+ *
+ * Идемпотентна: уже материализованное тело (флаг или отсутствие снимка)
+ * не трогается — повторный вызов не дублирует залежи (флаг dm в сейве v3
+ * хранит материализованность, R-30: сейвы старых форматов не читаются).
+ *
+ * @returns true, если залежи были материализованы в этом вызове.
+ */
+export function materializePlanetDeposits(body: LazyDepositBody): boolean {
+  if (body.depositsMaterialized) return false;
+  if (!body.depositRngState || body.hexes.length === 0) return false;
+
+  const rng = Xoshiro256.fromState(body.depositRngState);
+  assignResourceDeposits(body.hexes, rng, body.type);
+  body.depositsMaterialized = true;
+  return true;
+}
 
 // Множители количества по категории для каждого типа планеты
 const CATEGORY_MULTIPLIERS: Record<string, Record<string, number>> = {

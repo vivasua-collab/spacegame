@@ -22,9 +22,18 @@
  */
 
 import { z } from 'zod';
+import { MAX_ENCODED_STATE_CHARS, type StateEncoding } from '@/lib/save-codec-server';
 
 /** Maximum serialized state size — 50 MB. Limits memory pressure on save. */
 export const MAX_STATE_BYTES = 50_000_000;
+
+/**
+ * R-26 (2026-08-31): транспортная кодировка поля `state`.
+ * 'gzip-base64' — клиент сжал state (шлюз ограничивает тело запроса 32 МБ);
+ * сервер декодирует ДО проверки лимита (реальный лимит — на raw JSON).
+ * См. src/lib/save-codec-server.ts.
+ */
+export const StateEncodingSchema = z.enum(['json', 'gzip-base64'] as const satisfies readonly StateEncoding[]);
 
 /** Maximum tick value — 10 000 000 (≈ 27 397 years of game time at 1 tick = 1 day). */
 export const MAX_TICK = 10_000_000;
@@ -46,7 +55,8 @@ export const MAX_NAME_LENGTH = 100;
 export const SaveCreateSchema = z.object({
   name: z.string().min(1).max(MAX_NAME_LENGTH),
   seed: z.number().int().nonnegative().max(2_000_000_000), // 32-bit signed int range
-  state: z.string().max(MAX_STATE_BYTES).optional(),
+  state: z.string().max(MAX_ENCODED_STATE_CHARS).optional(),
+  stateEncoding: StateEncodingSchema.optional(),
   settings: z.string().max(1_000_000).optional(), // GalaxyGenConfig JSON, kept for backward compat
   tick: z.number().int().nonnegative().max(MAX_TICK).optional(),
 });
@@ -61,7 +71,8 @@ export const SaveCreateSchema = z.object({
  */
 export const SaveUpdateSchema = z.object({
   name: z.string().min(1).max(MAX_NAME_LENGTH).optional(),
-  state: z.string().max(MAX_STATE_BYTES),
+  state: z.string().max(MAX_ENCODED_STATE_CHARS),
+  stateEncoding: StateEncodingSchema.optional(),
   tick: z.number().int().nonnegative().max(MAX_TICK),
   settings: z.string().max(1_000_000).optional(),
 });

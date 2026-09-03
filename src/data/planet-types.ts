@@ -6,9 +6,15 @@
  * G-01 fix: lifeChance приведены к спецификации §1.2
  * G-04/G-06 fix: добавлен PLANET_TYPE_RADIUS и getSizeFromRadius() — размер из R⊕
  * G-15/G-23 fix: добавлен ORBIT_SLOTS_BY_SIZE — орбитальные слоты по размеру
+ *
+ * R-STARS-DATA (2026-08-31): размерности гекс-сеток вынесены в
+ * `src/data/planets/grids.json` (data-driven): SIZE_HEX_COUNT — планетарные
+ * сетки (5), MOON_SIZE_HEX_COUNT — 2 малые сетки для спутников. Остальной
+ * каталог типов планет — inline TS (Etap 4.2 — вынос в JSON).
  */
 
 import type { PlanetDef, PlanetType, PlanetSize, HexTerrain } from '@/core/types';
+import { PLANET_GRIDS, MOON_GRIDS } from './planets/grids';
 
 /** Диапазоны плотности по типу планеты (г/см³).
  * Из научных данных: Seager et al. 2007, Zeng et al. 2016, Fulton et al. 2017.
@@ -109,6 +115,157 @@ export function getSizeFromRadius(radiusKm: number): PlanetSize {
   if (R < 1.3) return 'medium';
   if (R < 2.0) return 'large';
   return 'huge';
+}
+
+// ============ R-26: Гравитационная градация по размерам ============
+
+/**
+ * R-26 (2026-08-31, запрос владельца): границы классов размера в R⊕ —
+ * ДОЛЖНЫ совпадать с порогами getSizeFromRadius (единый источник).
+ * Используются для интерполяции гравитации внутри грав-полосы класса.
+ */
+export const SIZE_CLASS_RADIUS_REARTH: Record<PlanetSize, { min: number; max: number }> = {
+  tiny:   { min: 0.0, max: 0.3 },
+  small:  { min: 0.3, max: 0.7 },
+  medium: { min: 0.7, max: 1.3 },
+  large:  { min: 1.3, max: 2.0 },
+  huge:   { min: 2.0, max: Infinity },
+};
+
+/** Границы классов размера ЛУН (2 уровня: <0.15 R⊕ → tiny, иначе small). */
+export const MOON_CLASS_RADIUS_REARTH: Record<'tiny' | 'small', { min: number; max: number }> = {
+  tiny:  { min: 0.0, max: 0.15 },
+  small: { min: 0.15, max: Infinity },
+};
+
+/** Гравитационная полоса [min, max] в g для класса размера. */
+export interface GravityBand {
+  min: number;
+  max: number;
+}
+
+/**
+ * R-26: ГРАВИТАЦИОННЫЕ ПОЛОСЫ по (тип планеты × класс размера).
+ *
+ * Проблема (жалоба владельца): радиус и плотность тянулись как независимые
+ * случайные величины → g = R×ρ/5.51 не была упорядочена по размеру
+ * («0.9g — средняя» рядом с «0.8g — большая»; «ледяная 0.4g — большая»).
+ *
+ * Решение: для каждого геологического типа заданы НЕПЕРЕСЕКАЮЩИЕСЯ полосы
+ * гравитации по классам размера, строго возрастающие с классом. Внутри
+ * класса гравитация линейно интерполируется по радиусу → «чем планета
+ * больше, тем гравитация выше» — гарантированно (и между классами, и
+ * внутри класса). Плотность ВЫВОДИТСЯ из пары (g, R): ρ = g×5.51/R —
+ * физически согласована и остаётся в пределах диапазона типа (полосы
+ * спроектированы с этой проверкой; см. тесты gradation).
+ *
+ * Фолбэк (нет полосы для класса): прежняя физика g = R×ρ_avg/5.51.
+ */
+export const PLANET_GRAVITY_BANDS: Record<PlanetType, Partial<Record<PlanetSize, GravityBand>>> = {
+  // rocky 0.5–1.6 R⊕ → small/medium/large
+  rocky: {
+    small:  { min: 0.37, max: 0.52 },
+    medium: { min: 0.60, max: 1.00 },
+    large:  { min: 1.15, max: 1.40 },
+  },
+  // volcanic 0.5–2.0 R⊕ → small/medium/large
+  volcanic: {
+    small:  { min: 0.38, max: 0.50 },
+    medium: { min: 0.55, max: 0.85 },
+    large:  { min: 0.95, max: 1.55 },
+  },
+  // ice 0.5–2.0 R⊕ → small/medium/large (регрессия: 0.4g = medium, НЕ large)
+  ice: {
+    small:  { min: 0.15, max: 0.27 },
+    medium: { min: 0.32, max: 0.55 },
+    large:  { min: 0.62, max: 0.95 },
+  },
+  // oceanic 1.0–2.5 R⊕ → medium/large/huge
+  oceanic: {
+    medium: { min: 0.50, max: 0.80 },
+    large:  { min: 0.90, max: 1.25 },
+    huge:   { min: 1.35, max: 1.70 },
+  },
+  // desert 0.5–1.6 R⊕ → small/medium/large
+  desert: {
+    small:  { min: 0.28, max: 0.42 },
+    medium: { min: 0.48, max: 0.80 },
+    large:  { min: 0.90, max: 1.25 },
+  },
+  // gas_giant 4.0–12.5 R⊕ → huge (Уран-класс .. Юпитер; ρ выводится 1.15–1.24)
+  gas_giant: {
+    huge:   { min: 0.90, max: 2.60 },
+  },
+  // dwarf 0.1–0.5 R⊕ → tiny/small
+  dwarf: {
+    tiny:   { min: 0.04, max: 0.085 },
+    small:  { min: 0.10, max: 0.20 },
+  },
+};
+
+/**
+ * R-26: грав-полосы ЛУН по (тип луны × класс размера). Те же принципы:
+ * класс больше → гравитация выше; внутри класса — линейно по радиусу.
+ */
+export const MOON_GRAVITY_BANDS: Record<'rocky' | 'ice' | 'dwarf', Partial<Record<PlanetSize, GravityBand>>> = {
+  rocky: {
+    tiny:  { min: 0.02,  max: 0.07 },
+    small: { min: 0.09,  max: 0.30 },
+  },
+  ice: {
+    tiny:  { min: 0.008, max: 0.028 },
+    small: { min: 0.040, max: 0.14 },
+  },
+  dwarf: {
+    tiny:  { min: 0.012, max: 0.042 },
+    small: { min: 0.055, max: 0.20 },
+  },
+};
+
+/**
+ * R-26: гравитация из полосы класса — линейная интерполяция по радиусу,
+ * где диапазон интерполяции = пересечение (границы класса × диапазон типа).
+ * Возвращает null, если полосы для класса нет (вызов: физический фолбэк).
+ */
+export function getBandedGravity(
+  radiusKm: number,
+  size: PlanetSize,
+  bands: Partial<Record<PlanetSize, GravityBand>>,
+  classRadiusREarth: { min: number; max: number },
+  typeRadiusRangeKm: { min: number; max: number },
+): number | null {
+  const band = bands[size];
+  if (!band) return null;
+  const lo = Math.max(classRadiusREarth.min * 6371, typeRadiusRangeKm.min);
+  const hi = Math.min(classRadiusREarth.max * 6371, typeRadiusRangeKm.max);
+  if (!(hi > lo)) return null;
+  const t = Math.min(1, Math.max(0, (radiusKm - lo) / (hi - lo)));
+  return band.min + (band.max - band.min) * t;
+}
+
+/** R-26: гравитация планеты по (тип, радиус, класс) либо null (нет полосы). */
+export function getPlanetGravityForRadius(
+  type: PlanetType,
+  radiusKm: number,
+  size: PlanetSize,
+): number | null {
+  return getBandedGravity(
+    radiusKm,
+    size,
+    PLANET_GRAVITY_BANDS[type],
+    SIZE_CLASS_RADIUS_REARTH[size],
+    PLANET_TYPE_RADIUS[type],
+  );
+}
+
+/** R-26: гравитация луны по (тип, радиус, класс) либо null (нет полосы). */
+export function getMoonGravityForRadius(
+  type: 'rocky' | 'ice' | 'dwarf',
+  radiusKm: number,
+  size: PlanetSize,
+): number | null {
+  const cls = size === 'tiny' ? MOON_CLASS_RADIUS_REARTH.tiny : MOON_CLASS_RADIUS_REARTH.small;
+  return getBandedGravity(radiusKm, size, MOON_GRAVITY_BANDS[type], cls, MOON_RADIUS);
 }
 
 /**
@@ -236,14 +393,19 @@ export const PLANET_TYPE_MAP = new Map(PLANET_TYPES.map(p => [p.type, p]));
 /**
  * Количество гексов по классу размера.
  * Из документации 03-planets.md §2.1 (единый источник истины).
+ *
+ * R-STARS-DATA (2026-08-31): data-driven — значения из
+ * `src/data/planets/grids.json` (planetGrids). 5 планетарных сеток.
  */
-export const SIZE_HEX_COUNT: Record<PlanetSize, number> = {
-  tiny: 19,
-  small: 37,
-  medium: 61,
-  large: 91,
-  huge: 127,
-};
+export const SIZE_HEX_COUNT: Record<PlanetSize, number> = PLANET_GRIDS;
+
+/**
+ * Размерности гекс-сеток для ЛУН газовых гигантов — 2 малые сетки
+ * (tiny=7, small=19), data-driven из `src/data/planets/grids.json`
+ * (moonGrids). Луны не используют планетарные сетки (требование
+ * владельца 2026-08-31). Размер луны: R<0.15 R⊕ → tiny, иначе small.
+ */
+export const MOON_SIZE_HEX_COUNT: Partial<Record<PlanetSize, number>> = MOON_GRIDS;
 
 /**
  * Все типы местности — 7 типов (без crater, P1-20).

@@ -19,33 +19,24 @@ import {
   tickResearch,
   advanceQueue,
   getAvailableRP,
+  ensureRpBank,
 } from '@/research/engine';
 import { TECH_MAP } from '@/data/research/tech-tree';
 import type { ResearchState } from '@/core/types';
 
-describe('R-RES — getAvailableRP', () => {
+describe('R-RES/R-SPLIT — getAvailableRP (аккумулятор фундаменталов)', () => {
   test('empty state → 0 available', () => {
     const state = createDefaultResearchState();
     expect(getAvailableRP(state)).toBe(0);
   });
 
-  test('totalRpGenerated only → all available (no investments)', () => {
+  test('R-SPLIT: возвращает rpBank напрямую (аккумулятор — единственный банк)', () => {
     const state = createDefaultResearchState();
-    state.totalRpGenerated = 500;
-    expect(getAvailableRP(state)).toBe(500);
-  });
-
-  test('subtracts fundamentalRpInvested', () => {
-    const state = createDefaultResearchState();
-    state.totalRpGenerated = 1000;
-    state.fundamentalRpInvested = { chemistry: 200, physics: 100 };
-    // available = 1000 - 200 - 100 = 700
-    expect(getAvailableRP(state)).toBe(700);
-  });
-
-  test('subtracts active slot rpInvested', () => {
-    const state = createDefaultResearchState();
-    state.totalRpGenerated = 1000;
+    state.rpBank = 500;
+    // totalRpGenerated теперь lifetime-счётчик (debug) — НЕ участвует
+    // в расчёте доступных RP.
+    state.totalRpGenerated = 99999;
+    state.fundamentalRpInvested = { chemistry: 200 };
     state.activeSlots.push({
       slotId: 's1',
       techId: 'fusion_reactor',
@@ -53,30 +44,37 @@ describe('R-RES — getAvailableRP', () => {
       allocationPercent: 100,
       rpInvested: 250,
     });
-    // available = 1000 - 0 (no fundamental investments) - 250 (slot) = 750
-    expect(getAvailableRP(state)).toBe(750);
+    expect(getAvailableRP(state)).toBe(500);
   });
 
-  test('combined: total - fundamentals - slots', () => {
+  test('R-SPLIT legacy-миграция: сейв без rpBank → старая формула (total − fundamentals − slots)', () => {
     const state = createDefaultResearchState();
-    state.totalRpGenerated = 2000;
+    state.totalRpGenerated = 1000;
+    state.fundamentalRpInvested = { chemistry: 200, physics: 100 };
+    delete (state as unknown as { rpBank?: number }).rpBank;
+    // legacy = 1000 − 200 − 100 = 700 (старая формула с клампом ≥ 0;
+    // слоты вычитаются только в legacy — в новых состояниях ветки разделены)
+    expect(getAvailableRP(state)).toBe(700);
+  });
+
+  test('R-SPLIT legacy: кламп снизу нулём (инвестиции больше lifetime)', () => {
+    const state = createDefaultResearchState();
+    state.totalRpGenerated = 100;
+    state.fundamentalRpInvested = { chemistry: 200 };
+    delete (state as unknown as { rpBank?: number }).rpBank;
+    expect(getAvailableRP(state)).toBe(0);
+  });
+
+  test('R-SPLIT ensureRpBank: вычисляет и записывает банк при первом обращении', () => {
+    const state = createDefaultResearchState();
+    state.totalRpGenerated = 1000;
     state.fundamentalRpInvested = { chemistry: 300 };
-    state.activeSlots.push({
-      slotId: 's1',
-      techId: 'fusion_reactor',
-      targetLevel: 1,
-      allocationPercent: 100,
-      rpInvested: 100,
-    });
-    state.activeSlots.push({
-      slotId: 's2',
-      techId: 'steel_processing',
-      targetLevel: 1,
-      allocationPercent: 100,
-      rpInvested: 50,
-    });
-    // available = 2000 - 300 - 100 - 50 = 1550
-    expect(getAvailableRP(state)).toBe(1550);
+    delete (state as unknown as { rpBank?: number }).rpBank;
+    const bank = ensureRpBank(state);
+    expect(bank).toBe(700);
+    expect(state.rpBank).toBe(700);
+    // Повторный вызов — идемпотентен.
+    expect(ensureRpBank(state)).toBe(700);
   });
 });
 

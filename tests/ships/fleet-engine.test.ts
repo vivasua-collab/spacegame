@@ -215,12 +215,14 @@ function makeMockGameState(galaxy: Galaxy = makeMockGalaxy()): GameState {
     ships: makeMockShipsMap(),
     // Block 03 (R7): researchState required by GameState type — default empty.
     // R-RES §B: researchQueue field is now required on ResearchState.
+    // R-SPLIT (Задача 22): rpBank field is now required on ResearchState.
     researchState: {
       fundamentalLevels: {
         chemistry: 0, physics: 0, engineering: 0,
         biology_fund: 0, military_science: 0, xenoarchaeology: 0,
       },
       fundamentalRpInvested: {},
+      rpBank: 0,
       researched: {},
       activeSlots: [],
       researchQueue: [],

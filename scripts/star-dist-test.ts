@@ -5,7 +5,7 @@
  */
 
 import { generateGalaxy } from '@/galaxy/generator';
-import { STAR_TYPES, STAR_WEIGHTS } from '@/data/star-types';
+import { STAR_TYPES, STAR_WEIGHTS } from '@/data/stars';
 import type { StarType } from '@/core/types';
 
 const RUNS = 10;

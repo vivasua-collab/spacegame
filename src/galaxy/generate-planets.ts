@@ -15,7 +15,7 @@
 
 import type { Xoshiro256 } from '@/core/prng';
 import type { Star, Planet, Moon, PlanetSize, BinaryType, Atmosphere, AtmosphereType, PlanetLife, LifeLevel, AtmosphericSlot, OrbitalSlot } from '@/core/types';
-import { PLANET_TYPES, ORBIT_SLOTS, ORBIT_SLOTS_BY_SIZE, GAS_GIANT_ATMOSPHERE_SLOTS, PLANET_DENSITY, PLANET_TYPE_RADIUS, getSizeFromRadius, LIFE_LEVEL_WEIGHTS, TYPE_NAMES, GAS_GIANT_MOON_COUNT, MOON_RADIUS, MOON_DENSITY, MOON_ORBIT_RADIUS_KM, MOON_TYPE_WEIGHTS } from '@/data/planet-types';
+import { PLANET_TYPES, ORBIT_SLOTS, ORBIT_SLOTS_BY_SIZE, GAS_GIANT_ATMOSPHERE_SLOTS, PLANET_DENSITY, PLANET_TYPE_RADIUS, getSizeFromRadius, getPlanetGravityForRadius, getMoonGravityForRadius, LIFE_LEVEL_WEIGHTS, TYPE_NAMES, GAS_GIANT_MOON_COUNT, MOON_RADIUS, MOON_DENSITY, MOON_ORBIT_RADIUS_KM, MOON_TYPE_WEIGHTS, MOON_SIZE_HEX_COUNT } from '@/data/planet-types';
 import { genId } from './gen-context';
 import { generateHexGrid } from './hex-grid';
 import { assignResourceDeposits, aggregateResourceDeposits } from './generate-resources';
@@ -482,10 +482,33 @@ export function generatePlanet(
     size = getSizeFromRadius(radiusKm);
   }
 
-  // Плотность и гравитация
+  // Плотность и гравитация — R-26 (2026-08-31, запрос владельца: чёткая
+  // градация по размерам в рамках геологического типа).
+  //
+  // Гравитация берётся из НЕПЕРЕСЕКАЮЩИХСЯ полос (тип × класс размера):
+  // внутри класса — линейная интерполяция по радиусу, между классами —
+  // строгое возрастание → «0.9g средняя vs 0.8g большая» и «лёд 0.4g
+  // большая» больше невозможны. Плотность ВЫВОДИТСЯ из пары (g, R):
+  // ρ = g×5.51/R — физически согласована (та же формула docs §2.2) и
+  // остаётся в диапазоне типа (полосы спроектированы с проверкой).
+  //
+  // RNG: выборка плотности СОХРАНЕНА (используется в fallback), чтобы
+  // не сдвигать детерминированную последовательность генерации
+  // (снапшот-тесты seed=42).
   const densityRange = PLANET_DENSITY[planetDef.type] ?? { min: 3.0, max: 6.0, avg: 4.5 };
-  const density = densityRange.min + rng.nextFloat() * (densityRange.max - densityRange.min);
-  const gravity = (radiusKm / 6371) * (density / 5.51);
+  const densityRoll = densityRange.min + rng.nextFloat() * (densityRange.max - densityRange.min);
+  const bandedGravity = getPlanetGravityForRadius(planetDef.type, radiusKm, size);
+  let gravity: number;
+  let density: number;
+  if (bandedGravity !== null) {
+    gravity = bandedGravity;
+    density = (gravity * 5.51 * 6371) / radiusKm;
+  } else {
+    // Фолбэк (класс без полосы — не достигается текущими диапазонами типов):
+    // прежняя физика со случайной плотностью.
+    density = densityRoll;
+    gravity = (radiusKm / 6371) * (density / 5.51);
+  }
 
   // Орбитальный период (3-й закон Кеплера)
   const orbitalPeriodYears = Math.sqrt(Math.pow(orbitalRadius, 3) / primaryStar.mass);
@@ -505,9 +528,17 @@ export function generatePlanet(
     ? []
     : generateHexGrid(size, planetDef.terrainWeights, rng.derive('hexes'));
 
-  // Ресурсные залежи на гексах
+  // Ресурсные залежи на гексах — R-29: ЛЕНИВАЯ материализация.
+  // Прогон assignResourceDeposits на реальной сетке нужен только для расчёта
+  // свода-пула (aggregateResourceDeposits); снимок RNG берётся ДО прогона и
+  // хранится в depositRngState — materializePlanetDeposits() при колонизации
+  // воспроизводит те же залежи бит-в-бит. Сами залежи из гексов СТИРАЮТСЯ:
+  // «мёртвые» (не разведанные) гексы не попадают в сейв.
+  let depositRngState: number[] | null = null;
   if (hexes.length > 0) {
-    assignResourceDeposits(hexes, rng.derive('deposits'), planetDef.type);
+    const depositRng = rng.derive('deposits');
+    depositRngState = depositRng.snapshotState();
+    assignResourceDeposits(hexes, depositRng, planetDef.type);
   }
 
   // Атмосферные слоты (только для газовых гигантов)
@@ -536,8 +567,13 @@ export function generatePlanet(
   const typeName = TYPE_NAMES[planetDef.type] ?? planetDef.type;
   const planetName = `${systemName} ${toRoman(orbit)} — ${typeName}`;
 
-  // Сводная таблица ресурсов
+  // Сводная таблица ресурсов (верхнеуровневый пул — вычисляется из прогона,
+  // ДО стирания залежей: «сколько всего» известно и без колонизации)
   const resourceDeposits = aggregateResourceDeposits(hexes, planetDef.type, rng.derive('ultra'));
+
+  // R-29: залежи стираются — планета хранит пул + RNG-снимок; гексовые
+  // залежи материализуются при колонизации (materializePlanetDeposits).
+  for (const hex of hexes) hex.deposits = [];
 
   // Луны (только для газовых гигантов — Audit 2026-08-28)
   // Юпитер=95, Сатурн=146, Уран=28, Нептун=16. Для MVP — 2-7 лун.
@@ -565,6 +601,8 @@ export function generatePlanet(
     orbitSlots,
     moons,
     resourceDeposits,
+    depositsMaterialized: false,
+    depositRngState,
     resources: {},
     energyBalance: 0,
     owner: null,
@@ -625,18 +663,32 @@ function generateMoons(
       }
     }
 
-    // Радиус и плотность
+    // Радиус и плотность (R-26: выборки сохранены — стабильность RNG-серии)
     const radiusKm = MOON_RADIUS.min + moonRng.nextFloat() * (MOON_RADIUS.max - MOON_RADIUS.min);
     const densityRange = MOON_DENSITY[moonType];
-    const density = densityRange.min + moonRng.nextFloat() * (densityRange.max - densityRange.min);
-    const gravity = (radiusKm / 6371) * (density / 5.51);
+    const densityRoll = densityRange.min + moonRng.nextFloat() * (densityRange.max - densityRange.min);
 
-    // Размер (по радиусу в R_Earth)
+    // Размер луны: 2 уровня — tiny (< 0.15 R⊕) или small (остальные).
+    // R-STARS-DATA (2026-08-31): луны используют выделенные МАЛЫЕ сетки
+    // (MOON_SIZE_HEX_COUNT из planets/grids.json: 7/19 гексов), а НЕ
+    // планетарные (требование владельца: минимум 5 планетарных сеток +
+    // 2 маленькие для спутников). Крупные луны (Ганимед-класс, ≥0.15 R⊕)
+    // получают «small» = 19 гексов.
     const R_Earth = radiusKm / 6371;
-    let size: PlanetSize;
-    if (R_Earth < 0.15) size = 'tiny';
-    else if (R_Earth < 0.4) size = 'small';
-    else size = 'medium';
+    const size: PlanetSize = R_Earth < 0.15 ? 'tiny' : 'small';
+
+    // Гравитация — R-26: те же типовые полосы (tiny/small НЕ пересекаются,
+    // внутри класса линейно по радиусу); плотность выводится из (g, R).
+    const moonBandedGravity = getMoonGravityForRadius(moonType, radiusKm, size);
+    let gravity: number;
+    let density: number;
+    if (moonBandedGravity !== null) {
+      gravity = moonBandedGravity;
+      density = (gravity * 5.51 * 6371) / radiusKm;
+    } else {
+      density = densityRoll;
+      gravity = (radiusKm / 6371) * (density / 5.51);
+    }
 
     // Орбитальный радиус вокруг планеты — строго монотонный
     const jitter = moonRng.nextFloat() * maxJitter;
@@ -649,17 +701,24 @@ function generateMoons(
     // P = 1.77 × (a/421700)^(3/2) дней.
     const orbitPeriodDays = Math.round(1.77 * Math.pow(orbitRadiusKm / 421700, 1.5));
 
-    // Гекс-сетка (для будущей колонизации)
+    // Гекс-сетка луны — МАЛЫЕ сетки (7/19 гексов, data-driven)
     const terrainWeights = moonType === 'ice'
       ? { plains: 25, mountains: 25, desert: 0, ice: 50, ocean: 0, volcano: 0, jungle: 0 }
       : moonType === 'rocky'
         ? { plains: 40, mountains: 30, desert: 20, ice: 0, ocean: 0, volcano: 0, jungle: 10 }
         : { plains: 50, mountains: 30, desert: 0, ice: 20, ocean: 0, volcano: 0, jungle: 0 };
-    const hexes = generateHexGrid(size, terrainWeights, moonRng.derive('hexes'));
+    const hexes = generateHexGrid(size, terrainWeights, moonRng.derive('hexes'), MOON_SIZE_HEX_COUNT);
+    // R-29: ленивая материализация (как у планет) — снимок ДО прогона,
+    // прогон для свода-пула, затем стирание. Материализация — при будущей
+    // колонизации лун (materializePlanetDeposits работает и для лун).
+    let moonDepositRngState: number[] | null = null;
     if (hexes.length > 0) {
-      assignResourceDeposits(hexes, moonRng.derive('deposits'), moonType);
+      const moonDepositRng = moonRng.derive('deposits');
+      moonDepositRngState = moonDepositRng.snapshotState();
+      assignResourceDeposits(hexes, moonDepositRng, moonType);
     }
     const resourceDeposits = aggregateResourceDeposits(hexes, moonType, moonRng.derive('ultra'));
+    for (const hex of hexes) hex.deposits = [];
 
     // Имя: «Epsilon Tauri IV-a», «Epsilon Tauri IV-b», ...
     const suffix = String.fromCharCode(97 + i); // a, b, c, ...
@@ -679,6 +738,8 @@ function generateMoons(
       orbitPeriodDays,
       hexes,
       resourceDeposits,
+      depositsMaterialized: false,
+      depositRngState: moonDepositRngState,
       owner: null,
     });
   }

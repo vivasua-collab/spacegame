@@ -1,0 +1,71 @@
+{
+  "comment": "Правила Синергии v2 — ТИПОВЫЕ бонусы соседства (adjacency bonuses), docs/40-buildings.md §5. Задача 24: здания разделены по ТИПАМ (generator/extractor/processor/research/storage/production/colony/military — производные от category каталога); для каждого типа — свой набор бонусов; ПОДТИП = buildingId (solar_plant ≠ nuclear_reactor, mine ≠ quarry); флаг sameSubtypeOnly запрещает бонусы между разными подтипами одного типа. Псевдо-тип-роль 'consumer' = любое здание с energyConsumption > 0. Семантика: здание, чей тип ∈ sourceTypes, ПОЛУЧАЕТ бонус, если в соседнем гексе стоит здание, чей тип ∈ neighborTypes. Стекинг с убывающей отдачей: n-й сосед даёт value × stackDecay^(n-1) (docs §5.2). bonusTarget: 'research_rate' — множитель RP/сек лабораторий (bonus-resolver); 'processing_speed' — ускорение очереди производства (processProductionQueue) и авто-переработки (processAutoProcessing, R-27); 'energy_consumption' — снижение энергопотребления получателя (recalcEnergyBalance, value отрицательное); 'energy_generation' — бонус выработки генератора (recalcEnergyBalance); 'mining_speed' — бонус скорости добычи экстрактора (processExtraction). Синергия действует ТОЛЬКО на гексах поверхности (атмосферные/орбитальные слоты не имеют пространственной смежности). R-27: возвращены кросс-типовые правила mine_processor и warehouse_production (отложенные в Задаче 24, одобрены владельцем в жалобе от 2026-08-31 «не могу определить её реальное влияние») + добавлено generator_cluster (жалоба «синергия 3-х солнечных электростанций не отображается»). Валидация: scripts/validate-buildings.ts проверяет типы, value/stackDecay в допустимых диапазонах.",
+  "rules": [
+    {
+      "id": "lab_cluster",
+      "description": "Лаборатория + Лаборатория: +10% к скорости исследований (кластерный эффект однотипных построек)",
+      "sourceTypes": ["research"],
+      "neighborTypes": ["research"],
+      "sameSubtypeOnly": true,
+      "bonusTarget": "research_rate",
+      "value": 0.1,
+      "stackDecay": 0.5
+    },
+    {
+      "id": "power_grid",
+      "description": "Электростанция + Любое здание-потребитель: −5% к энергопотреблению получателя за каждую смежную электростанцию",
+      "sourceTypes": ["consumer"],
+      "neighborTypes": ["generator"],
+      "bonusTarget": "energy_consumption",
+      "value": -0.05,
+      "stackDecay": 0.5
+    },
+    {
+      "id": "power_boost",
+      "description": "Электростанция + смежный потребитель: +5% к выработке энергии электростанции за каждого смежного потребителя",
+      "sourceTypes": ["generator"],
+      "neighborTypes": ["consumer"],
+      "bonusTarget": "energy_generation",
+      "value": 0.05,
+      "stackDecay": 0.5
+    },
+    {
+      "id": "mining_cluster",
+      "description": "Шахта + Шахта (один подтип): +10% к скорости добычи за каждую смежную шахту того же подтипа",
+      "sourceTypes": ["extractor"],
+      "neighborTypes": ["extractor"],
+      "sameSubtypeOnly": true,
+      "bonusTarget": "mining_speed",
+      "value": 0.1,
+      "stackDecay": 0.5
+    },
+    {
+      "id": "generator_cluster",
+      "description": "Электростанция + Электростанция (один подтип): +5% к выработке энергии за каждую смежную электростанцию того же типа (сетевой резерв)",
+      "sourceTypes": ["generator"],
+      "neighborTypes": ["generator"],
+      "sameSubtypeOnly": true,
+      "bonusTarget": "energy_generation",
+      "value": 0.05,
+      "stackDecay": 0.5
+    },
+    {
+      "id": "mine_processor",
+      "description": "Переработчик + смежный экстрактор: +15% к скорости переработки за каждый смежный добывающий комплекс",
+      "sourceTypes": ["processor"],
+      "neighborTypes": ["extractor"],
+      "bonusTarget": "processing_speed",
+      "value": 0.15,
+      "stackDecay": 0.5
+    },
+    {
+      "id": "warehouse_production",
+      "description": "Переработчик + смежный склад: +20% к скорости переработки за каждый смежный склад (логистика под рукой)",
+      "sourceTypes": ["processor"],
+      "neighborTypes": ["storage"],
+      "bonusTarget": "processing_speed",
+      "value": 0.2,
+      "stackDecay": 0.5
+    }
+  ]
+}

@@ -3,9 +3,10 @@
 > **Архитектурный документ.** Описывает модульную систему хранения статических игровых данных во внешних человекочитаемых JSON-файлах с тонкими TS-loader'ами, валидаторами и общей бонус-системой.
 >
 > **Создан:** 2026-08-28 (R-SHIPS-DATA)
-> **Версия:** 1.0
-> **Статус:** ✅ Реализовано для buildings (R-BLD-MOD), research (R-RES), ships (R-SHIPS-DATA)
-> **Зависимости:** [00-ARCHITECTURE.md](./00-ARCHITECTURE.md), [03-project-structure.md](./03-project-structure.md), [40-buildings.md](./40-buildings.md) §R-BLD-MOD, [50-ships.md](./50-ships.md) §11, [60-research.md](./60-research.md), [architecture/modular-bus.md](./architecture/modular-bus.md), [modularity.md](./modularity.md)
+> **Изменён:** 2026-08-31 (R-STARS-DATA — §2.4 stars + planet grids; R-23/R-24 — §2.5 synergy v2, §5 валидаторы)
+> **Версия:** 1.2
+> **Статус:** ✅ Реализовано для buildings (R-BLD-MOD), research (R-RES), ships (R-SHIPS-DATA), stars + planet grids (R-STARS-DATA / Etap 4.1), synergy (R-23/R-24)
+> **Зависимости:** [00-ARCHITECTURE.md](./00-ARCHITECTURE.md), [03-project-structure.md](./03-project-structure.md), [40-buildings.md](./40-buildings.md) §R-BLD-MOD, [50-ships.md](./50-ships.md) §11, [60-research.md](./60-research.md), [20-stars.md](./20-stars.md) §7.2, [architecture/modular-bus.md](./architecture/modular-bus.md), [modularity.md](./modularity.md)
 
 ---
 
@@ -89,7 +90,7 @@
 
 **Особенность:** разделение по **слою размещения** (surface/orbit/space) — каждый файл соответствует физическому месту, где строится здание. Loader (`buildings/index.ts`) мержит все 3 файла в единый `BUILDINGS` массив (порядок surface→orbit→space) и строит `BUILDING_MAP`.
 
-**Подробнее:** [40-buildings.md](./40-buildings.md) + checkpoint `audit_2026_08_28_07_modular_buildings.md`.
+**Подробнее:** [40-buildings.md](./40-buildings.md) + checkpoint `08_28_audit_07_modular_buildings.md`.
 
 ### 2.2 Research (R-RES, 2026-08-28)
 
@@ -105,7 +106,7 @@
 
 **Особенность:** R-RES добавил **очередь исследований** (active tech + queue) вместо модели прямого списания RP. Окно дерева авто-масштабируется под количество технологий.
 
-**Подробнее:** [60-research.md](./60-research.md) + checkpoint `audit_2026_08_28_06_research_redesign.md`.
+**Подробнее:** [60-research.md](./60-research.md) + checkpoint `08_28_audit_06_research_redesign.md`.
 
 ### 2.3 Ships (R-SHIPS-DATA, 2026-08-28)
 
@@ -122,6 +123,52 @@
 **Особенность:** `src/data/ships/shipyard-queue.ts` — это **runtime-логика очереди постройки**, а не данные; он остаётся `.ts`. Валидация дизайна корабля — `src/ships/designer.ts`.
 
 **Подробнее:** [50-ships.md](./50-ships.md) §11.
+
+### 2.4 Stars + Planet Grids (R-STARS-DATA / Etap 4.1, 2026-08-31)
+
+| Файл | Что содержит | Записей |
+|------|--------------|---------|
+| `src/data/stars/types.json` | Звёздный каталог: `mainSequence` (7 спектральных классов O→B→A→F→G→K→M — ПОРЯДОК ОБЯЗАТЕЛЕН) + `special` (WD/RG/NS/PULSAR/BH с физическими `ranges`) | 7 + 5 = 12 |
+| `src/data/planets/grids.json` | Размерности гекс-сеток: `planetGrids` (5 планетарных: 19/37/61/91/127) + `moonGrids` (2 малые для спутников: 7/19) | 5 + 2 |
+
+**Поля StarDef** (`core/types.ts`): `type`, `name`, `mass`, `luminosity`, `temperature`, `radius`, `color` (hex), `minPlanets`, `maxPlanets`, `weight`; для special дополнительно `ranges` (`massMin/Max`, `tempMin/Max`, `radiusMin/Max` — из 20-stars.md §2.1).
+
+**Особенности:**
+- **Порядок `mainSequence` залочен** валидатором и тестами: `selectCompanionStar` в generate-systems.ts выбирает компаньона двойной системы как «тот же класс или на 1 ниже» через `indexOf`, а `STAR_TYPES.slice(0, 7)` выделяет ГП.
+- **Доля специальных звёзд ~4% ≤ 5%** (требование владельца 2026-08-31; до этого было 0.8%). Проверяется валидатором + тестом через `specialStarFraction()`.
+- **Сетки лун отдельные от планетарных**: луны газовых гигантов используют только 2 малые сетки (7/19 гексов), размер 2-уровневый (R<0.15 R⊕ → tiny, иначе small). Планеты генерируются процедурно (тип/атмосфера/температура/жизнь — generate-planets.ts), но размерность сетки берётся из grids.json.
+- Все значения сеток — центрированные гекс-числа 1+3k(k+1) (полные кольца axial-сетки).
+- Физика (Стефан-Больцман, R=M^0.8/0.57, 3-й закон Кеплера) осталась в коде — это научные формулы, не данные.
+- Старый `src/data/star-types.ts` **удалён**; публичный API (`STAR_TYPES`, `STAR_TYPE_MAP`, `STAR_WEIGHTS`, `getStarTypeDef`) перенесён в `src/data/stars/index.ts` + новые экспорты (`MAIN_SEQUENCE_STAR_TYPES/WEIGHTS`, `SPECIAL_STAR_TYPES`, `SPECIAL_STAR_RANGES`, `MAIN_SEQUENCE_TYPES`, `SPECTRAL_CHAIN`, `specialStarFraction`). 4 потребителя обновлены (system-view.tsx, generate-systems.ts, star-dist-test.ts, audit-generator.ts).
+- `SIZE_HEX_COUNT` (planet-types.ts) = `PLANET_GRIDS` (обратная совместимость), `MOON_SIZE_HEX_COUNT` = `MOON_GRIDS` — новый экспорт.
+- `generateHexGrid(size, weights, rng, gridMap?)` — опциональный параметр сетки (по умолчанию планетарные; луны передают лунные).
+
+**Валидатор:** `scripts/validate-stars.ts` (`bun run validate:stars`) — 29 проверок (цепочка, доля specials, монотонность T/M/L, ranges, центрированные гекс-числа, loader API, обратная совместимость). Тесты: `tests/galaxy/star-catalog.test.ts` (22 теста).
+
+**Подробнее:** [20-stars.md](./20-stars.md) §7.2 + checkpoint `08_31_audit_10_stars_extraction.md`.
+
+### 2.5 Synergy (R-23 / R-24, 2026-08-31)
+
+| Файл | Что содержит | Записей |
+|------|--------------|---------|
+| `src/data/buildings/synergy.json` | Правила Синергии v2 — типовые бонусы смежности (adjacency) | 4 активных (+2 отложенных в `comment`) |
+
+**Поля правила** (`SynergyRule` в `core/types.ts`): `id`, `description`, `sourceTypes[]` (типы зданий, которые ПОЛУЧАЮТ бонус), `neighborTypes[]` (типы, которые ДАЮТ бонус, стоя в смежном гексе), `sameSubtypeOnly` (подтип = `buildingId`: solar_plant ≠ nuclear_reactor, mine ≠ quarry), `bonusTarget` (`research_rate` | `processing_speed` | `energy_consumption` | `energy_generation` | `mining_speed`), `value`, `stackDecay` (n-й сосед даёт `value × stackDecay^(n−1)`, docs §5.2).
+
+**Активные правила (типовая модель v2):**
+- `lab_cluster` — research+research (same subtype): **+10% research_rate**
+- `power_grid` — consumer ← generator: **−5% energy_consumption**
+- `power_boost` — generator ← consumer: **+5% energy_generation** (бонус генерации электростанции от смежного потребителя)
+- `mining_cluster` — extractor+extractor (same subtype): **+10% mining_speed** (бонус скорости добычи, а не энергопотребления)
+
+**Типы зданий** — производные от `category` каталога: `generator` / `extractor` / `processor` / `research` / `storage` / `production` / `colony` / `military` + псевдо-роль `consumer` (любое здание с `energyConsumption > 0`; генераторы не потребляют → solar ↔ nuclear НЕ бустят друг друга). Кросс-типовые правила (`mine_processor`, `warehouse_production`) ОТЛОЖЕНЫ владельцем — возврат = дописать записи в JSON без правок кода (см. 40-buildings.md §5.5).
+
+**Особенности:**
+- Loader `src/data/buildings/synergy.ts`: `SYNERGY_RULES`, `SYNERGY_RULES_BY_TARGET`, `SYNERGY_BUILDING_TYPES`, `getSynergyBuildingType()`, `isEnergyConsumer()`.
+- Движок смежности — `src/economy/adjacency.ts` (runtime-логика, не данные): 6 соседей гекса, учитываются только построенные здания (level ≥ 1), только гексы поверхности.
+- Валидация правил (типы из каталога, диапазоны value/stackDecay) — в `scripts/validate-buildings.ts`.
+
+**Подробнее:** [40-buildings.md](./40-buildings.md) §5 (типовая таблица) + §5.5 (отложенные) + checkpoint `08_31_audit_11_synergy_demolish_split.md`.
 
 ---
 
@@ -262,9 +309,10 @@ result = (1 + Σ add) × Π multiply
 | Команда | Скрипт | Что проверяет |
 |---------|--------|---------------|
 | `bun run validate:recipes` | `scripts/validate-recipes.ts` | Целостность рецептов крафта (75 рецептов) |
-| `bun run validate:buildings` | `scripts/validate-buildings.ts` | 17 зданий: уникальность ID, layer/category/size/terrain валидность, ссылки requiresTechs на TECH_MAP, корректность bonuses |
+| `bun run validate:buildings` | `scripts/validate-buildings.ts` | 17 зданий: уникальность ID, layer/category/size/terrain валидность, ссылки requiresTechs на TECH_MAP, корректность bonuses + правила синергии (типы из каталога, диапазоны value/stackDecay, sameSubtypeOnly) |
 | `bun run validate:ships` | `scripts/validate-ships.ts` | 4 корпуса + 20 модулей + fuel-map: уникальность ID, валидность всех per-category полей, ссылки requiredTechs, корректность bonuses, согласованность fuel-map |
-| `bun run validate:all` | — | Запускает все три подряд |
+| `bun run validate:stars` | `scripts/validate-stars.ts` | Звёздный каталог (7 ГП + 5 special): цепочка O→M, доля specials ~4%, монотонность T/M/L, ranges, центрированные гекс-числа сеток планет/лун (grids.json), loader API, обратная совместимость |
+| `bun run validate:all` | — | Запускает все четыре подряд |
 
 Валидаторы запускаются на CI / перед коммитом. Они — **первая линия защиты** от неконсистентных данных (поскольку TS-каст через `unknown` не проверяет семантику, только структуру).
 
@@ -319,6 +367,25 @@ result = (1 + Σ add) × Π multiply
 3. Изменить `id`, `name`, `branch`, `baseCost`, `maxLevel`, `prerequisites[]`, `effects[]`.
 4. Сохранить. Технология автоматически появится в дереве исследований (canvas авто-масштабируется) и в `TECH_MAP`.
 
+### 6.5 Добавить новый тип звезды (вне главной последовательности)
+
+1. Открыть `src/data/stars/types.json`.
+2. Добавить запись в массив `special` (для типов ГП — НИ В КОЕМ СЛУЧАЕ не менять порядок `mainSequence`: O→B→A→F→G→K→M).
+3. Заполнить `type` (новый StarType нужно также добавить в union в `core/types.ts` — единственное место с правкой кода), `name`, физические средние + `ranges` (massMin/Max, tempMin/Max, radiusMin/Max), `color`, `minPlanets`/`maxPlanets`, `weight`.
+4. Следить за суммарной долей `special` ≤ 5% (валидатор упадёт, если превысить).
+5. Сохранить. Тип звезды автоматически появится:
+   - В генераторе (`generate-systems.ts` weightedChoice).
+   - В UI системы (`system-view.tsx` — имя и цвет из STAR_TYPE_MAP).
+   - В валидаторе `validate:stars` (прогнать обязательно — проверит ranges/вес/долю).
+
+### 6.6 Изменить размерность планетарной/лунной сетки
+
+1. Открыть `src/data/planets/grids.json`.
+2. Изменить значение в `planetGrids` (например `medium: 61` → `91`) или `moonGrids`.
+3. Значение обязано быть центрированным гекс-числом 1+3k(k+1) (7, 19, 37, 61, 91, 127, 169...) — валидатор проверяет.
+4. Сохранить. Новые планеты/луны будут генерироваться с новой размерностью (существующие сейвы не затрагиваются — их гексы уже сгенерированы).
+5. Планетарных сеток должно быть ≥ 5, лунных — ровно 2 малые (требование владельца).
+
 ---
 
 ## 7. Совместимость с кодом
@@ -352,13 +419,16 @@ result = (1 + Σ add) × Π multiply
 - ✅ Buildings (R-BLD-MOD) — 17 зданий, 3 слоя, requiresTechs, terrainTypes, building-sourced + tech-sourced bonuses.
 - ✅ Research (R-RES) — 15 технологий + 6 фундаменталов + branch-links + tech-unlocks + active research + queue.
 - ✅ Ships (R-SHIPS-DATA) — 4 корпуса + 20 модулей + fuel-map.
+- ✅ Stars + Planet Grids (R-STARS-DATA / Etap 4.1, 2026-08-31) — 12 типов звёзд (7 ГП + 5 спец., доля спец. ~4% ≤ 5%) + 5 планетарных сеток + 2 лунные. Спектральная цепочка O→B→A→F→G→K→M залочена валидатором.
 
-### 8.2 TODO / Etap 4
+### 8.2 TODO / Etap 4 (остаток)
 
+- ⏳ **Planets catalog (Etap 4.2)** — `src/data/planet-types.ts` (7 типов планет + density/radius/moon/life tables) inline TS; миграция в `src/data/planets/types.json` (+ atmosphere-tables 4.3, zone-weights 4.4, resource-multipliers 4.5 — см. audit Pass 9 §3.3.1).
 - ⏳ **Recipes → JSON** — `src/data/recipes.ts` (75 рецептов) сейчас inline TS; миграция в `recipes.json` + тонкий loader по тому же паттерну.
 - ⏳ **Elements → JSON** — `src/data/elements.ts` (60 элементов) inline TS.
 - ⏳ **Ore definitions → JSON** — `src/data/chemistry/ore-specs.ts` + `processing-chains.ts` inline TS.
 - ⏳ **Empty fuel store data-driven** — `emptyFuelStore()` сейчас hardcode'ит 4 ключа; должна генерироваться из `ALL_FUEL_TYPES`.
+- ⏳ **Galaxy config + names (Etap 4.6, LOW)** — `DEFAULT_CONFIG`, GREEK/CONSTELLATIONS, JP-tunables → `src/data/galaxy/{config,names}.json`.
 - ⏳ **AI catalog** (Etap 3.5) — `src/data/ai/factions.json` + loader.
 - ⏳ **Combat catalog** (Etap 4) — `src/data/combat/weapons.json` (или расширение ships/modules.json).
 

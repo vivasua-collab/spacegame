@@ -4,16 +4,25 @@
  * P1-27: Газовый экстрактор проверяет наличие атмосферы.
  */
 
-import type { Planet, HexCell, ProductionQueue, ProductionItem, EntityId, StarSystem, BuildingDef, ProcessorType, ProcessorRecipeCategory } from '@/core/types';
+import type { Planet, HexCell, AtmosphericSlot, OrbitalSlot, BuildingLayer, ProductionQueue, ProductionItem, EntityId, StarSystem, BuildingDef, ProcessorType, ProcessorRecipeCategory } from '@/core/types';
 import { BUILDING_MAP, areBuildingTechsMet } from '@/data/buildings';
 import { RECIPE_MAP } from '@/data/recipes';
 import { PROCESSOR_CATEGORIES } from '@/data/processor-categories';
-import { resolveProcessorCategory } from '@/data/processor-recipe-categories';
 import { ELEMENT_MAP } from '@/data/elements';
 import { getCurrentLookups } from '@/data/baked-lookups';
-import { canStoreResource, calculateWarehouseCapacity, calculateWarehouseCapacities, getOrbitBufferCapacity, ensureReservesForResources } from '@/data/warehouse';
+import { canStoreResource, calculateWarehouseCapacity, calculateWarehouseCapacities, getOrbitBufferCapacity, ensureReservesForResources, getWarehouseType } from '@/data/warehouse';
 import { DIRECT_GAS_MAP, getAtmosphericGasesForType } from '@/data/atmosphere-gases';
+import {
+  BASE_CONSTRUCTION_RECIPE_IDS,
+  AUTO_PROCESSING_BATCH_SIZE,
+  AUTO_PROCESSING_LEVEL_INCREMENT,
+  AUTO_PROCESSING_MIN_INPUT,
+  AUTO_SPECIALIZATIONS,
+} from '@/data/auto-processing';
+import { resolveProcessorCategory } from '@/data/processor-recipe-categories';
+import { materializePlanetDeposits } from '@/galaxy/generate-resources'; // R-29: ленивые залежи
 import { gameBus } from '@/core/typed-event-bus';
+import { getEnergyConsumptionMultiplier, getEnergyGenerationMultiplier, getMiningSpeedMultiplier, getProcessingSpeedMultiplier } from '@/economy/adjacency';
 
 /**
  * Детерминированный счётчик ProductionItem IDs (gap-6, P9).
@@ -39,14 +48,18 @@ export function processEconomyTick(planets: Planet[], queues: Map<EntityId, Prod
     // 1. Добыча ресурсов зданиями
     processExtraction(planet);
 
-    // 2. Обработка очереди производства
+    // 2. R-27: авто-переработка базовых строительных руд переработчиками
+    //    (universal — все базовые; metal/nonmetal_smelting — своя категория с бустом)
+    processAutoProcessing(planet);
+
+    // 3. Обработка очереди производства
     processProductionQueue(planet, queues);
 
-    // 3. Расчёт энергетического баланса
+    // 4. Расчёт энергетического баланса
     const system = systemMap?.get(planet.systemId);
     recalcEnergyBalance(planet, system);
 
-    // 4. Автоматическое создание резервов для новых ресурсов
+    // 5. Автоматическое создание резервов для новых ресурсов
     ensureReservesForResources(planet);
   }
 }
@@ -59,8 +72,9 @@ export function processEconomyTick(planets: Planet[], queues: Map<EntityId, Prod
  */
 function processExtraction(planet: Planet): void {
   // Surface buildings
-  for (const hex of planet.hexes) {
-    if (!hex.buildingId) continue;
+  for (let i = 0; i < planet.hexes.length; i++) {
+    const hex = planet.hexes[i];
+    if (!hex || !hex.buildingId) continue;
     const buildingDef = BUILDING_MAP.get(hex.buildingId);
     if (!buildingDef) continue;
 
@@ -74,13 +88,17 @@ function processExtraction(planet: Planet): void {
       const terrainMult = hex.terrain in (buildingDef.terrainBonus ?? {})
         ? (buildingDef.terrainBonus as Record<string, number>)[hex.terrain] ?? 1
         : 1;
+      // R-SYNERGY v2 mining_cluster (Задача 24): экстракторы одного
+      // подтипа ускоряют добычу друг друга (+10% за смежного, стекинг
+      // ×0.5^(n−1)) — добывающие здания дают бонус СКОРОСТИ ДОБЫЧИ.
+      const miningMult = getMiningSpeedMultiplier(planet, i);
 
       for (const deposit of hex.deposits) {
         if (deposit.quantity <= 0) continue;
 
         // 1 тик = 1 день. Базовая скорость: ~1 единица/день при availability=0.5
         const baseRate = 1.0 * deposit.availability;
-        const amount = baseRate * levelMult * terrainMult;
+        const amount = baseRate * levelMult * terrainMult * miningMult;
         const requested = Math.min(amount, deposit.quantity);
 
         // Audit Pass 2 P1-1 (fix): only debit the deposit for the portion
@@ -186,6 +204,191 @@ function getAtmosphereEfficiency(type: string): number {
   }
 }
 
+// ─── R-27: АВТО-ПЕРЕРАБОТКА БАЗОВЫХ СТРОИТЕЛЬНЫХ РЕСУРСОВ ──────────────────
+
+/**
+ * R-27 (жалоба владельца 2026-08-31 №2/№3/№4): авто-переработка руд базовых
+ * строительных ресурсов (Fe, Si, Al, C, Cu, Ti — объединение costPerLevel
+ * каталога зданий) переработчиками без ручной очереди.
+ *
+ * Режимы экземпляра processor:
+ *   - universal (базовая комплектация): все базовые рецепты, выход ×0.75
+ *     (baseYield), чистота 0.78 — как у ручной очереди;
+ *   - specialized в metal_smelting / nonmetal_smelting: только базовые
+ *     рецепты СВОЕЙ категории, буст специализированного выхода
+ *     («специализация даёт буст только в рамках базовых ресурсов» — владелец);
+ *   - прочие специализации (chemical_decomp, gas_processing, …): НЕ участвуют
+ *     в авто-режиме — продвинутые цепочки через ручную очередь / refinery /
+ *     synthesizer.
+ *
+ * Скорость за рецепт за экземпляр: (10 ед. входа / recipe.time) ×
+ * (1 + (L−1)×0.15) × Синергия processing_speed (mine_processor +15% за
+ * смежный экстрактор, warehouse_production +20% за смежный склад).
+ *
+ * Ограничения:
+ *   - входы НЕ расходуются ниже резерва minimum руды (пол — «в базовом складе
+ *     всегда есть зарезервированное место для минимального хранения»);
+ *   - выходы — через canStoreResource (ёмкость склада + долг резервов);
+ *   - энергия: гейт planet.energyBalance > 0 (постоянное потребление
+ *     переработчиков уже учтено в recalcEnergyBalance; recipe.energyCost
+ *     дополнительно НЕ списывается — авто-режим не двойной тариф).
+ */
+function processAutoProcessing(planet: Planet): void {
+  // Гейт энергии: без энергии переработчики стоят (баланс с прошлого тика —
+  // та же семантика, что у processProductionQueue P3-02).
+  if (planet.energyBalance <= 0) return;
+
+  const processorDef = BUILDING_MAP.get('processor');
+  if (!processorDef) return;
+
+  // Экземпляры переработчиков: surface (с индексом для Синергии) + слоты
+  interface ProcInstance {
+    level: number;
+    processorType: ProcessorType | undefined;
+    specialization: string | undefined;
+    specializationLevel: number;
+    hexIndex: number; // −1 для слотов (нет смежности)
+  }
+  const instances: ProcInstance[] = [];
+  for (let i = 0; i < planet.hexes.length; i++) {
+    const hex = planet.hexes[i];
+    if (!hex || hex.buildingId !== 'processor' || hex.buildingLevel < 1) continue;
+    instances.push({
+      level: hex.buildingLevel,
+      processorType: hex.processorType,
+      specialization: hex.specialization,
+      specializationLevel: hex.specializationLevel ?? 0,
+      hexIndex: i,
+    });
+  }
+  for (const slot of planet.atmosphericSlots) {
+    if (slot.buildingId !== 'processor' || slot.buildingLevel < 1) continue;
+    instances.push({
+      level: slot.buildingLevel,
+      processorType: slot.processorType,
+      specialization: slot.specialization,
+      specializationLevel: slot.specializationLevel ?? 0,
+      hexIndex: -1,
+    });
+  }
+  for (const slot of planet.orbitSlots) {
+    if (slot.buildingId !== 'processor' || slot.buildingLevel < 1) continue;
+    instances.push({
+      level: slot.buildingLevel,
+      processorType: slot.processorType,
+      specialization: slot.specialization,
+      specializationLevel: slot.specializationLevel ?? 0,
+      hexIndex: -1,
+    });
+  }
+  if (instances.length === 0) return;
+
+  for (const instance of instances) {
+    // Режим: universal → все базовые; base-специализация → своя категория
+    const isUniversal = !instance.processorType || instance.processorType === 'universal';
+    const isBaseSpec = instance.processorType === 'specialized'
+      && instance.specialization !== undefined
+      && AUTO_SPECIALIZATIONS.includes(instance.specialization);
+    if (!isUniversal && !isBaseSpec) continue;
+
+    // Скорость: базовая партия × уровень × Синергия (только surface-гексы)
+    const levelMult = 1 + (instance.level - 1) * AUTO_PROCESSING_LEVEL_INCREMENT;
+    const synergyMult = instance.hexIndex >= 0
+      ? getProcessingSpeedMultiplier(planet, instance.hexIndex)
+      : 1;
+
+    for (const recipeId of BASE_CONSTRUCTION_RECIPE_IDS) {
+      // Специализированный экземпляр берёт только рецепты своей категории
+      if (isBaseSpec && instance.specialization !== undefined
+        && resolveProcessorCategory(recipeId, 'processor')?.category !== instance.specialization) {
+        continue;
+      }
+      const recipe = RECIPE_MAP.get(recipeId);
+      if (!recipe) continue;
+
+      // Батч: batchSize ед. входа за recipe.time тиков
+      const batchInput = Object.values(recipe.inputs).reduce((s, v) => s + (v ?? 0), 0);
+      if (batchInput <= 0) continue;
+      const ratePerTick = (AUTO_PROCESSING_BATCH_SIZE / recipe.time) * levelMult * synergyMult;
+
+      // Доля партии за тик (0..ratePerTick/batchInput), ограниченная:
+      //   - скоростью (ratePerTick / batchInput);
+      //   - запасом входов над резервным полом (minimum руды — не трогаем).
+      let fraction = ratePerTick / batchInput;
+      for (const [inputId, inputAmount] of Object.entries(recipe.inputs)) {
+        const stock = planet.resources[inputId] ?? 0;
+        const floor = planet.warehouse?.reserves[inputId]?.minimum ?? 0;
+        const usable = Math.max(0, stock - floor);
+        const inputFraction = usable / (inputAmount ?? 1);
+        if (inputFraction <= 0) { fraction = 0; break; }
+        if (inputFraction < fraction) fraction = inputFraction;
+      }
+      if (fraction <= 0) continue;
+
+      // Выход и чистота: те же формулы, что у ручной очереди
+      // (calculateProcessorOutputMultiplier; activeRecipes = [recipeId] —
+      // авто-режим гонит рецепты последовательно, штраф мульти-рецепта не
+      // накладывается).
+      const instanceLike = {
+        processorType: (instance.processorType ?? 'universal') as ProcessorType,
+        specialization: instance.specialization as ProcessorRecipeCategory | undefined,
+        specializationLevel: instance.specializationLevel,
+        activeRecipes: [recipeId],
+      };
+      const { yieldMult, purity } = calculateProcessorOutputMultiplier(processorDef, instanceLike);
+
+      // Ограничение по месту под выходы: доля партии уменьшается до
+      // «влезания» ВСЕХ выходов ВМЕСТЕ (несколько выходов одного рецепта
+      // делят склад: Fe и O — оба processed). Итеративно накапливаем желаемые
+      // объёмы по типам склада; если сумма не влезает (canStoreResource с
+      // учётом долга резервов) — ужать долю на min(storable/combined).
+      // Одного ужатия достаточно: ограничения монотонны (последний выход в
+      // каждом складе даёт полную сумму, свой выход — свой avail).
+      {
+        let minAllowed = 1;
+        const desiredByType = new Map<string, number>();
+        for (const [outputId, outputAmount] of Object.entries(recipe.outputs)) {
+          const desired = fraction * (outputAmount ?? 0) * yieldMult;
+          if (desired <= 0) continue;
+          const whType = getWarehouseType(outputId);
+          const combined = (desiredByType.get(whType) ?? 0) + desired;
+          const storable = canStoreResource(planet, outputId, combined);
+          if (storable < combined - 1e-12) {
+            const allowed = storable / combined;
+            if (allowed <= 0) { minAllowed = 0; break; }
+            if (allowed < minAllowed) minAllowed = allowed;
+          }
+          desiredByType.set(whType, combined);
+        }
+        if (minAllowed < 1) fraction *= minAllowed;
+      }
+      if (fraction * batchInput < AUTO_PROCESSING_MIN_INPUT) continue;
+
+      // Списание входов
+      for (const [inputId, inputAmount] of Object.entries(recipe.inputs)) {
+        const consumed = fraction * (inputAmount ?? 0);
+        const left = (planet.resources[inputId] ?? 0) - consumed;
+        if (left > 0) planet.resources[inputId] = left;
+        else delete planet.resources[inputId];
+      }
+
+      // Начисление выходов (средневзвешенная чистота — как в очереди)
+      if (!planet.resourcePurity) planet.resourcePurity = {};
+      for (const [outputId, outputAmount] of Object.entries(recipe.outputs)) {
+        const produced = fraction * (outputAmount ?? 0) * yieldMult;
+        if (produced <= 0) continue;
+        const prevAmount = planet.resources[outputId] ?? 0;
+        const prevPurity = planet.resourcePurity[outputId] ?? 1.0;
+        const newTotal = prevAmount + produced;
+        planet.resources[outputId] = newTotal;
+        planet.resourcePurity[outputId] = newTotal > 0
+          ? (prevPurity * prevAmount + purity * produced) / newTotal
+          : purity;
+      }
+    }
+  }
+}
+
 /**
  * (gap-7, C2 — удалено как мёртвый код, audit §2.3)
  * Прежняя extractOreToElements(planet, oreId, oreAmount) была @deprecated и не имела
@@ -250,8 +453,19 @@ function processProductionQueue(planet: Planet, queues: Map<EntityId, Production
       continue; // нет энергии — задача ждёт, слот не освобождается
     }
 
-    // Обновляем прогресс + запоминаем назначение (для UI-бейджа)
-    item.progress--;
+    // ─── R-SYNERGY §processing (интеграция в карусель R-26) ────────────
+    // Смежные шахты (+15%) / склады (+20%) ускоряют переработку у здания-
+    // исполнителя (docs/40-buildings.md §5.1, стекинг ×0.5^(n-1)).
+    // Карусель знает ТОЧНЫЙ экземпляр (instance), поэтому множитель
+    // применяется к исполнителю задачи, а не к «первому попавшемуся» зданию
+    // planet.hexes.findIndex(...) как в однозадачной версии до R-26.
+    // Только гексы поверхности (key >= 0) — у слотов нет «соседства».
+    const synergySpeedMult = instance.layer === 'surface' && instance.key >= 0
+      ? getProcessingSpeedMultiplier(planet, instance.key)
+      : 1;
+
+    // Обновляем прогресс (R-SYNERGY: с множителем скорости) + sticky-назначение (UI-бейдж)
+    item.progress -= synergySpeedMult;
     item.assignedTo = instance.key;
 
     // Тратим энергию
@@ -567,51 +781,90 @@ export function calculateProcessorOutputMultiplier(
 }
 
 /**
- * R-26: бонус синергии за одного соседа-солнечную станцию (+5%).
- * «Мизерный, но реальный» бонус: 3 станции в ряд → у средней 2 соседа
- * (+10%), у крайних по 1 (+5%) — итого +20% к суммарной выработке тройки.
+ * R-24 (Задача 24): чистый хелпер выработки энергии зданием за тик.
+ *
+ * ЕДИНАЯ формула для engine (recalcEnergyBalance) и UI (building-dialog —
+ * «реальное отображение в построенном здании»): раньше UI показывал
+ * захардкоженное «+10/tick», игнорируя уровень, светимость звезды (P1-26)
+ * и орбитальный бонус — теперь диалог показывает ровно то, что считает
+ * движок (без синергии power_boost — она добавляется отдельно, т.к. engine
+ * применяет её только на гексах поверхности).
+ *
+ * Формулы (docs/30-energy.md / 40-buildings.md):
+ *   - solar_plant:  10 × (1 + L×0.2) × светимость / max(0.01, R) × (orbit? 1.2 : 1)
+ *     (P1-26 — выработка зависит от светимости звезды и расстояния;
+ *     орбитальные станции работают в 1.2× лучше — нет затухания в атмосфере);
+ *   - nuclear_reactor: 25 × (1 + L×0.2) (P2-06/P2-07 — без светимости);
+ *   - прочие energy:  10 × (1 + L×0.2) (fallback);
+ *   - colony_hub (только surface): 5 × (1 + L×0.2);
+ *   - остальные: 0.
+ *
+ * @param buildingId     id здания из каталога
+ * @param buildingLevel  уровень (≥1; 0 → 0)
+ * @param layer          слой размещения (orbit → solar ×1.2)
+ * @param starLuminosity светимость звезды (L_sun); при отсутствии — 1.0
+ * @param orbitalRadius  орб. радиус планеты (дистанционный фактор P1-26)
  */
-export const SOLAR_SYNERGY_PER_NEIGHBOR = 0.05;
+export function getBuildingEnergyOutput(
+  buildingId: string,
+  buildingLevel: number,
+  layer: 'surface' | 'atmosphere' | 'orbit',
+  starLuminosity: number,
+  orbitalRadius: number,
+): number {
+  const def = BUILDING_MAP.get(buildingId);
+  if (!def || buildingLevel < 1) return 0;
+  const levelMult = 1 + buildingLevel * 0.2;
+  const distanceFactor = Math.max(0.01, orbitalRadius);
+  const orbitBonus = layer === 'orbit' ? 1.2 : 1.0;
+
+  if (def.category === 'energy') {
+    if (def.id === 'solar_plant') {
+      // P1-26: power_output = base_output × level × star_luminosity / distance_factor
+      // Orbit solar plants work 1.2× better (no atmosphere attenuation).
+      return 10 * levelMult * Math.max(0.0001, starLuminosity) / distanceFactor * orbitBonus;
+    }
+    if (def.id === 'nuclear_reactor') {
+      // P2-06/P2-07: nuclear plant base output = 25, no luminosity factor
+      return 25 * levelMult;
+    }
+    return 10 * levelMult; // fallback for unknown energy buildings
+  }
+  if (def.id === 'colony_hub') {
+    // Colony hub: базовая энергия 5 — только на surface (строится только там).
+    return layer === 'surface' ? 5 * levelMult : 0;
+  }
+  return 0;
+}
 
 /**
- * R-26: посчитать соседние солнечные станции на поверхности планеты
- * (adjacency в аксиальных координатах гекс-сетки).
+ * R-24 (Задача 24): чистый хелпер энергопотребления здания за тик.
  *
- * Возвращает Map<hexIndex, neighborCount> только для гексов с solar_plant.
- * Орбитальные и атмосферные станции синергии не получают (нет «соседства»).
- *
- * Соседство: аксиальное расстояние = (|dq| + |dr| + |dq+dr|) / 2 === 1
- * (6 соседей: (±1,0), (0,±1), (+1,-1), (-1,+1)).
+ * Базовая формула engine: energyConsumption × (1 + L×0.2) — тот же расчёт,
+ * что в recalcEnergyBalance (без синергии power_grid; движок применяет её
+ * только на гексах поверхности). UI показывает потребление с учётом уровня.
  */
-export function countSolarNeighbors(planet: Planet): Map<number, number> {
-  const result = new Map<number, number>();
-  const solarHexes: Array<{ index: number; q: number; r: number }> = [];
-  planet.hexes.forEach((hex, i) => {
-    if (hex.buildingId === 'solar_plant') {
-      solarHexes.push({ index: i, q: hex.coord.q, r: hex.coord.r });
-    }
-  });
-  for (const a of solarHexes) {
-    let count = 0;
-    for (const b of solarHexes) {
-      if (a.index === b.index) continue;
-      const dq = Math.abs(a.q - b.q);
-      const dr = Math.abs(a.r - b.r);
-      const distance = (dq + dr + Math.abs((a.q - b.q) + (a.r - b.r))) / 2;
-      if (distance === 1) count++;
-    }
-    result.set(a.index, count);
-  }
-  return result;
+export function getBuildingEnergyConsumption(
+  buildingId: string,
+  buildingLevel: number,
+): number {
+  const def = BUILDING_MAP.get(buildingId);
+  if (!def || buildingLevel < 1) return 0;
+  return def.energyConsumption * (1 + buildingLevel * 0.2);
 }
 
 /**
  * Пересчёт энергетического баланса планеты.
  * P1-26: Солнечная станция зависит от светимости звезды и расстояния.
- * R-26: синергия соседних солнечных станций на поверхности (+5% за соседа).
  *
  * (C4 — audit §2.3: ранее 3 отдельных цикла по surface/atmosphere/orbit с дублированной
  * логикой. Объединены в один helper `processBuildingEnergy` + 3 коротких цикла.)
+ *
+ * R-SYNERGY v2 (Задача 24):
+ *   - потребители на гексах поверхности: множитель энергопотребления от
+ *     смежных электростанций (power_grid, −5% за станцию);
+ *   - генераторы на гексах поверхности: множитель ВЫРАБОТКИ от смежных
+ *     потребителей (power_boost, +5% за потребителя, стекинг ×0.5^(n−1)).
  */
 export function recalcEnergyBalance(planet: Planet, system?: StarSystem): void {
   let production = 0;
@@ -619,59 +872,54 @@ export function recalcEnergyBalance(planet: Planet, system?: StarSystem): void {
 
   // Get star luminosity if available (P2-26: guard against black holes with ~0 luminosity)
   const starLuminosity = Math.max(0.0001, system?.stars[0]?.luminosity ?? 1.0);
-  const distanceFactor = Math.max(0.01, planet.orbitalRadius);
-
-  // R-26: карта синергии солнечных станций (hexIndex → число соседних станций).
-  const solarNeighbors = countSolarNeighbors(planet);
 
   // Helper: process one building's energy contribution (C4 — extracted from 3 inline copies).
   // layer: 'surface' | 'atmosphere' | 'orbit' — affects solar_plant bonus (orbit ×1.2)
   //        and colony_hub special-case (only on surface).
-  // hexIndex — индекс гекса (для surface, нужно для синергии солнечных станций).
+  // R-SYNERGY: для зданий на гексах поверхности применяются множители
+  // энергопотребления (power_grid) и выработки (power_boost), docs §5.1.
   const processBuildingEnergy = (
     buildingId: string | null | undefined,
     buildingLevel: number,
     layer: 'surface' | 'atmosphere' | 'orbit',
-    hexIndex?: number,
+    hexIndex = -1,
   ): void => {
     if (!buildingId) return;
     const buildingDef = BUILDING_MAP.get(buildingId);
     if (!buildingDef) return;
 
     const levelMult = 1 + buildingLevel * 0.2;
-    const orbitBonus = layer === 'orbit' ? 1.2 : 1.0;
 
     if (buildingDef.category === 'energy') {
-      if (buildingDef.id === 'solar_plant') {
-        // P1-26: power_output = base_output × level × star_luminosity / distance_factor
-        // Orbit solar plants work 1.2× better (no atmosphere attenuation).
-        // R-26: синергия соседних солнечных станций (adjacency) — каждая соседняя
-        // станция на поверхности даёт +5% выработки (мизерный, но реальный бонус).
-        const neighbors = layer === 'surface' && hexIndex !== undefined
-          ? (solarNeighbors.get(hexIndex) ?? 0)
-          : 0;
-        const synergyBonus = 1 + SOLAR_SYNERGY_PER_NEIGHBOR * neighbors;
-        production += 10 * levelMult * starLuminosity / distanceFactor * orbitBonus * synergyBonus;
-      } else if (buildingDef.id === 'nuclear_reactor') {
-        // P2-06/P2-07: nuclear plant base output = 25, no luminosity factor
-        production += 25 * levelMult;
-      } else {
-        production += 10 * levelMult; // fallback for unknown energy buildings
-      }
+      // Базовая выработка (единая формула с UI-хелпером getBuildingEnergyOutput).
+      const base = getBuildingEnergyOutput(buildingDef.id, buildingLevel, layer, starLuminosity, planet.orbitalRadius);
+      // R-SYNERGY v2 power_boost: генератор на гексе поверхности получает
+      // +выработку за смежных потребителей (+5% за каждого, стекинг).
+      const synergyMult = layer === 'surface' && hexIndex >= 0
+        ? getEnergyGenerationMultiplier(planet, hexIndex)
+        : 1;
+      production += base * synergyMult;
     } else if (buildingDef.id === 'colony_hub') {
       // Colony hub: базовая энергия 5 — только на surface (colony_hub строится только там).
       if (layer === 'surface') {
         production += 5 * levelMult;
       }
     } else {
-      consumption += buildingDef.energyConsumption * levelMult;
+      // R-SYNERGY §power: смежные электростанции снижают потребление
+      // (−5% за каждую, стекинг ×0.5^(n-1); только для гексов поверхности).
+      const synergyMult = layer === 'surface' && hexIndex >= 0
+        ? getEnergyConsumptionMultiplier(planet, hexIndex)
+        : 1;
+      consumption += buildingDef.energyConsumption * levelMult * synergyMult;
     }
   };
 
   // Surface buildings
-  planet.hexes.forEach((hex, i) => {
+  for (let i = 0; i < planet.hexes.length; i++) {
+    const hex = planet.hexes[i];
+    if (!hex) continue;
     processBuildingEnergy(hex.buildingId, hex.buildingLevel, 'surface', i);
-  });
+  }
 
   // Atmospheric slot buildings
   for (const slot of planet.atmosphericSlots) {
@@ -910,6 +1158,162 @@ export function upgradeBuilding(planet: Planet, hexIndex: number): boolean {
   recalcEnergyBalance(planet);
   gameBus.emit('economy:building-upgraded', { planetId: planet.id, hexIndex, level: hex.buildingLevel });
 
+  return true;
+}
+
+// ═══════════ R-DEMOLISH (Задача 22): понижение уровня и снос ═══════════
+
+/**
+ * Доля возврата ресурсов при понижении уровня / сносе здания.
+ * 0.5 = 50% вложенных ресурсов возвращается на склад планеты.
+ */
+export const DEMOLITION_REFUND_SHARE = 0.5;
+
+/** Слот-ячейка здания: surface-гекс, атмосферный или орбитальный слот. */
+type BuildingCell = HexCell | AtmosphericSlot | OrbitalSlot;
+
+/**
+ * Разрешить адрес ячейки здания по слою и индексу.
+ *
+ * Возвращает ячейку (структурно совместимую: buildingId/buildingLevel/
+ * процессорные поля) и reportIndex — единый индекс для событий/UI:
+ *   surface      → hexIndex (>= 0);
+ *   atmosphere   → -1 - slotIndex;
+ *   orbit        → -100 - slotIndex
+ * (та же конвенция, что у economy:building-constructed).
+ *
+ * 'space' не поддерживается (нет планетарных слотов) → null.
+ */
+function getBuildingCell(
+  planet: Planet,
+  layer: BuildingLayer,
+  index: number,
+): { cell: BuildingCell; reportIndex: number } | null {
+  if (layer === 'atmosphere') {
+    const slot = planet.atmosphericSlots[index];
+    if (!slot) return null;
+    return { cell: slot, reportIndex: -1 - index };
+  }
+  if (layer === 'orbit') {
+    const slot = planet.orbitSlots[index];
+    if (!slot) return null;
+    return { cell: slot, reportIndex: -100 - index };
+  }
+  if (layer === 'surface') {
+    const hex = planet.hexes[index];
+    if (!hex) return null;
+    return { cell: hex, reportIndex: index };
+  }
+  return null;
+}
+
+/** Сбросить состояние экземпляра здания (процессорные поля) при сносе. */
+function clearCellInstanceState(cell: BuildingCell): void {
+  cell.buildingId = null;
+  cell.buildingLevel = 0;
+  cell.processorType = undefined;
+  cell.specialization = undefined;
+  cell.specializationLevel = undefined;
+  cell.activeRecipes = undefined;
+}
+
+/**
+ * Понизить уровень здания на 1 (R-DEMOLISH).
+ *
+ * - Уровень L → L−1; возврат 50% стоимости уровня L (стоимость = base × (L−1)).
+ * - При L = 1 понижение превращается в СНОС (гекс/слот освобождается,
+ *   возврат 50% стоимости постройки) — «понижение до нуля».
+ * - Колониальный хаб нельзя понижать/сносить (ядро колонии).
+ * - Энергобаланс пересчитывается (recalcEnergyBalance).
+ *
+ * Известное упрощение MVP: снос не блокируется активной очередью
+ * производства (рецепты ссылаются на buildingId, не на экземпляр —
+ * при отсутствии экземпляра выход считается без процессорных бонусов).
+ */
+export function downgradeBuilding(
+  planet: Planet,
+  layer: BuildingLayer,
+  index: number,
+): boolean {
+  const ref = getBuildingCell(planet, layer, index);
+  if (!ref) return false;
+  const { cell, reportIndex } = ref;
+  if (!cell.buildingId || cell.buildingLevel < 1) return false;
+
+  const buildingDef = BUILDING_MAP.get(cell.buildingId);
+  if (!buildingDef) return false;
+
+  // Колониальный хаб — ядро колонии, снос/понижение запрещены.
+  if (buildingDef.id === 'colony_hub') return false;
+
+  // Уровень 1: понижение = снос (полное освобождение гекса/слота).
+  if (cell.buildingLevel === 1) {
+    return demolishBuilding(planet, layer, index);
+  }
+
+  // Возврат 50% стоимости текущего уровня L (стоимость уровня L = base × (L-1)).
+  const levelCostMult = cell.buildingLevel - 1;
+  for (const [resourceId, baseAmount] of Object.entries(buildingDef.costPerLevel)) {
+    const refund = Math.floor(baseAmount * levelCostMult * DEMOLITION_REFUND_SHARE);
+    if (refund > 0) {
+      planet.resources[resourceId] = (planet.resources[resourceId] ?? 0) + refund;
+    }
+  }
+
+  cell.buildingLevel--;
+  recalcEnergyBalance(planet);
+  gameBus.emit('economy:building-downgraded', {
+    planetId: planet.id,
+    hexIndex: reportIndex,
+    level: cell.buildingLevel,
+  });
+  return true;
+}
+
+/**
+ * Снести здание полностью (R-DEMOLISH) — освобождает гекс/слот.
+ *
+ * Возврат: 50% суммарных вложенных ресурсов. Модель стоимости
+ * (симметрична buildOnHex/upgradeBuilding): уровень 1 = base × 1,
+ * уровень i (i ≥ 2) = base × (i−1) → суммарно до уровня L:
+ *   base × (1 + L(L−1)/2).
+ *
+ * Специализация/активные рецепты экземпляра сбрасываются.
+ * Колониальный хаб снести нельзя. Энергобаланс пересчитывается.
+ */
+export function demolishBuilding(
+  planet: Planet,
+  layer: BuildingLayer,
+  index: number,
+): boolean {
+  const ref = getBuildingCell(planet, layer, index);
+  if (!ref) return false;
+  const { cell, reportIndex } = ref;
+  if (!cell.buildingId || cell.buildingLevel < 1) return false;
+
+  const buildingDef = BUILDING_MAP.get(cell.buildingId);
+  if (!buildingDef) return false;
+  if (buildingDef.id === 'colony_hub') return false;
+
+  const removedId = cell.buildingId;
+  const level = cell.buildingLevel;
+
+  // Возврат 50% суммарных вложений (см. докблок выше).
+  const totalInvestedMult = 1 + (level * (level - 1)) / 2;
+  for (const [resourceId, baseAmount] of Object.entries(buildingDef.costPerLevel)) {
+    const refund = Math.floor(baseAmount * totalInvestedMult * DEMOLITION_REFUND_SHARE);
+    if (refund > 0) {
+      planet.resources[resourceId] = (planet.resources[resourceId] ?? 0) + refund;
+    }
+  }
+
+  clearCellInstanceState(cell);
+  recalcEnergyBalance(planet);
+  gameBus.emit('economy:building-demolished', {
+    planetId: planet.id,
+    hexIndex: reportIndex,
+    buildingId: removedId,
+  });
   return true;
 }
 
@@ -1226,6 +1630,12 @@ export function colonizePlanet(planet: Planet, system?: StarSystem): boolean {
   // Нельзя колонизировать газовый гигант (нет поверхности) или уже занятую планету
   if (planet.type === 'gas_giant') return false;
   if (planet.owner) return false;
+
+  // R-29: ленивая материализация залежей — ТОЛЬКО при колонизации.
+  // До этого момента гексы «не разведаны» (в сейве их нет), известен лишь
+  // свод-пул; replay assignResourceDeposits из depositRngState даёт те же
+  // залежи, что прогон при генерации. Идемпотентно (depositsMaterialized).
+  materializePlanetDeposits(planet);
 
   // Найти лучший гекс для colony_hub:
   // Предпочтение: не-ocean гекс с максимальным количеством deposits

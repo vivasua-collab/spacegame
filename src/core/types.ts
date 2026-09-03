@@ -109,7 +109,7 @@ export interface Moon {
   name: string;
   /** Тип луны — rocky / ice / dwarf (не газовый гигант) */
   type: 'rocky' | 'ice' | 'dwarf';
-  /** Размер луны — tiny / small (реже medium) */
+  /** Размер луны — tiny / small (2 выделенные малые сетки из planets/grids.json: 7/19 гексов) */
   size: PlanetSize;
   /** Радиус в км */
   radiusKm: number;
@@ -125,6 +125,11 @@ export interface Moon {
   hexes: HexCell[];
   /** Ресурсные залежи (как у планет — упрощённо) */
   resourceDeposits: PlanetResourceDeposit[];
+  // ─── R-29: ленивая материализация залежей ──────────
+  /** Залежи гексов материализованы (колонизация/старый сейв)? undefined = false */
+  depositsMaterialized?: boolean;
+  /** Снимок состояния RNG залежей (4×uint32) для воспроизводимой материализации; null — нет гексов/не применимо */
+  depositRngState?: number[] | null;
   /** Владелец (factionId / playerId / null) */
   owner: EntityId | null;
 }
@@ -298,6 +303,54 @@ export interface BuildingDef {
    * здания (для add). Источник: docs/60-research.md §9 (effects) extended.
    */
   bonuses?: Bonus[];
+}
+
+/**
+ * R-SYNERGY v2 (Задача 24): правило Синергии — бонус соседства,
+ * привязанный к ТИПАМ зданий (docs/40-buildings.md §5).
+ *
+ * Здание, чей тип входит в sourceTypes, ПОЛУЧАЕТ бонус, если в соседнем
+ * гексе стоит здание, чей тип входит в neighborTypes. Стекинг с убывающей
+ * отдачей (§5.2): n-й подходящий сосед даёт value × stackDecay^(n-1).
+ *
+ * ТИПЫ (производные от category каталога, см. data/buildings/synergy.ts):
+ *   generator (energy) · extractor (extraction) · processor (processing) ·
+ *   research · storage (logistics) · production · colony · military.
+ * Псевдо-тип-роль 'consumer' — любое здание с energyConsumption > 0
+ * (генераторы не потребляют → не матчатся). '*' — любой тип.
+ *
+ * ПОДТИП = buildingId (solar_plant ≠ nuclear_reactor, mine ≠ quarry).
+ * Флаг sameSubtypeOnly: бонус только между зданиями ОДНОГО подтипа —
+ * «подтипы не дают бонусов друг другу» (владелец, Задача 24).
+ *
+ * bonusTarget:
+ *   - 'research_rate'      — аддитивный вклад в множитель RP/сек (bonus-resolver).
+ *   - 'processing_speed'   — аддитивный вклад в скорость очереди производства.
+ *   - 'energy_consumption' — снижение энергопотребления получателя
+ *                            (value отрицательное; recalcEnergyBalance).
+ *   - 'energy_generation'  — бонус к выработке энергии генератора
+ *                            (recalcEnergyBalance, R-24 power_boost).
+ *   - 'mining_speed'       — бонус к скорости добычи экстрактора
+ *                            (processExtraction, R-24 mining_cluster).
+ */
+export interface SynergyRule {
+  id: string;
+  description: string;
+  /** Типы зданий, которые ПОЛУЧАЮТ бонус. ["*"] = любой тип. */
+  sourceTypes: string[];
+  /** Типы соседних зданий, которые ДАЮТ бонус. */
+  neighborTypes: string[];
+  /**
+   * Бонус только между зданиями одного подтипа (подтип = buildingId).
+   * true → сосед должен иметь тот же buildingId, что и получатель.
+   */
+  sameSubtypeOnly?: boolean;
+  /** Целевая метрика (см. комментарий выше). */
+  bonusTarget: string;
+  /** Величина бонуса (доля; для energy_consumption — отрицательная). */
+  value: number;
+  /** Затухание стека: n-й сосед даёт value × stackDecay^(n-1). */
+  stackDecay: number;
 }
 
 /**
@@ -639,6 +692,20 @@ export interface Planet {
   moons: Moon[];
   /** Сводная таблица ресурсных залежей планеты (агрегация из гексов + атмосферных) */
   resourceDeposits: PlanetResourceDeposit[];
+  // ─── R-29: ленивая материализация залежей ──────────
+  /**
+   * Залежи гексов материализованы? undefined/false — нет (свежая планета:
+   * известен только свод-пул resourceDeposits). true — колонизирована
+   * (materializePlanetDeposits) либо загружена из старого сейва с запечёнными
+   * залежами. Предотвращает повторную материализацию (дубли залежей).
+   */
+  depositsMaterialized?: boolean;
+  /**
+   * Снимок состояния Xoshiro256 (4×uint32) ДО прогона генерации залежей.
+   * materializePlanetDeposits() воспроизводит залежи бит-в-бит.
+   * null/undefined — материализация невозможна (ГГ без гексов, старые сейвы).
+   */
+  depositRngState?: number[] | null;
   resources: Record<string, number>; // elementId → количество на складе
   /**
    * Block 05 (PR3-min): средневзвешенная чистота ресурсов на складе.
@@ -690,24 +757,34 @@ export type WarehouseSpecialization = 'universal' | 'ore' | 'metal' | 'gas' | 'c
 export type ColonyRole = 'mining' | 'industrial' | 'research' | 'capital' | 'custom';
 
 /**
- * Раздельная система складов (3 типа).
+ * Раздельная система складов (4 типа, v3.1 — R-27 добавил газовый).
  * См. docs/35-warehouse-and-logistics.md §1.3.
  * Единица измерения: 1 ед. = 1 млн т = 0.001 млрд т.
  */
 export interface WarehouseCapacities {
-  /** Рудный склад (открытое хранение): руды, газы (сырые), ледяные. Базовая 1000 ед. = 1 млрд т */
+  /** Рудный склад (открытое хранение): руды, ледяные. Базовая 5000 ед. */
   ore: number;
-  /** Переработанный склад (крытое хранение): чистые элементы, конструкционные материалы. Базовая 100 ед. = 0.1 млрд т */
+  /** Переработанный склад (крытое хранение): чистые элементы, конструкционные материалы. Базовая 3500 ед. */
   processed: number;
-  /** Высокотехнологичный склад (спец хранение): электроника, сверхпроводники, редкие элементы. Базовая 10 ед. = 0.01 млрд т */
+  /** Высокотехнологичный склад (спец хранение): электроника, сверхпроводники, редкие элементы. Базовая 1500 ед. */
   highTech: number;
+  /**
+   * Газовый склад (R-27, сжимаемое хранение): сырые атмосферные газы (H2, N2,
+   * CO2, CH4, NH3, H2S, SO2…). Базовая 2000 ед. Опционален: старые сейвы
+   * без поля получают базовую ёмкость через фолбэк GAS_WAREHOUSE_BASE
+   * (после первого тика recalcEnergyBalance записывает актуальное значение).
+   */
+  gas?: number;
 }
+
+/** Тип склада для ресурса (v3.1: добавлен 'gas'). */
+export type WarehouseType = 'ore' | 'processed' | 'highTech' | 'gas';
 
 /** Виртуальный склад планеты */
 export interface PlanetWarehouse {
-  /** Общая вместимость (legacy, вычисляется как сумма ore+processed+highTech) */
+  /** Общая вместимость (legacy, вычисляется как сумма ore+processed+highTech+gas) */
   totalCapacity: number;
-  /** Раздельные вместимости по типам складов (v3.0) */
+  /** Раздельные вместимости по типам складов (v3.1) */
   capacities: WarehouseCapacities;
   /** Специализация склада (deprecated, сохранён для обратной совместимости) */
   specialization: WarehouseSpecialization;
@@ -984,8 +1061,17 @@ export interface ResearchSlot {
 /**
  * Block 03 (R7): состояние исследований.
  *
+ * R-SPLIT (Задача 22): две ПАРАЛЛЕЛЬНЫЕ ветки притока RP:
+ *   1. Аккумулятор (rpBank) — накопительная ветка для ФУНДАМЕНТАЛЬНЫХ
+ *      исследований. Приток: доля RP/сек (см. engine.getResearchInflowSplit).
+ *      Тратится только levelUpFundamental. Слоты дерева НЕ трогают банк.
+ *   2. Дерево технологий (activeSlots) — постоянная ветка: слоты прогрессируют
+ *      напрямую от скорости притока RP (доля inflow × allocationPercent),
+ *      без списаний из банка и без «возврата» RP при завершении уровня.
+ *
  * - fundamentalLevels — уровень каждой фундаментальной ветки (0..10).
- * - fundamentalRpInvested — сколько RP уже вложено в каждую ветку.
+ * - fundamentalRpInvested — сколько RP уже вложено в каждую ветку
+ *   (только для отображения «Вложено»).
  * - researched — карта techId → текущий уровень (0 = не изучена).
  * - activeSlots — активные слоты очереди (не более getMaxResearchSlots).
  *   Первый слот — «активное исследование».
@@ -993,8 +1079,9 @@ export interface ResearchSlot {
  *   (R-RES task §B). Когда активный слот завершается (достигает maxLevel),
  *   первый элемент очереди автоматически становится активным (shift+create).
  *   Элементы очереди не занимают слотов до старта.
- * - totalRpGenerated — монотонный lifetime-счётчик RP (для отладки и
- *   «банка» фундаменталов). Не уменьшается при списаниях в слоты/фундаменталы.
+ * - totalRpGenerated — монотонный lifetime-счётчик RP (debug/статистика).
+ *   НЕ отображается в UI (параметр «Всего» удалён как не имеющий смысла).
+ *   Не уменьшается при списаниях.
  *
  * Используем Record/Partial вместо Map для нативной JSON-сериализации
  * (без Array.from(entries)). T-R8 (serialization round-trip) работает
@@ -1003,6 +1090,8 @@ export interface ResearchSlot {
 export interface ResearchState {
   fundamentalLevels: Record<FundamentalBranchId, number>;
   fundamentalRpInvested: Partial<Record<FundamentalBranchId, number>>;
+  /** R-SPLIT: аккумулятор RP для фундаментальных исследований. */
+  rpBank: number;
   researched: Record<string, number>;
   activeSlots: ResearchSlot[];
   /** R-RES §B: ordered queue of techIds waiting to become active research. */

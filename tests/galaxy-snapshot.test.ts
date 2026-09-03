@@ -37,6 +37,12 @@ import type { Galaxy, StarSystem, EntityId } from '@/core/types';
  * policy. The set now includes STAR_BH (black hole) — the corrected PRNG
  * state-update sequence shifts the seed=42 galaxy just enough that one
  * star lands on the BH branch of the star-type table.
+ *
+ * RE-RECORDED 2026-08-31 (R-STARS-DATA / Etap 4.1): star catalog extracted
+ * to src/data/stars/types.json and special-star weights raised from a
+ * combined 0.8% to ~4.0% (owner requirement: a few percent, max 5%).
+ * The seed=42 galaxy now also produces RG/NS/PULSAR stars (and more WD/BH).
+ * STAR_O remains absent at this seed (weight 0.003 — ultra-rare).
  */
 const EXPECTED_STAR_TYPES = [
   'STAR_A',
@@ -46,6 +52,9 @@ const EXPECTED_STAR_TYPES = [
   'STAR_G',
   'STAR_K',
   'STAR_M',
+  'STAR_NS',
+  'STAR_PULSAR',
+  'STAR_RG',
   'STAR_WD',
 ];
 

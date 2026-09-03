@@ -76,6 +76,8 @@ import {
   getTotalRPPerSec,
   getEffectiveRPPerSec,
   getAvailableRP,
+  areAllFundamentalsMaxed,
+  getResearchInflowSplit,
   type TechStatus,
 } from '@/research/engine';
 import { resolveBonuses } from '@/research/bonus-resolver';
@@ -143,6 +145,13 @@ export function ResearchView() {
 
   const maxSlots = getMaxResearchSlots(labCount);
 
+  // R-SPLIT (Задача 22): доля притока, идущая в дерево технологий
+  // (слоты прогрессируют от неё; остаток — в аккумулятор фундаменталов).
+  // ETA слотов и диалог старта считаются от techPerSec, не от полного притока.
+  const { techPerSec } = researchState
+    ? getResearchInflowSplit(researchState, totalRPPerSec)
+    : { techPerSec: 0 };
+
   if (!gameState || !researchState) {
     return (
       <div className="flex items-center justify-center h-full text-slate-500 text-sm">
@@ -172,6 +181,12 @@ export function ResearchView() {
                 <Atom className="size-3.5" />
                 Фундаменталы
               </div>
+              {/* R-SPLIT: подсказка о разделении веток исследований. */}
+              <div className="text-[10px] text-slate-600 leading-snug mt-1">
+                {areAllFundamentalsMaxed(researchState)
+                  ? 'Все фундаменталы изучены — 100% RP идёт в дерево технологий.'
+                  : 'RP копятся в аккумуляторе; тратятся только сюда. Дерево технологий исследуется отдельно — напрямую от притока RP.'}
+              </div>
             </CardHeader>
             <CardContent className="space-y-2 pt-0">
               {FUNDAMENTAL_BRANCHES_MVP.map((branch) => (
@@ -179,7 +194,6 @@ export function ResearchView() {
                   key={branch.id}
                   branchId={branch.id}
                   researchState={researchState}
-                  totalRpGenerated={researchState.totalRpGenerated}
                   onLevelUp={(id) => {
                     const ok = levelUpFundamental(id);
                     if (!ok) {
@@ -245,7 +259,7 @@ export function ResearchView() {
         <aside className="lg:w-80 shrink-0">
           <ResearchQueuePanel
             researchState={researchState}
-            totalRPPerSec={totalRPPerSec}
+            techRPPerSec={techPerSec}
             maxSlots={maxSlots}
             onCancelSlot={cancelResearch}
             onSetAllocation={setAllocation}
@@ -262,7 +276,7 @@ export function ResearchView() {
         <ResearchDetailDialog
           techId={selectedTechId}
           researchState={researchState}
-          totalRPPerSec={totalRPPerSec}
+          techRPPerSec={techPerSec}
           maxSlots={maxSlots}
           onClose={() => setSelectedTechId(null)}
           onStartResearch={(techId, targetLevel) => {
@@ -323,6 +337,14 @@ function ResearchStatsBar({
 }) {
   const activeSlots = researchState.activeSlots.length;
   const availableRP = getAvailableRP(researchState);
+  // R-SPLIT: статус распределения притока RP между ветками.
+  const fundamentalsMaxed = areAllFundamentalsMaxed(researchState);
+  const techIdle = activeSlots === 0 && researchState.researchQueue.length === 0;
+  const inflowStatus = fundamentalsMaxed
+    ? '100% в дерево'
+    : techIdle
+      ? '100% в банк'
+      : `50% банк / 50% дерево`;
   return (
     <div className="flex items-center gap-4 px-4 py-2 bg-[#0d0d24] border border-white/10 rounded-lg text-xs text-slate-300">
       <div className="flex items-center gap-1.5">
@@ -344,21 +366,23 @@ function ResearchStatsBar({
         </span>
       </div>
       <Separator orientation="vertical" className="h-4 bg-white/10" />
-      {/* R-RES §C: available RP — what player can actually spend on
-          fundamentals. Equals totalRpGenerated - sum(fundamentalRpInvested)
-          - sum(activeSlots.rpInvested). Displayed prominently; total
-          lifetime RP shown as secondary. */}
+      {/* R-SPLIT (Задача 22): аккумулятор RP — единственный банк для
+          фундаментальных исследований. Параметр «Всего» (lifetime-счётчик
+          totalRpGenerated) удалён из UI как не имеющий логического смысла.
+          Ветки разделены: слоты дерева прогрессируют от притока напрямую. */}
       <div className="flex items-center gap-1.5">
-        <span className="text-slate-500">Доступно:</span>
+        <span className="text-slate-500">Аккумулятор:</span>
         <span className="font-mono text-amber-300 font-semibold">
           {availableRP.toFixed(0)} RP
         </span>
       </div>
       <Separator orientation="vertical" className="h-4 bg-white/10" />
+      {/* R-SPLIT: статус распределения притока RP (50/50, 100% банк при
+          простое дерева, 100% дерево при изученных фундаменталах). */}
       <div className="flex items-center gap-1.5">
-        <span className="text-slate-500">Всего:</span>
-        <span className="font-mono text-slate-400">
-          {researchState.totalRpGenerated.toFixed(0)} RP
+        <span className="text-slate-500">Приток:</span>
+        <span className="font-mono text-cyan-400">
+          {inflowStatus}
         </span>
       </div>
       <div className="flex-1" />
@@ -381,12 +405,10 @@ function ResearchStatsBar({
 function FundamentalBranchCard({
   branchId,
   researchState,
-  totalRpGenerated,
   onLevelUp,
 }: {
   branchId: FundamentalBranchId;
   researchState: ResearchState;
-  totalRpGenerated: number;
   onLevelUp: (id: FundamentalBranchId) => void;
 }) {
   const branch = FUNDAMENTAL_BRANCH_MAP.get(branchId)!;
@@ -394,10 +416,10 @@ function FundamentalBranchCard({
   const invested = researchState.fundamentalRpInvested[branchId] ?? 0;
   const isMax = currentLevel >= branch.maxLevel;
   const cost = getTechCost(branch.baseCost, currentLevel + 1);
-  const totalInvested = Object.values(researchState.fundamentalRpInvested).reduce(
-    (a, v) => a + (v ?? 0), 0
-  );
-  const availableRp = totalRpGenerated - totalInvested;
+  // R-SPLIT: аккумулятор — единственный источник для фундаменталов
+  // (раньше считалось totalRpGenerated − totalInvested, что конфликтовало
+  // со слотами дерева — двойной учёт).
+  const availableRp = getAvailableRP(researchState);
   const canAfford = availableRp >= cost;
 
   return (
@@ -855,7 +877,7 @@ function getStatusColor(status: TechStatus): string {
 
 function ResearchQueuePanel({
   researchState,
-  totalRPPerSec,
+  techRPPerSec,
   maxSlots,
   onCancelSlot,
   onSetAllocation,
@@ -865,7 +887,8 @@ function ResearchQueuePanel({
   onClearQueue,
 }: {
   researchState: ResearchState;
-  totalRPPerSec: number;
+  /** R-SPLIT: RP/сек, доступные ветке дерева (доля притока после split). */
+  techRPPerSec: number;
   maxSlots: number;
   onCancelSlot: (slotId: string) => boolean;
   onSetAllocation: (slotId: string, percent: number) => boolean;
@@ -892,7 +915,10 @@ function ResearchQueuePanel({
           </Badge>
         </div>
         <div className="flex items-center gap-1 text-[10px] text-slate-500">
-          <span>RP/День: {totalRPPerSec.toFixed(1)}</span>
+          {/* R-SPLIT: RP/день, доступные ветке ДЕРЕВА (не полный приток). */}
+          <span title="Доля притока RP, идущая в дерево технологий (R-SPLIT)">
+            RP/День → дерево: {techRPPerSec.toFixed(1)}
+          </span>
           {focusBonus && (
             <Badge className="ml-1 text-[9px] h-3.5 px-1 bg-cyan-900/50 text-cyan-300 border-cyan-800">
               Фокус ×1.2
@@ -919,7 +945,7 @@ function ResearchQueuePanel({
                   key={slot.slotId}
                   slot={slot}
                   researchState={researchState}
-                  totalRPPerSec={totalRPPerSec}
+                  techRPPerSec={techRPPerSec}
                   activeSlotsCount={activeSlotsCount}
                   onCancel={onCancelSlot}
                   onSetAllocation={onSetAllocation}
@@ -1064,14 +1090,15 @@ function QueueRow({
 function ResearchSlotRow({
   slot,
   researchState,
-  totalRPPerSec,
+  techRPPerSec,
   activeSlotsCount,
   onCancel,
   onSetAllocation,
 }: {
   slot: ResearchSlot;
   researchState: ResearchState;
-  totalRPPerSec: number;
+  /** R-SPLIT: RP/сек ветки дерева (доля притока после split). */
+  techRPPerSec: number;
   activeSlotsCount: number;
   onCancel: (slotId: string) => boolean;
   onSetAllocation: (slotId: string, percent: number) => boolean;
@@ -1091,7 +1118,7 @@ function ResearchSlotRow({
   const remaining = Math.max(0, cost - invested);
   const partialBonus = getPartialBonus(tech.branch, researchState.fundamentalLevels);
   const effectiveRP = getEffectiveRPPerSec(
-    totalRPPerSec,
+    techRPPerSec,
     slot.allocationPercent,
     activeSlotsCount,
   ) * partialBonus;
@@ -1157,7 +1184,7 @@ function ResearchSlotRow({
 function ResearchDetailDialog({
   techId,
   researchState,
-  totalRPPerSec,
+  techRPPerSec,
   maxSlots,
   onClose,
   onStartResearch,
@@ -1165,7 +1192,8 @@ function ResearchDetailDialog({
 }: {
   techId: string;
   researchState: ResearchState;
-  totalRPPerSec: number;
+  /** R-SPLIT: RP/сек ветки дерева (доля притока после split). */
+  techRPPerSec: number;
   maxSlots: number;
   onClose: () => void;
   onStartResearch: (techId: string, targetLevel: number) => void;
@@ -1215,7 +1243,7 @@ function ResearchDetailDialog({
   // an active slot.
   const canAddToQueue = !isMaxed && !alreadyInQueue && !hasActiveSlot && allPrereqMet;
 
-  const effectiveRP = getEffectiveRPPerSec(totalRPPerSec, 100, 1) * partialBonus;
+  const effectiveRP = getEffectiveRPPerSec(techRPPerSec, 100, 1) * partialBonus;
   const etaSec = effectiveRP > 0 ? cost / effectiveRP : Infinity;
 
   return (

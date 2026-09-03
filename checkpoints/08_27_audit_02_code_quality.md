@@ -3,7 +3,7 @@
 **Дата:** 2026-08-27
 **Task ID:** 20 (audit-coordinator)
 **Область:** Economy, ships, research, galaxy, data, tests
-**Опирается на:** audit_2026_08_27_01_foundation.md (Pass 1)
+**Опирается на:** 08_27_audit_01_foundation.md (Pass 1)
 **Commit:** e3bc1d6 (HEAD of origin/main)
 
 ---
@@ -796,7 +796,7 @@ Based on Pass 2 findings, Pass 3 should focus on:
 ---
 
 ## Изменённые файлы
-- `checkpoints/audit_2026_08_27_02_code_quality.md` (этот файл)
+- `checkpoints/08_27_audit_02_code_quality.md` (этот файл)
 
 ---
 

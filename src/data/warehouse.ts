@@ -9,7 +9,7 @@
  * - Добавлены helper-функции getResourceType() и getResourceCategory()
  */
 
-import type { PlanetWarehouse, WarehouseReserve, ColonyRole, WarehouseSpecialization, Planet } from '@/core/types';
+import type { PlanetWarehouse, WarehouseReserve, WarehouseType, ColonyRole, WarehouseSpecialization, Planet } from '@/core/types';
 import { ELEMENT_MAP } from '@/data/elements';
 import { getCurrentLookups, hasCurrentLookups } from '@/data/baked-lookups';
 
@@ -50,6 +50,23 @@ export const HIGH_TECH_STORAGE_BASE = 1500;
 
 /** Бонус высокотехнологичного склада за уровень high_tech_storage = +0.375 млрд т/ур. */
 export const HIGH_TECH_STORAGE_PER_LEVEL = 375;
+
+/**
+ * Базовая вместимость газового склада (R-27, сжимаемое хранение) = 2 млрд т.
+ *
+ * Жалоба владельца 2026-08-31 №5/№7: сырые атмосферные газы (CO2, CH4, NH3,
+ * H2S, SO2 — без DIRECT_GAS_MAP-конверсии) копились в РУДНОМ складе и
+ * забивали его — газовый экстрактор «заморозил» всю логистику колонии.
+ * Теперь атмосферные соединения хранятся в отдельном газовом складе;
+ * лёд (твёрдые соединения) остаётся в рудном.
+ */
+export const GAS_WAREHOUSE_BASE = 2000;
+
+/**
+ * Бонус газового склада за уровень (зарезервировано под будущее здание
+ * gas_tank; сейчас зданий-расширителей нет — только база).
+ */
+export const GAS_WAREHOUSE_PER_LEVEL = 500;
 
 /** Минимальный резерв по умолчанию */
 const DEFAULT_MINIMUM = 50;
@@ -190,11 +207,15 @@ export function createDefaultWarehouse(): PlanetWarehouse {
   return {
     // Audit 2026-08-28: сумма трёх баз = 10000 (раньше было PROCESSED_WAREHOUSE_BASE
     // = 100, что вызывало переполнение склада на старте до первого tick).
-    totalCapacity: ORE_WAREHOUSE_BASE + PROCESSED_WAREHOUSE_BASE + HIGH_TECH_STORAGE_BASE,
+    // R-27 (v3.1): газовый склад — отдельная база 2000 (не входит в «стартовый
+    // склад 10000 ед.» твёрдых грузов: руды/элементы/высокотех — пропорции
+    // 5000/3500/1500 не тронуты).
+    totalCapacity: ORE_WAREHOUSE_BASE + PROCESSED_WAREHOUSE_BASE + HIGH_TECH_STORAGE_BASE + GAS_WAREHOUSE_BASE,
     capacities: {
       ore: ORE_WAREHOUSE_BASE,
       processed: PROCESSED_WAREHOUSE_BASE,
       highTech: HIGH_TECH_STORAGE_BASE,
+      gas: GAS_WAREHOUSE_BASE,
     },
     specialization: 'universal',
     reserves: {},
@@ -207,10 +228,13 @@ export function createDefaultWarehouse(): PlanetWarehouse {
 }
 
 /**
- * Рассчитать раздельные вместимости складов на основе зданий (v3.0).
- * Возвращает объект с 3 вместимостями: ore, processed, highTech.
+ * Рассчитать раздельные вместимости складов на основе зданий (v3.1).
+ * Возвращает 4 вместимости: ore, processed, highTech, gas.
+ *
+ * Газовый склад: пока расширяющих зданий нет — всегда базовая 2000
+ * (GAS_WAREHOUSE_PER_LEVEL зарезервирован под будущее gas_tank).
  */
-export function calculateWarehouseCapacities(planet: Planet): { ore: number; processed: number; highTech: number } {
+export function calculateWarehouseCapacities(planet: Planet): { ore: number; processed: number; highTech: number; gas: number } {
   // C4 (audit §2.3 — O(N²M) per tick): memoize by Planet object identity.
   // Immer creates a NEW Planet object on every mutation (build/upgrade/setResources),
   // so the cache automatically invalidates when planet changes.
@@ -222,6 +246,7 @@ export function calculateWarehouseCapacities(planet: Planet): { ore: number; pro
   let oreCap = ORE_WAREHOUSE_BASE;
   let processedCap = PROCESSED_WAREHOUSE_BASE;
   let highTechCap = HIGH_TECH_STORAGE_BASE;
+  let gasCap = GAS_WAREHOUSE_BASE;
 
   // Подсчёт по зданиям на поверхности
   for (const hex of planet.hexes) {
@@ -235,6 +260,10 @@ export function calculateWarehouseCapacities(planet: Planet): { ore: number; pro
         break;
       case 'high_tech_storage':
         highTechCap += HIGH_TECH_STORAGE_PER_LEVEL * hex.buildingLevel;
+        break;
+      case 'gas_tank':
+        // R-27: газовые хранилища (в каталоге пока нет; хук на будущее)
+        gasCap += GAS_WAREHOUSE_PER_LEVEL * hex.buildingLevel;
         break;
     }
   }
@@ -252,10 +281,13 @@ export function calculateWarehouseCapacities(planet: Planet): { ore: number; pro
       case 'high_tech_storage':
         highTechCap += HIGH_TECH_STORAGE_PER_LEVEL * slot.buildingLevel;
         break;
+      case 'gas_tank':
+        gasCap += GAS_WAREHOUSE_PER_LEVEL * slot.buildingLevel;
+        break;
     }
   }
 
-  const result = { ore: oreCap, processed: processedCap, highTech: highTechCap };
+  const result = { ore: oreCap, processed: processedCap, highTech: highTechCap, gas: gasCap };
   CAPACITIES_CACHE.set(planet, result);
   return result;
 }
@@ -266,7 +298,7 @@ export function calculateWarehouseCapacities(planet: Planet): { ore: number; pro
  * a new Planet on mutation (build/upgrade/setResources).
  * WeakMap so GC can clean up old Planet references.
  */
-const CAPACITIES_CACHE: WeakMap<Planet, { ore: number; processed: number; highTech: number }> = new WeakMap();
+const CAPACITIES_CACHE: WeakMap<Planet, { ore: number; processed: number; highTech: number; gas: number }> = new WeakMap();
 
 /**
  * @deprecated Используйте calculateWarehouseCapacities. Legacy совместимость.
@@ -278,16 +310,24 @@ export function calculateWarehouseCapacity(planet: Planet): number {
 }
 
 /**
- * Получить тип склада для ресурса.
- * 'ore' — рудный склад (руды, газы, ледяные)
+ * Получить тип склада для ресурса (v3.1 — R-27: атмосферные газы → газовый склад).
+ * 'ore' — рудный склад (руды, ледяные соединения)
  * 'processed' — переработанный (чистые элементы abundant/common, конструкционные)
  * 'highTech' — высокотехнологичный (электроника, сверхпроводники, редкие элементы)
+ * 'gas' — газовый (сырые атмосферные газы: H2, N2, CO2, CH4, NH3, H2S, SO2…)
  */
-export function getWarehouseType(resourceId: string): 'ore' | 'processed' | 'highTech' {
+export function getWarehouseType(resourceId: string): WarehouseType {
   const resType = getResourceType(resourceId);
 
-  // Руды, газы (сырые), ледяные → рудный склад
-  if (resType === 'ore' || resType === 'atmospheric' || resType === 'ice') {
+  // R-27: сырые атмосферные газы — отдельный газовый склад (жалоба №5/№7:
+  // раньше падали в рудный и забивали его — колония «замерзала»).
+  // Лёд (твёрдые соединения) остаётся в рудном.
+  if (resType === 'atmospheric') {
+    return 'gas';
+  }
+
+  // Руды, ледяные → рудный склад
+  if (resType === 'ore' || resType === 'ice') {
     return 'ore';
   }
 
@@ -321,9 +361,9 @@ export function getWarehouseType(resourceId: string): 'ore' | 'processed' | 'hig
 }
 
 /**
- * Получить использованный объём для конкретного типа склада.
+ * Получить использованный объём для конкретного типа склада (v3.1: + gas).
  */
-export function getUsedCapacityByType(planet: Planet, warehouseType: 'ore' | 'processed' | 'highTech'): number {
+export function getUsedCapacityByType(planet: Planet, warehouseType: WarehouseType): number {
   let total = 0;
   for (const [id, amount] of Object.entries(planet.resources)) {
     if (id === 'Energy') continue;
@@ -369,10 +409,42 @@ export function getOrbitBufferUsed(planet: Planet): number {
 }
 
 /**
+ * R-27 (жалоба №6): «долг резервов» — сколько места в складе типа
+ * warehouseType должно оставаться СВОБОДНЫМ под минимальные запасы ДРУГИХ
+ * ресурсов (свои резервы не ограничивают свой же ресурс).
+ *
+ * Семантика (docs/35-warehouse-and-logistics.md §1.4):
+ *   debt = Σ по резервам r ≠ excludingResourceId, type(r) = warehouseType:
+ *          max(0, minimum(r) − stock(r)).
+ *
+ * Свойства:
+ *   - Один тип руды НЕ может занять слоты минимумов других ресурсов
+ *     («чтобы один тип руды не забил все склады собой»).
+ *   - Долг существует только пока запас ниже минимума; когда все минимумы
+ *     физически выполнены, debt = 0 и склад используется целиком.
+ *   - Пороги — свойство стартовых (базовых) мощностей: при добавлении новых
+ *     складов (open_warehouse и т.п.) minimum-ы НЕ меняются — новый объём
+ *     минус маленький долг можно забить одним типом руды.
+ */
+export function getReserveDebt(planet: Planet, warehouseType: WarehouseType, excludingResourceId?: string): number {
+  const wh = planet.warehouse;
+  if (!wh?.reserves) return 0;
+  let debt = 0;
+  for (const [resId, reserve] of Object.entries(wh.reserves)) {
+    if (resId === excludingResourceId) continue;
+    if (getWarehouseType(resId) !== warehouseType) continue;
+    const stock = planet.resources[resId] ?? 0;
+    if (stock < reserve.minimum) debt += reserve.minimum - stock;
+  }
+  return debt;
+}
+
+/**
  * Проверить, можно ли хранить ресурс на складе.
- * Использует раздельную систему складов (v3.0): ресурс направляется в
- * соответствующий склад (ore/processed/highTech), и проверяется вместимость
- * именно этого склада.
+ * Использует раздельную систему складов (v3.1): ресурс направляется в
+ * соответствующий склад (ore/processed/highTech/gas), и проверяется вместимость
+ * именно этого склада. R-27 (жалоба №6): из свободного места вычитается
+ * долг резервов ДРУГИХ ресурсов этого склада — минимумы всегда доступны.
  *
  * Возвращает фактическое количество, которое можно разместить
  * (может быть меньше запрошенного).
@@ -380,13 +452,18 @@ export function getOrbitBufferUsed(planet: Planet): number {
 export function canStoreResource(planet: Planet, resourceId: string, amount: number): number {
   if (!planet.warehouse) return amount; // Нет склада = безлимит (обратная совместимость)
 
-  // v3.0: раздельная система складов
+  // v3.1: раздельная система складов
   if (planet.warehouse.capacities) {
     const whType = getWarehouseType(resourceId);
     const caps = calculateWarehouseCapacities(planet);
-    const capacity = whType === 'ore' ? caps.ore : whType === 'highTech' ? caps.highTech : caps.processed;
+    const capacity = whType === 'ore' ? caps.ore
+      : whType === 'highTech' ? caps.highTech
+      : whType === 'gas' ? (caps.gas ?? GAS_WAREHOUSE_BASE)
+      : caps.processed;
     const used = getUsedCapacityByType(planet, whType);
-    const available = capacity - used;
+    // R-27: место под минимумы других ресурсов этого склада зарезервировано
+    const debt = getReserveDebt(planet, whType, resourceId);
+    const available = Math.max(0, capacity - used - debt);
     if (available <= 0) return 0;
     if (amount <= available) return amount;
     return available;

@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { SaveUpdateSchema } from '@/lib/schemas/save-schema';
 import { checkRateLimit } from '@/lib/rate-limit';
+import { decodeStatePayload, encodeStatePayload, STATE_ENCODING_THRESHOLD } from '@/lib/save-codec-server';
+import { MAX_STATE_BYTES } from '@/lib/schemas/save-schema';
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -12,6 +14,12 @@ type RouteContext = { params: Promise<{ id: string }> };
  * serialized `state` JSON blob — the client deserializes it via
  * `deserializeGameState` (which runs zod validation on the blob, see
  * Block 08 gap-9).
+ *
+ * R-26 (2026-08-31): если `state` больше STATE_ENCODING_THRESHOLD (512 КБ),
+ * ответ отдаётся сжатым — `{ ..., state: base64(gzip), stateEncoding:
+ * 'gzip-base64' }` (ответ тоже проходит через шлюз с лимитом тела).
+ * Клиент (`loadGame`) декодирует через gunzipBase64; малые сейвы —
+ * прежний plain JSON (обратная совместимость).
  */
 export async function GET(_request: Request, context: RouteContext) {
   try {
@@ -19,6 +27,9 @@ export async function GET(_request: Request, context: RouteContext) {
     const save = await db.gameSave.findUnique({ where: { id } });
     if (!save) {
       return NextResponse.json({ error: 'Save not found' }, { status: 404 });
+    }
+    if (save.state.length > STATE_ENCODING_THRESHOLD) {
+      return NextResponse.json({ ...save, ...encodeStatePayload(save.state) });
     }
     return NextResponse.json(save);
   } catch (e) {
@@ -34,10 +45,13 @@ export async function GET(_request: Request, context: RouteContext) {
  *   1. Rate limit: 10 requests / minute / IP (token bucket).
  *      On exhaustion → 429 + `Retry-After: 60`.
  *   2. Body validation: zod `SaveUpdateSchema` (name optional 1–100 chars,
- *      state REQUIRED ≤ 50 MB, tick REQUIRED ≤ 10 000 000).
+ *      state REQUIRED ≤ 50 MB raw, tick REQUIRED ≤ 10 000 000).
+ *
+ * R-26 (2026-08-31): `state` может приходить в `gzip-base64` (см. POST).
+ * В БД хранится plain JSON (version 1).
  *
  * The client `saveGame` action in `src/stores/game-store.ts` always sends
- * `{ name, state, tick }` when `currentSaveId` is set.
+ * `{ name, state, stateEncoding?, tick }` when `currentSaveId` is set.
  */
 export async function PUT(request: Request, context: RouteContext) {
   // ─── Rate limit (gap-8) ────────────────────────────────────────────
@@ -77,11 +91,28 @@ export async function PUT(request: Request, context: RouteContext) {
         { status: 400 },
       );
     }
-    const { name, state, tick, settings } = parsed.data;
+    const { name, state, stateEncoding, tick, settings } = parsed.data;
+
+    // ─── R-26: декодирование транспорта (gzip-base64 → plain JSON) ────
+    let stateJson: string;
+    try {
+      stateJson = decodeStatePayload(state, stateEncoding);
+    } catch {
+      return NextResponse.json(
+        { error: 'Invalid state payload: malformed gzip/base64' },
+        { status: 400 },
+      );
+    }
+    if (stateJson.length > MAX_STATE_BYTES) {
+      return NextResponse.json(
+        { error: `State too large after decoding: ${stateJson.length} bytes (max ${MAX_STATE_BYTES})` },
+        { status: 400 },
+      );
+    }
 
     // Build the Prisma update payload — only include `name` if provided.
     const data: { state: string; tick: number; version: number; name?: string; settings?: string } = {
-      state,
+      state: stateJson,
       tick,
       version: 1, // current serialization format version (unchanged on PUT)
     };

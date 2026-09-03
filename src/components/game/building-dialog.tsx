@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { useGameStore } from '@/stores/game-store';
 import { BUILDINGS, BUILDING_MAP, CATEGORY_NAMES, areBuildingTechsMet } from '@/data/buildings';
 import { ELEMENT_MAP } from '@/data/elements';
@@ -11,12 +11,31 @@ import {
   DialogTitle,
   DialogDescription,
 } from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogFooter,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogAction,
+  AlertDialogCancel,
+} from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
-import { Hammer, Zap, ArrowUp, Wrench, RotateCcw, ArrowRight, FlaskConical, Sun } from 'lucide-react';
+import { Hammer, Zap, ArrowUp, ArrowDown, Trash2, Wrench, RotateCcw, ArrowRight, FlaskConical, Sparkles } from 'lucide-react';
 import type { Planet, HexTerrain, BuildingLayer, BuildingDef } from '@/core/types';
-import { calculateProcessorOutputMultiplier, countSolarNeighbors, SOLAR_SYNERGY_PER_NEIGHBOR } from '@/economy/engine';
+import {
+  calculateProcessorOutputMultiplier,
+  getBuildingEnergyOutput,
+  getBuildingEnergyConsumption,
+} from '@/economy/engine';
+import {
+  getActiveSynergiesForHex,
+  getEnergyGenerationMultiplier,
+  getEnergyConsumptionMultiplier,
+} from '@/economy/adjacency';
 import { PROCESSOR_CATEGORIES } from '@/data/processor-categories';
 import { SpecializeDialog } from './specialize-dialog';
 import { ShipyardDialog } from './shipyard-dialog';
@@ -69,8 +88,20 @@ export function BuildingDialog({ open, onOpenChange, planet, target }: BuildingD
   const buildOnAtmosphereSlot = useGameStore((s) => s.buildOnAtmosphereSlot);
   const buildOnOrbitSlot = useGameStore((s) => s.buildOnOrbitSlot);
   const upgradeBuildingOnHex = useGameStore((s) => s.upgradeBuildingOnHex);
+  // R-DEMOLISH (Задача 22): понижение уровня и снос.
+  const downgradeBuildingOnHex = useGameStore((s) => s.downgradeBuildingOnHex);
+  const demolishBuildingOnHex = useGameStore((s) => s.demolishBuildingOnHex);
+  const downgradeBuildingOnSlot = useGameStore((s) => s.downgradeBuildingOnSlot);
+  const demolishBuildingOnSlot = useGameStore((s) => s.demolishBuildingOnSlot);
   // R-BLD-MOD: карта исследованных технологий для фильтра requiresTechs в BuildList.
   const researched = useGameStore((s) => s.gameState?.researchState.researched ?? {});
+  // R-24 (Задача 24): система планеты — светимость звезды для РЕАЛЬНОЙ
+  // выработки солнечных станций (P1-26) в диалоге построенного здания.
+  // Map.get возвращает стабильную ссылку → селектор не плодит ре-рендеры.
+  const system = useGameStore((s) =>
+    planet ? s.gameState?.galaxy.systemMap.get(planet.systemId) : undefined,
+  );
+  const starLuminosity = Math.max(0.0001, system?.stars[0]?.luminosity ?? 1.0);
 
   if (!planet || !target) return null;
 
@@ -104,8 +135,19 @@ export function BuildingDialog({ open, onOpenChange, planet, target }: BuildingD
           terrain={terrain}
           existingBuilding={existingBuilding}
           existingLevel={hex.buildingLevel}
+          starLuminosity={starLuminosity}
           onUpgrade={() => {
             upgradeBuildingOnHex(planet.id, target.hexIndex);
+            onOpenChange(false);
+          }}
+          onDowngrade={() => {
+            // R-DEMOLISH: понижение на 1 (уровень 1 = снос, гекс освобождается).
+            downgradeBuildingOnHex(planet.id, target.hexIndex);
+            onOpenChange(false);
+          }}
+          onDemolish={() => {
+            // R-DEMOLISH: снос с возвратом 50% вложенных ресурсов.
+            demolishBuildingOnHex(planet.id, target.hexIndex);
             onOpenChange(false);
           }}
         />
@@ -118,58 +160,34 @@ export function BuildingDialog({ open, onOpenChange, planet, target }: BuildingD
     const slot = target.kind === 'atmosphere'
       ? planet.atmosphericSlots[target.slotIndex]
       : planet.orbitSlots[target.slotIndex];
-    const existingBuilding = slot.buildingId ? BUILDING_MAP.get(slot.buildingId) : null;
+    const existingBuilding = slot?.buildingId ? BUILDING_MAP.get(slot.buildingId) : null;
+    const slotLevel = slot?.buildingLevel ?? 0;
     // If the slot is occupied, show a brief info card. Building elsewhere:
     // the player clicks another empty slot/hex, which opens the dialog anew
     // (R-26: вкладок слоёв больше нет — каждый слот открывает свой список).
-    if (existingBuilding && slot.buildingId) {
+    if (existingBuilding && slot?.buildingId) {
+      const slotLayer: 'atmosphere' | 'orbit' = target.kind;
+      // R-DEMOLISH (Задача 22)/R-24: понижение/снос слота — с подтверждением
+      // (при уровне > 1 — дополнительный вопрос «здание выше 1-го уровня»).
       return (
-        <Dialog open={open} onOpenChange={onOpenChange}>
-          <DialogContent className="bg-[#0d0d24] border-white/10 text-white max-w-md">
-            <DialogHeader>
-              <DialogTitle className="flex items-center gap-2">
-                <Hammer className="size-4 text-amber-400" />
-                {existingBuilding.name} — Lvl {slot.buildingLevel}
-              </DialogTitle>
-              <DialogDescription className="text-slate-400">
-                {existingBuilding.description}
-              </DialogDescription>
-            </DialogHeader>
-            <div className="space-y-3">
-              <div className="text-sm text-slate-300">
-                <span className="text-slate-500">Категория:</span>{' '}
-                {CATEGORY_NAMES[existingBuilding.category] ?? existingBuilding.category}
-              </div>
-              <div className="text-sm text-slate-500">
-                Слот: {LAYER_LABELS[target.kind]}, #{slot.index + 1}
-              </div>
-              {existingBuilding.energyConsumption > 0 && (
-                <div className="text-sm text-orange-400 flex items-center gap-1">
-                  <Zap className="size-3" />
-                  Энергия: -{existingBuilding.energyConsumption}/tick
-                </div>
-              )}
-              {existingBuilding.category === 'energy' && (
-                <div className="text-sm text-green-400 flex items-center gap-1">
-                  <Zap className="size-3" />
-                  Энергия: +10/tick
-                </div>
-              )}
-              {existingBuilding.id === 'laboratory' && slot && (
-                <div className="text-sm text-cyan-400 flex items-center gap-1">
-                  <FlaskConical className="size-3" />
-                  RP: +{getResearchRate(slot.buildingLevel).toFixed(1)}/сек
-                  <span className="text-slate-500 text-[10px]">
-                    (ур.{slot.buildingLevel} × 5 × 1.0)
-                  </span>
-                </div>
-              )}
-              <div className="text-[10px] text-slate-600 italic">
-                Апгрейд атмосферных/орбитальных зданий пока не реализован в engine.
-              </div>
-            </div>
-          </DialogContent>
-        </Dialog>
+        <SlotOccupiedView
+          open={open}
+          onOpenChange={onOpenChange}
+          planet={planet}
+          target={target}
+          existingBuilding={existingBuilding}
+          slotLevel={slotLevel}
+          slotLayer={slotLayer}
+          starLuminosity={starLuminosity}
+          onDowngrade={() => {
+            downgradeBuildingOnSlot(planet.id, target.kind, target.slotIndex);
+            onOpenChange(false);
+          }}
+          onDemolish={() => {
+            demolishBuildingOnSlot(planet.id, target.kind, target.slotIndex);
+            onOpenChange(false);
+          }}
+        />
       );
     }
   }
@@ -204,6 +222,7 @@ export function BuildingDialog({ open, onOpenChange, planet, target }: BuildingD
           layer={targetLayer}
           target={target}
           researched={researched}
+          starLuminosity={starLuminosity}
           buildOnHex={buildOnHex}
           buildOnAtmosphereSlot={buildOnAtmosphereSlot}
           buildOnOrbitSlot={buildOnOrbitSlot}
@@ -224,7 +243,10 @@ function UpgradeMode({
   terrain,
   existingBuilding,
   existingLevel,
+  starLuminosity,
   onUpgrade,
+  onDowngrade,
+  onDemolish,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -233,10 +255,24 @@ function UpgradeMode({
   terrain: HexTerrain | null;
   existingBuilding: BuildingDef;
   existingLevel: number;
+  /** R-24: светимость звезды системы — для реальной выработки (P1-26). */
+  starLuminosity: number;
   onUpgrade: () => void;
+  onDowngrade: () => void;
+  onDemolish: () => void;
 }) {
   const canAffordUpgrade = canAffordBuildingUpgrade(planet, existingLevel, existingBuilding);
   const isMaxLevel = existingLevel >= existingBuilding.levels;
+  // R-DEMOLISH: колониальный хаб нельзя понижать/сносить (ядро колонии).
+  const isProtected = existingBuilding.id === 'colony_hub';
+  // R-SYNERGY: активные бонусы соседства этого здания.
+  const activeSynergies = getActiveSynergiesForHex(planet, hexIndex);
+  // R-24 (Задача 24): подтверждение сноса. 'downgrade1' — снос через
+  // понижение на уровне 1; 'demolish' — прямая кнопка сноса (ур. > 1).
+  // Шаги (общий вопрос → доп. вопрос при ур.>1) — внутри DemolishConfirmDialog.
+  const [demolishFlow, setDemolishFlow] = useState<{
+    action: 'downgrade1' | 'demolish';
+  } | null>(null);
   // Block 05 PR6 — specialization state
   const specializeBuildingOnHex = useGameStore((s) => s.specializeBuildingOnHex);
   const upgradeSpecializationOnHex = useGameStore((s) => s.upgradeSpecializationOnHex);
@@ -307,18 +343,17 @@ function UpgradeMode({
                 {CATEGORY_NAMES[existingBuilding.category] ?? existingBuilding.category}
               </div>
 
-              {existingBuilding.energyConsumption > 0 && (
-                <div className="text-sm text-orange-400 flex items-center gap-1">
-                  <Zap className="size-3" />
-                  Энергия: -{existingBuilding.energyConsumption}/tick
-                </div>
-              )}
-              {existingBuilding.category === 'energy' && (
-                <div className="text-sm text-green-400 flex items-center gap-1">
-                  <Zap className="size-3" />
-                  Энергия: +10/tick
-                </div>
-              )}
+              {/* ─── R-24 (Задача 24): РЕАЛЬНЫЕ энерго-показатели (engine-формулы):
+                    уровень × светимость (P1-26) × орб.бонус × синергия power_boost.
+                    Раньше здесь был захардкоженный «+10/tick». ─── */}
+              <EnergyStats
+                planet={planet}
+                building={existingBuilding}
+                level={existingLevel}
+                layer="surface"
+                hexIndex={hexIndex}
+                starLuminosity={starLuminosity}
+              />
               {existingBuilding.id === 'laboratory' && (
                 <div className="text-sm text-cyan-400 flex items-center gap-1">
                   <FlaskConical className="size-3" />
@@ -337,17 +372,29 @@ function UpgradeMode({
                 </div>
               )}
 
-              {/* ─── R-26: синергия соседних солнечных станций (adjacency) ─── */}
-              {existingBuilding.id === 'solar_plant' && (() => {
-                const neighbors = countSolarNeighbors(planet).get(hexIndex) ?? 0;
-                const bonusPct = Math.round(neighbors * SOLAR_SYNERGY_PER_NEIGHBOR * 100);
-                return (
-                  <div className={`text-sm flex items-center gap-1 ${neighbors > 0 ? 'text-yellow-300' : 'text-slate-500'}`}>
-                    <Sun className="size-3" />
-                    Синергия соседей: {neighbors > 0 ? `+${bonusPct}% (${neighbors} соседних станц.)` : 'нет (соседних солнечных станций нет)'}
+              {/* ─── R-SYNERGY: активные бонусы соседства (docs §5) — замещает
+                   R-26-солнечную синергию: power_boost покрывает солнечные
+                   станции общим механизмом (docs/40-buildings.md §5.1). ─── */}
+              {activeSynergies.length > 0 && (
+                <div className="rounded-md border border-violet-400/30 bg-violet-400/10 p-2 space-y-1">
+                  <div className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-violet-300">
+                    <Sparkles className="size-3" />
+                    Синергия
                   </div>
-                );
-              })()}
+                  {activeSynergies.map((s) => (
+                    <div key={s.rule.id} className="text-[10px] text-slate-400 leading-snug">
+                      <span className="text-slate-300">{s.neighbors}</span>{' '}
+                      смежн. →{' '}
+                      <span className={s.bonus >= 0 ? 'text-emerald-300' : 'text-cyan-300'}>
+                        {s.bonus >= 0 ? '+' : ''}
+                        {(s.bonus * 100).toFixed(1)}%
+                      </span>{' '}
+                      ({SYNERGY_TARGET_LABELS[s.rule.bonusTarget] ?? s.rule.bonusTarget})
+                      <span className="text-slate-500 text-[10px]">— {s.rule.description}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
 
               {/* ─── Block 05 PR6 — панель специализации переработчика ─── */}
               {isProcessorBuilding && processorOutput && (
@@ -414,6 +461,52 @@ function UpgradeMode({
                 </>
               )}
 
+              {/* ─── R-DEMOLISH (Задача 22): понижение уровня и снос ─── */}
+              {!isProtected && (
+                <div className="mt-3 pt-3 border-t border-white/10 space-y-2">
+                  <div className="text-xs uppercase tracking-wider text-slate-500">
+                    Управление зданием
+                  </div>
+                  <Button
+                    variant="outline"
+                    className="w-full border-orange-400/30 hover:border-orange-400/60 text-orange-300"
+                    // R-24: понижение ур.>1 — без подтверждения; на ур.1 это СНОС
+                    // → сначала вопрос «Вы действительно хотите снести здание?»
+                    onClick={() => {
+                      if (existingLevel === 1) {
+                        setDemolishFlow({ action: 'downgrade1' });
+                      } else {
+                        onDowngrade();
+                      }
+                    }}
+                    title={existingLevel === 1
+                      ? 'Уровень 1: здание будет снесено, гекс освободится'
+                      : `Уровень ${existingLevel} → ${existingLevel - 1}; возврат 50% стоимости уровня`}
+                  >
+                    <ArrowDown className="size-4 mr-1" />
+                    {existingLevel === 1 ? 'Снести (ур. 1)' : `Понизить до ур. ${existingLevel - 1}`}
+                  </Button>
+                  {existingLevel > 1 && (
+                    <Button
+                      variant="outline"
+                      className="w-full border-red-400/30 hover:border-red-400/60 text-red-300"
+                      // R-24: подтверждение сноса — общий вопрос, затем
+                      // дополнительный «здание выше 1-го уровня»
+                      onClick={() => setDemolishFlow({ action: 'demolish' })}
+                      title={`Снос: гекс освобождается, возврат 50% вложенных ресурсов (~${Math.floor(demolishRefundEstimate(existingBuilding, existingLevel))} ед. суммарно)`}
+                    >
+                      <Trash2 className="size-4 mr-1" />
+                      Снести здание
+                    </Button>
+                  )}
+                </div>
+              )}
+              {isProtected && (
+                <div className="text-[10px] text-slate-600 italic text-center mt-2">
+                  Колониальный хаб — ядро колонии, понижение/снос запрещены.
+                </div>
+              )}
+
               {/* ─── Block 02 (F2): shipyard action buttons ───────────────── */}
               {existingBuilding.id === 'shipyard' && (
                 <div className="mt-3 pt-3 border-t border-white/10 space-y-2">
@@ -465,6 +558,27 @@ function UpgradeMode({
           planet={planet}
         />
       )}
+
+      {/* R-24 (Задача 24): подтверждение сноса — «Вы действительно хотите снести
+          здание?» + при уровне > 1 дополнительный вопрос «Здание выше 1-го
+          уровня, вы действительно хотите его снести». */}
+      <DemolishConfirmDialog
+        flow={demolishFlow}
+        buildingName={existingBuilding.name}
+        level={existingLevel}
+        refundEstimate={demolishRefundEstimate(existingBuilding, existingLevel)}
+        slotLabel="гекс"
+        onCancel={() => setDemolishFlow(null)}
+        onFinalConfirm={(action) => {
+          setDemolishFlow(null);
+          if (action === 'demolish') {
+            onDemolish();
+          } else {
+            onDowngrade();
+          }
+          onOpenChange(false);
+        }}
+      />
     </>
   );
 }
@@ -480,15 +594,19 @@ function BuildList({
   buildOnOrbitSlot,
   onClose,
   researched,
+  starLuminosity,
 }: {
   planet: Planet;
-  layer: BuildingLayer;
+  /** Слой вкладки (space в диалоге недоступен — только 3 таба). */
+  layer: 'surface' | 'atmosphere' | 'orbit';
   target: BuildingDialogTarget;
   buildOnHex: (planetId: string, hexIndex: number, buildingId: string) => boolean;
   buildOnAtmosphereSlot: (planetId: string, slotIndex: number, buildingId: string) => boolean;
   buildOnOrbitSlot: (planetId: string, slotIndex: number, buildingId: string) => boolean;
   onClose: () => void;
   researched: Record<string, number>;
+  /** R-24: светимость звезды — проекция выработки солнечных станций (ур. 1). */
+  starLuminosity: number;
 }) {
   // Filter buildings by layer + planet size + exclude colony_hub (auto-placed).
   // R-BLD-MOD: также скрываем здания, чьи requiresTechs не выполнены —
@@ -563,15 +681,20 @@ function BuildList({
               <p className="text-xs text-slate-500 mb-2">{building.description}</p>
 
               <div className="flex items-center gap-3 text-xs mb-2">
-                {building.energyConsumption > 0 ? (
+                {/* R-24: реальные показатели на ур.1 для ЭТОЙ планеты (светимость
+                    P1-26, орб. радиус, орб. бонус ×1.2) — вместо «+10» из воздуха. */}
+                {getBuildingEnergyConsumption(building.id, 1) > 0 ? (
                   <span className="text-orange-400 flex items-center gap-1">
                     <Zap className="size-3" />
-                    -{building.energyConsumption}
+                    -{getBuildingEnergyConsumption(building.id, 1).toFixed(1)}
                   </span>
-                ) : building.category === 'energy' ? (
+                ) : getBuildingEnergyOutput(building.id, 1, layer, starLuminosity, planet.orbitalRadius) > 0 ? (
                   <span className="text-green-400 flex items-center gap-1">
                     <Zap className="size-3" />
-                    +10
+                    +{getBuildingEnergyOutput(building.id, 1, layer, starLuminosity, planet.orbitalRadius).toFixed(1)}
+                    <span className="text-slate-500 text-[10px]">
+                      (ур. 1{building.id === 'solar_plant' ? `, L☉ ${starLuminosity.toFixed(2)}, R ${planet.orbitalRadius.toFixed(1)}${layer === 'orbit' ? ', ×1.2' : ''}` : ''})
+                    </span>
                   </span>
                 ) : null}
                 {building.id === 'laboratory' && (
@@ -612,6 +735,341 @@ function canAffordBuilding(planet: Planet, building: BuildingDef): boolean {
     if ((planet.resources[resourceId] ?? 0) < amount) return false;
   }
   return true;
+}
+
+// ─── R-SYNERGY: подписи целевых метрик Синергии для UI ──────────────────
+const SYNERGY_TARGET_LABELS: Record<string, string> = {
+  research_rate: 'скорость исследований',
+  processing_speed: 'скорость производства',
+  energy_consumption: 'энергопотребление',
+  // R-24 (Задача 24): новые метрики типовых правил.
+  energy_generation: 'генерация энергии',
+  mining_speed: 'скорость добычи',
+};
+
+// ─── R-DEMOLISH: оценка суммарного возврата ресурсов при сносе (для тултипа) ──
+// Модель стоимости (sym. upgradeBuilding): уровень 1 = base; уровень i = base × (i−1).
+// Возврат = 50% × (1 + L(L−1)/2) × base — сумма по всем ресурсам.
+function demolishRefundEstimate(building: BuildingDef, level: number): number {
+  const totalInvestedMult = 1 + (level * (level - 1)) / 2;
+  let total = 0;
+  for (const amount of Object.values(building.costPerLevel)) {
+    total += Math.floor((amount ?? 0) * totalInvestedMult * 0.5);
+  }
+  return total;
+}
+
+// ─── R-24 (Задача 24): РЕАЛЬНЫЕ энерго-показатели построенного здания ─────
+//
+// Владелец: «Солнечная станция — Lvl 1 … Энергия: +10/tick» — по факту
+// генерируется меньше: выработка зависит от уровня (×(1+L×0.2)), светимости
+// звезды (P1-26) и орбитального радиуса. Единая формула с движком:
+//   производство — getBuildingEnergyOutput (+ синергия power_boost для
+//   генераторов на гексах поверхности);
+//   потребление  — getBuildingEnergyConsumption (+ синергия power_grid
+//   для гексов поверхности). hexIndex = −1 → слот (смежности нет).
+
+interface EnergyStatsProps {
+  planet: Planet;
+  building: BuildingDef;
+  level: number;
+  layer: 'surface' | 'atmosphere' | 'orbit';
+  /** Индекс гекса (−1 = слот без смежности). */
+  hexIndex: number;
+  /** Светимость звезды (L☉); по умолчанию 1.0. */
+  starLuminosity: number;
+}
+
+function EnergyStats({ planet, building, level, layer, hexIndex, starLuminosity }: EnergyStatsProps) {
+  const isSurfaceHex = layer === 'surface' && hexIndex >= 0;
+  const baseProduction = getBuildingEnergyOutput(
+    building.id, level, layer, starLuminosity, planet.orbitalRadius,
+  );
+  // Синергия power_boost: +выработка генератора за смежных потребителей.
+  const generationMult = building.category === 'energy' && isSurfaceHex
+    ? getEnergyGenerationMultiplier(planet, hexIndex)
+    : 1;
+  const realProduction = baseProduction * generationMult;
+  // Синергия power_grid: −потребление за смежные электростанции.
+  const baseConsumption = getBuildingEnergyConsumption(building.id, level);
+  const consumptionMult = isSurfaceHex
+    ? getEnergyConsumptionMultiplier(planet, hexIndex)
+    : 1;
+  const realConsumption = baseConsumption * consumptionMult;
+
+  if (realProduction <= 0 && realConsumption <= 0) return null;
+
+  return (
+    <>
+      {realProduction > 0 && (
+        <div className="text-sm text-green-400 flex items-center gap-1 flex-wrap">
+          <Zap className="size-3" />
+          Энергия: +{realProduction.toFixed(1)}/tick
+          {building.id === 'solar_plant' && (
+            <span className="text-slate-500 text-[10px]">
+              (P1-26: L☉ {starLuminosity.toFixed(2)} / R {planet.orbitalRadius.toFixed(1)}
+              {layer === 'orbit' ? ', орбита ×1.2' : ''})
+            </span>
+          )}
+          {generationMult > 1 && (
+            <span className="text-violet-300 text-[10px]">
+              (синергия ×{generationMult.toFixed(2)})
+            </span>
+          )}
+        </div>
+      )}
+      {realConsumption > 0 && (
+        <div className="text-sm text-orange-400 flex items-center gap-1 flex-wrap">
+          <Zap className="size-3" />
+          Энергия: -{realConsumption.toFixed(1)}/tick
+          <span className="text-slate-500 text-[10px]">
+            (ур. {level})
+          </span>
+          {consumptionMult < 1 && (
+            <span className="text-violet-300 text-[10px]">
+              (синергия ×{consumptionMult.toFixed(3)})
+            </span>
+          )}
+        </div>
+      )}
+    </>
+  );
+}
+
+// ─── R-24 (Задача 24): подтверждение сноса (запрос владельца) ──────────────
+//
+// Поток: «Вы действительно хотите снести здание?» → при уровне > 1
+// ДОПОЛНИТЕЛЬНЫЙ вопрос «Здание выше 1-го уровня, вы действительно хотите
+// его снести» → финальное действие. Реализован одним AlertDialog с шагами.
+//
+// ВАЖНО (Radix): клик по AlertDialogAction закрывает диалог автоматически;
+// переход к шагу 2 требует event.preventDefault() — иначе auto-close
+// обнуляет состояние и второй вопрос не показывается.
+
+interface DemolishFlowState {
+  action: 'downgrade1' | 'demolish';
+}
+
+interface DemolishConfirmDialogProps {
+  flow: DemolishFlowState | null;
+  buildingName: string;
+  level: number;
+  refundEstimate: number;
+  slotLabel: string;
+  onCancel: () => void;
+  /** Финальное подтверждение (после всех вопросов) — выполнить действие. */
+  onFinalConfirm: (action: 'downgrade1' | 'demolish') => void;
+}
+
+function DemolishConfirmDialog({
+  flow,
+  buildingName,
+  level,
+  refundEstimate,
+  slotLabel,
+  onCancel,
+  onFinalConfirm,
+}: DemolishConfirmDialogProps) {
+  const open = flow !== null;
+  // Шаги: 'general' — общий вопрос; 'level' — доп. вопрос (ур. > 1).
+  const [step, setStep] = useState<'general' | 'level'>('general');
+  const isLevelStep = step === 'level';
+
+  const handleActionClick = (e: ReactMouseEvent<HTMLButtonElement>) => {
+    if (step === 'general' && level > 1) {
+      // НЕ закрывать диалог — показать дополнительный вопрос (ур. > 1).
+      e.preventDefault();
+      setStep('level');
+      return;
+    }
+    onFinalConfirm(flow?.action ?? 'demolish');
+  };
+
+  return (
+    <AlertDialog
+      open={open}
+      onOpenChange={(o) => {
+        if (!o) {
+          setStep('general'); // сброс шага для следующего открытия
+          onCancel();
+        }
+      }}
+    >
+      <AlertDialogContent className="bg-[#0d0d24] border-red-400/30 text-white max-w-sm">
+        <AlertDialogHeader>
+          <AlertDialogTitle className="flex items-center gap-2 text-red-300">
+            <Trash2 className="size-4" />
+            {isLevelStep ? 'Здание выше 1-го уровня' : 'Снос здания'}
+          </AlertDialogTitle>
+          <AlertDialogDescription className="text-slate-300">
+            {isLevelStep ? (
+              <>
+                «{buildingName}» имеет уровень {level} &gt; 1. Вы действительно
+                хотите его снести? Возврат ~{Math.floor(refundEstimate)} ед.
+                ресурсов, {slotLabel} освободится.
+              </>
+            ) : (
+              <>
+                Вы действительно хотите снести здание «{buildingName}»? Возврат
+                ~{Math.floor(refundEstimate)} ед. ресурсов, {slotLabel}
+                {' '}освободится.
+              </>
+            )}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel className="border-white/20 text-slate-300 hover:bg-white/5">
+            Отмена
+          </AlertDialogCancel>
+          <AlertDialogAction
+            className="bg-red-700 hover:bg-red-600 text-white"
+            onClick={handleActionClick}
+          >
+            {isLevelStep ? 'Да, снести' : 'Снести'}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
+// ─── R-24 (Задача 24): занятый атмосферный/орбитальный слот ────────────────
+//
+// Вынесен из тела BuildingDialog: реальные энерго-показатели (единая формула
+// с engine) + подтверждение сноса (общий вопрос; при ур. > 1 — доп. вопрос).
+
+interface SlotOccupiedViewProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  planet: Planet;
+  target: { kind: 'atmosphere' | 'orbit'; slotIndex: number };
+  existingBuilding: BuildingDef;
+  slotLevel: number;
+  slotLayer: 'atmosphere' | 'orbit';
+  starLuminosity: number;
+  onDowngrade: () => void;
+  onDemolish: () => void;
+}
+
+function SlotOccupiedView({
+  open,
+  onOpenChange,
+  planet,
+  target,
+  existingBuilding,
+  slotLevel,
+  slotLayer,
+  starLuminosity,
+  onDowngrade,
+  onDemolish,
+}: SlotOccupiedViewProps) {
+  const [demolishFlow, setDemolishFlow] = useState<DemolishFlowState | null>(null);
+  const slot = target.kind === 'atmosphere'
+    ? planet.atmosphericSlots[target.slotIndex]
+    : planet.orbitSlots[target.slotIndex];
+  return (
+    <>
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent className="bg-[#0d0d24] border-white/10 text-white max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Hammer className="size-4 text-amber-400" />
+              {existingBuilding.name} — Lvl {slotLevel}
+            </DialogTitle>
+            <DialogDescription className="text-slate-400">
+              {existingBuilding.description}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="text-sm text-slate-300">
+              <span className="text-slate-500">Категория:</span>{' '}
+              {CATEGORY_NAMES[existingBuilding.category] ?? existingBuilding.category}
+            </div>
+            <div className="text-sm text-slate-500">
+              Слот: {LAYER_LABELS[target.kind]}, #{(slot?.index ?? target.slotIndex) + 1}
+            </div>
+            {/* R-24: реальные энерго-показатели (слоты не имеют смежности →
+                синергии нет; орбитальные солнечные — ×1.2). */}
+            <EnergyStats
+              planet={planet}
+              building={existingBuilding}
+              level={slotLevel}
+              layer={slotLayer}
+              hexIndex={-1}
+              starLuminosity={starLuminosity}
+            />
+            {existingBuilding.id === 'laboratory' && (
+              <div className="text-sm text-cyan-400 flex items-center gap-1">
+                <FlaskConical className="size-3" />
+                RP: +{getResearchRate(slotLevel).toFixed(1)}/сек
+                <span className="text-slate-500 text-[10px]">
+                  (ур.{slotLevel} × 5 × 1.0)
+                </span>
+              </div>
+            )}
+            <div className="text-[10px] text-slate-600 italic">
+              Апгрейд атмосферных/орбитальных зданий пока не реализован в engine.
+            </div>
+            {/* ─── R-DEMOLISH: понижение и снос на атмосферных/орбитальных слотах ─── */}
+            {existingBuilding.id !== 'colony_hub' && (
+              <div className="pt-3 border-t border-white/10 space-y-2">
+                <Button
+                  variant="outline"
+                  className="w-full border-orange-400/30 hover:border-orange-400/60 text-orange-300"
+                  // R-24: понижение ур.>1 — без подтверждения; ур.1 = снос
+                  // → вопрос «Вы действительно хотите снести здание?»
+                  onClick={() => {
+                    if (slotLevel === 1) {
+                      setDemolishFlow({ action: 'downgrade1' });
+                    } else {
+                      onDowngrade();
+                      onOpenChange(false);
+                    }
+                  }}
+                  title={slotLevel === 1
+                    ? 'Уровень 1: здание будет снесено, слот освободится'
+                    : `Уровень ${slotLevel} → ${slotLevel - 1}; возврат 50% стоимости уровня`}
+                >
+                  <ArrowDown className="size-4 mr-1" />
+                  {slotLevel === 1 ? 'Снести (ур. 1)' : `Понизить до ур. ${slotLevel - 1}`}
+                </Button>
+                {slotLevel > 1 && (
+                  <Button
+                    variant="outline"
+                    className="w-full border-red-400/30 hover:border-red-400/60 text-red-300"
+                    // R-24: подтверждение сноса (общий + доп. вопрос при ур. > 1)
+                    onClick={() => setDemolishFlow({ action: 'demolish' })}
+                  >
+                    <Trash2 className="size-4 mr-1" />
+                    Снести здание
+                  </Button>
+                )}
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* R-24: подтверждение сноса слота (те же 2 шага). */}
+      <DemolishConfirmDialog
+        flow={demolishFlow}
+        buildingName={existingBuilding.name}
+        level={slotLevel}
+        refundEstimate={demolishRefundEstimate(existingBuilding, slotLevel)}
+        slotLabel="слот"
+        onCancel={() => setDemolishFlow(null)}
+        onFinalConfirm={(action) => {
+          setDemolishFlow(null);
+          if (action === 'demolish') {
+            onDemolish();
+          } else {
+            onDowngrade();
+          }
+          onOpenChange(false);
+        }}
+      />
+    </>
+  );
 }
 
 function canAffordBuildingUpgrade(

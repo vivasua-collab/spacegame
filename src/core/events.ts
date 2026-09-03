@@ -62,6 +62,22 @@ export interface EconomyEvents {
   'economy:building-constructed': { planetId: EntityId; hexIndex: number; buildingId: string };
   'economy:upgrade': { planetId: EntityId; hexIndex: number };
   'economy:building-upgraded': { planetId: EntityId; hexIndex: number; level: number };
+  // ─── R-DEMOLISH (Задача 22): понижение уровня и снос зданий ──────────
+  /**
+   * Понизить уровень здания на 1 (store → engine.downgradeBuilding).
+   * layer: 'surface' (default) — hexIndex; 'atmosphere' | 'orbit' — slotIndex.
+   * При уровне 1 понижение = снос (здание убирается, гекс освобождается).
+   */
+  'economy:downgrade': { planetId: EntityId; hexIndex?: number; slotIndex?: number; layer?: BuildingLayer };
+  /** Эмитится после downgradeBuilding (уровень уменьшен). */
+  'economy:building-downgraded': { planetId: EntityId; hexIndex: number; level: number };
+  /**
+   * Снести здание полностью (store → engine.demolishBuilding) — освобождает
+   * гекс/слот, возвращает часть вложенных ресурсов (50%).
+   */
+  'economy:demolish': { planetId: EntityId; hexIndex?: number; slotIndex?: number; layer?: BuildingLayer };
+  /** Эмитится после demolishBuilding (здание снесено, гекс свободен). */
+  'economy:building-demolished': { planetId: EntityId; hexIndex: number; buildingId: string };
   'economy:enqueue': { planetId: EntityId; recipeId: string; repeat: boolean };
   'economy:production-complete': { planetId: EntityId; recipeId: string };
   'economy:production-cancelled': { planetId: EntityId; recipeId: string; queueItemId: string; reason: 'recipe_not_found' | 'insufficient_inputs' | 'manual' };
