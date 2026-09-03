@@ -4,10 +4,14 @@
  * Extracted from `chemistry-generator.ts` as part of Block 01 C5 (audit §2.3):
  * split a 1704-line file into focused modules.
  *
- * Ice compounds are frozen atmospheric gases with temperature thresholds.
+ * Ice compounds are frozen volatile compounds with temperature thresholds.
  * Yields for complex ices (H₂O, CO₂, CH₄, NH₃) are calculated via molar-mass
  * ratios (see `calculateYieldsFromFormula` in `./ore-generator`).
  * Pure ices (N₂) yield 10.
+ *
+ * R-27: H₂O («Вода (лёд)») — единственный источник залежей водорода и кислорода:
+ * электролиз воды в processor даёт H + O (рецепт process_H2O). Чистых залежей
+ * H₂/O₂ больше не существует.
  *
  * @see docs/chemistry.md §9.4 — ice compound rules
  */
@@ -30,7 +34,7 @@ export function generateIceCompounds(massMap: Map<string, number>): BakedIce[] {
     pureElementId?: string;
   }[] = [
     {
-      id: 'H2O-ice', name: 'Водяной лёд', formula: 'H₂O',
+      id: 'H2O-ice', name: 'Вода (лёд)', formula: 'H₂O',
       formulaComponents: [{ elementId: 'H', count: 2 }, { elementId: 'O', count: 1 }],
       maxTemp: 50, minLevel: 1, energyCost: 4, time: 200,
     },

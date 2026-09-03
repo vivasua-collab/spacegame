@@ -7,7 +7,8 @@
  * символом, иконкой и категорией `crafted` (см. `08_27_block_01_stabilization.md` P5).
  *
  * Список синхронизирован с:
- * - `recipes.ts` (выходы `outputs: { steel: 5 }`, `outputs: { microchip: 1 }`, ...)
+ * - `recipes.ts` (выходы `outputs: { steel: 5 }`, `outputs: { microchip: 1 }`, ...,
+ *   `outputs: { slag: 2 }` — R-27, побочный продукт переработки угля)
  * - `warehouse.ts` HIGH_TECH_MATERIALS (265-269)
  */
 
@@ -150,6 +151,18 @@ export const CRAFTED_MATERIALS: Record<string, CraftedMaterialDef> = {
     symbol: 'AP',
     category: 'crafted',
     description: 'Слоистая броневая плита для защиты кораблей',
+  },
+
+  // === Побочные продукты переработки (R-27) ===
+  // Не «синтез» в чистом виде, но использует тот же канал отображения:
+  // если ресурс не найден в ELEMENT_MAP, UI смотрит сюда.
+  slag: {
+    id: 'slag',
+    name: 'Шлак',
+    symbol: 'Sl',
+    category: 'crafted',
+    description:
+      'Побочный продукт переработки угля и руд (зола). Пока не используется — на следующем этапе будет добавляться в бетон',
   },
 };
 

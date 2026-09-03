@@ -8,8 +8,14 @@
  *
  * ВАЖНО: в гексах генерируются залежи РУД (не чистых элементов).
  * ID руды берётся из ORE_FOR_ELEMENT_MAP, который маппит элемент → реальную руду
- * (Fe→Fe-ore, Ca→CaCO3, H→H2, Na→NaCl и т.д.)
+ * (Fe→Fe-ore, Ca→CaCO3, Na→NaCl и т.д.).
  * При добыче руда конвертируется в содержащиеся элементы через BakedGalaxyModel.
+ *
+ * R-27: КИСЛОРОД И ВОДОРОД НЕ ГЕНЕРИРУЮТСЯ В ВИДЕ ЗАЛЕЖЕЙ — это же вода!
+ * Атмосферные элементы (H, He, N, O, Ne, Ar) не создают залежей в породе:
+ * их источники — атмосфера (газовый экстрактор) и Вода (H2O-ice).
+ * Вода — единственная залежь-источник H и O: электролиз в processor
+ * (рецепт process_H2O) даёт водород + кислород.
  */
 
 import type { Xoshiro256 } from '@/core/prng';
@@ -31,9 +37,9 @@ const CATEGORY_MULTIPLIERS: Record<string, Record<string, number>> = {
 
 /**
  * Получить реальный ID руды для элемента.
- * Атмосферные элементы (H, He, O, N и др.) на поверхности генерируются
- * как следовые минеральные залежи, а не как газовые соединения.
- * Газовые экстракторы добывают их из атмосферы отдельно.
+ * R-27: атмосферные элементы (H, He, O, N и др.) НЕ создают залежей —
+ * вызывается только для не-атмосферных элементов. Газовые экстракторы
+ * добывают атмосферные газы напрямую из атмосферы (engine.ts, P1-01).
  */
 function getOreIdForElement(elementId: string): string {
   const lookups = getCurrentLookups();
@@ -44,10 +50,29 @@ function getOreIdForElement(elementId: string): string {
 }
 
 /**
+ * Обилие воды (H2O-ice) по типу планеты — R-27.
+ * Ледяные и океанические миры богаты водой; пустынные — бедны;
+ * газовые гиганты воды на поверхности не имеют.
+ */
+const WATER_ABUNDANCE: Record<string, number> = {
+  rocky: 0.4,
+  volcanic: 0.2,
+  ice: 3.0,
+  oceanic: 2.5,
+  desert: 0.15,
+  gas_giant: 0,
+  dwarf: 0.3,
+};
+
+/** ID водной залежи (лёд) — добывается шахтой/карьером, электролиз даёт H + O. */
+const WATER_DEPOSIT_ID = 'H2O-ice';
+
+/**
  * Назначить ресурсные залежи на гексах.
  * Каждый элемент размещается на гексах в виде своей основной руды.
- * Атмосферные элементы (H, He, O, N, Ne, Ar) добываются газовым экстрактором,
- * но их следовые залежи в породе тоже присутствуют.
+ * R-27: атмосферные элементы (H, He, O, N, Ne, Ar) залежей не создают —
+ * вместо этого генерируется Вода (H2O-ice), из которой электролизом
+ * получаются водород и кислород.
  */
 export function assignResourceDeposits(hexes: HexCell[], rng: Xoshiro256, planetType: string): void {
   if (hexes.length === 0) return;
@@ -59,8 +84,11 @@ export function assignResourceDeposits(hexes: HexCell[], rng: Xoshiro256, planet
   const rareSet = new Set(RARE_ELEMENTS);
   const catMult = CATEGORY_MULTIPLIERS[planetType] ?? CATEGORY_MULTIPLIERS.rocky;
 
-  // Для КАЖДОГО элемента из таблицы — создаём залежи его руды
+  // Для КАЖДОГО элемента из таблицы — создаём залежи его руды.
+  // R-27: атмосферные элементы пропускаем — залежей газа в породе нет.
   for (const element of ELEMENTS) {
+    if (element.isAtmospheric) continue;
+
     const cat = element.category;
     const mult = catMult[cat] ?? 0.3;
     const isProfile = profileSet.has(element.id);
@@ -78,10 +106,6 @@ export function assignResourceDeposits(hexes: HexCell[], rng: Xoshiro256, planet
       baseQuantity = (5 + rng.nextFloat() * 30) * mult * 0.15;
       hexFraction = Math.max(1 / nonOceanHexes.length, 0.05 + mult * 0.1);
       baseAvailability = 0.02 + rng.nextFloat() * 0.12;
-    } else if (element.isAtmospheric) {
-      baseQuantity = (15 + rng.nextFloat() * 60) * mult;
-      hexFraction = Math.max(1 / nonOceanHexes.length, 0.05 + mult * 0.1);
-      baseAvailability = 0.05 + rng.nextFloat() * 0.2;
     } else {
       baseQuantity = (20 + rng.nextFloat() * 120) * mult;
       hexFraction = Math.max(1 / nonOceanHexes.length, 0.05 + mult * 0.15);
@@ -108,10 +132,41 @@ export function assignResourceDeposits(hexes: HexCell[], rng: Xoshiro256, planet
     }
   }
 
+  // ── R-27: Вода (H2O-ice) — единственная залежь-источник H и O ─────────────
+  // Кислород и водород не встречаются в виде отдельных залежей — это же вода!
+  // Ледяные/океанические миры богаты водой; пустыни и вулканы — бедны;
+  // газовые гиганты поверхности не имеют (hexes пуст → ранний return выше,
+  // но и явный множитель 0 для надёжности).
+  const waterMult = WATER_ABUNDANCE[planetType] ?? 0.3;
+  if (waterMult > 0) {
+    const baseQuantity = (80 + rng.nextFloat() * 400) * waterMult;
+    const hexFraction = Math.min(0.55, 0.1 + waterMult * 0.18);
+    const baseAvailability = 0.15 + rng.nextFloat() * 0.45;
+    const hexCount = Math.max(1, Math.min(
+      nonOceanHexes.length,
+      Math.ceil(hexFraction * nonOceanHexes.length),
+    ));
+
+    const shuffledWater = [...nonOceanHexes].sort(() => rng.nextFloat() - 0.5);
+    for (let h = 0; h < hexCount && h < shuffledWater.length; h++) {
+      const waterHex = shuffledWater[h];
+      if (!waterHex) continue;
+      const quantityVariance = 0.5 + rng.nextFloat();
+      waterHex.deposits.push({
+        elementId: WATER_DEPOSIT_ID,
+        availability: Math.min(1, baseAvailability * (0.7 + rng.nextFloat() * 0.6)),
+        quantity: Math.max(1, Math.round(baseQuantity * quantityVariance)),
+        depth: rng.nextInt(1, 3),
+      });
+    }
+  }
+
   // Случайные богатые залежи профильных ресурсов на 15% гексов
+  // R-27: атмосферные элементы исключены и здесь — богатые залежи H2/O2
+  // больше не генерируются.
   for (const hex of nonOceanHexes) {
     if (rng.nextBool(0.15)) {
-      const profileElements = ELEMENTS.filter(e => profileSet.has(e.id));
+      const profileElements = ELEMENTS.filter(e => profileSet.has(e.id) && !e.isAtmospheric);
       const element = profileElements.length > 0
         ? rng.nextChoice(profileElements)
         : rng.nextChoice(ELEMENTS.filter(e => !e.isAtmospheric));

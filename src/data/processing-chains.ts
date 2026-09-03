@@ -379,16 +379,19 @@ export const ORE_DEFINITIONS: OreDefinition[] = [
     molarFormula: 'Pt+FeNiS+O',
   },
   {
-    id: 'Al-ore', name: 'Алюминиевая руда', type: 'metal_ore',
+    // R-27: алюминиевая руда = Каолин (каолиновая глина), каолинит Al₂Si₂O₅(OH)₄.
+    id: 'Al-ore', name: 'Каолин (каолиновая глина)', type: 'metal_ore',
     sourceBuildingId: 'mine',
     containedElements: [
-      { elementId: 'Al', yield: 5.3 },
-      { elementId: 'O', yield: 4.7 },
+      { elementId: 'Al', yield: 2.1 },
+      { elementId: 'Si', yield: 2.2 },
+      { elementId: 'O', yield: 5.6 },
+      { elementId: 'H', yield: 0.2 },
     ],
     minSourceLevel: 1, processingBuildingId: 'processor', minProcessingLevel: 1,
     processingEnergyCost: 3, processingTime: 150,
-    prototype: 'Боксит (Al₂O₃)',
-    molarFormula: 'Al₂O₃', molarMass: 102.0,
+    prototype: 'Каолинит (Al₂Si₂O₅(OH)₄)',
+    molarFormula: 'Al₂Si₂O₅(OH)₄', molarMass: 258.2,
   },
   {
     id: 'Li-ore', name: 'Литиевая руда', type: 'metal_ore',
@@ -455,7 +458,8 @@ export const ORE_DEFINITIONS: OreDefinition[] = [
 
   // --- Руды из Карьера (Quarry) — данные из mendeleev.md §3.2 ---
   {
-    id: 'Si-ore', name: 'Кремниевая руда', type: 'nonmetal_ore',
+    // R-27: кремниевая руда = Песок (SiO₂).
+    id: 'Si-ore', name: 'Песок', type: 'nonmetal_ore',
     sourceBuildingId: 'quarry',
     containedElements: [
       { elementId: 'Si', yield: 4.7 },
@@ -463,22 +467,22 @@ export const ORE_DEFINITIONS: OreDefinition[] = [
     ],
     minSourceLevel: 1, processingBuildingId: 'processor', minProcessingLevel: 1,
     processingEnergyCost: 2, processingTime: 150,
-    prototype: 'Кварц (SiO₂)',
+    prototype: 'Песок (SiO₂)',
     molarFormula: 'SiO₂', molarMass: 60.1,
   },
   {
-    id: 'C-ore', name: 'Углеродная руда', type: 'nonmetal_ore',
+    // R-27: углеродная руда = Уголь. Переработка (рецепт smelt_c) даёт
+    // Углерод 8 + Шлак 2 — шлак отдельный ресурс (crafted-materials.ts),
+    // на следующем этапе добавляется в бетон.
+    id: 'C-ore', name: 'Уголь', type: 'nonmetal_ore',
     sourceBuildingId: 'quarry',
     containedElements: [
       { elementId: 'C', yield: 8.0 },
-      { elementId: 'H', yield: 0.5 },
-      { elementId: 'O', yield: 1.3 },
-      { elementId: 'S', yield: 0.2 },
     ],
     minSourceLevel: 1, processingBuildingId: 'processor', minProcessingLevel: 1,
     processingEnergyCost: 2, processingTime: 120,
     prototype: 'Каменный уголь',
-    molarFormula: 'C+H+O+S',
+    molarFormula: 'C + зола',
   },
   {
     id: 'S-ore', name: 'Серная руда', type: 'nonmetal_ore',
@@ -554,19 +558,8 @@ export const ORE_DEFINITIONS: OreDefinition[] = [
   },
 
   // --- Дополнительные руды Карьера (не в mendeleev.md §3.2, но с реальной химией) ---
-  {
-    id: 'O-rock', name: 'Кислородсодержащие породы', type: 'nonmetal_ore',
-    sourceBuildingId: 'quarry',
-    containedElements: [
-      { elementId: 'Si', yield: 3.0 },
-      { elementId: 'O', yield: 5.0 },
-      { elementId: 'Al', yield: 2.0 },
-    ],
-    minSourceLevel: 1, processingBuildingId: 'processor', minProcessingLevel: 1,
-    processingEnergyCost: 2, processingTime: 150,
-    prototype: 'Кислородсодержащие силикаты',
-    molarFormula: 'SiO₂+Al₂O₃',
-  },
+  // R-27: «O-rock» (кислородсодержащие породы) удалён — кислород не добывается
+  // из залежей; единственный источник H и O — Вода (H₂O, электролиз в processor).
   {
     id: 'P-ore', name: 'Фосфорная руда', type: 'nonmetal_ore',
     sourceBuildingId: 'quarry',
@@ -721,7 +714,8 @@ export const ATMOSPHERE_GAS_AVAILABILITY: Record<AtmosphereType, string[]> = {
 
 export const ICE_COMPOUNDS: IceCompound[] = [
   {
-    id: 'H2O-ice', name: 'Водяной лёд', formula: 'H₂O',
+    // R-27: вода — единственный источник залежей H и O (электролиз в processor).
+    id: 'H2O-ice', name: 'Вода (лёд)', formula: 'H₂O',
     containedElements: [
       { elementId: 'H', yield: 1.1 },
       { elementId: 'O', yield: 8.9 },
@@ -1385,7 +1379,7 @@ export const MINE_ORE_IDS = [
 /** Все ID руд карьера */
 export const QUARRY_ORE_IDS = [
   'Si-ore', 'C-ore', 'S-ore', 'K-ore', 'B-ore', 'F-ore',
-  'CaCO3', 'NaCl', 'O-rock', 'P-ore', 'Mg-ore', 'Ba-ore-quarry',
+  'CaCO3', 'NaCl', 'P-ore', 'Mg-ore', 'Ba-ore-quarry',
 ] as const;
 
 /** Все ID атмосферных газов */

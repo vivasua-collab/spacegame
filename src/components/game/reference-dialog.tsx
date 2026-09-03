@@ -8,18 +8,23 @@
  *                 temperature, atmosphereChance).
  *   - Исследования: фундаментальные ветки + специализированные ветки + очередь.
  *   - Экономика:   раздельные склады (ore/processed/highTech) + категории ресурсов.
+ *   - Переработка (R-27): цепочки руд → элементы по зданиям добычи;
+ *                 атмосферные соединения и вода/лёд; выход из 10 ед. по рецептам.
  *   - Флот:        типы корпусов + типы топлива.
  *   - Здания:      полный каталог BUILDINGS с категорией, стоимостью, слоями.
  *
  * Точки интеграции:
  *   - data/planet-types.ts     → PLANET_TYPES, SIZE_HEX_COUNT, SIZE_NAMES, TYPE_NAMES.
- *   - data/buildings.ts        → BUILDINGS, CATEGORY_NAMES, LAYER_NAMES.
+ *   - data/buildings/          → BUILDINGS, CATEGORY_NAMES, LAYER_NAMES (JSON).
  *   - data/research/index.ts   → FUNDAMENTAL_BRANCHES_MVP, TECH_TREE (barrel re-exports
  *                                — работает даже если R-RES рефакторит в JSON, т.к.
  *                                barrel останется точкой входа).
  *   - data/warehouse.ts        → ORE/PROCESSED/HIGH_TECH константы вместимости.
  *   - data/ships/hulls.ts      → HULLS.
  *   - data/ships/fuel-map.ts   → FUEL_TO_ELEMENT, ALL_FUEL_TYPES.
+ *   - data/processing-chains.ts → ORE_DEFINITIONS, DEEP_ORES, ATMOSPHERIC_COMPOUNDS,
+ *                                ICE_COMPOUNDS (R-27, вкладка «Переработка»).
+ *   - data/recipes.ts          → RECIPES (выходы цепочек — игровая правда, R-27).
  *
  * Стилизация: тёмная тема (`bg-[#0d0d24]`, `border-white/10`), как и все игровые
  * диалоги. Левая колонка-табы, правая — содержимое. На мобильных табы
@@ -41,7 +46,19 @@ import {
   Boxes,
   Rocket,
   Hammer,
+  Recycle,
 } from 'lucide-react';
+
+// ─── Переработка (R-27) ──────────────────────────────────────────────────
+import {
+  ORE_DEFINITIONS,
+  DEEP_ORES,
+  ATMOSPHERIC_COMPOUNDS,
+  ICE_COMPOUNDS,
+} from '@/data/processing-chains';
+import { RECIPES } from '@/data/recipes';
+import { ELEMENT_MAP } from '@/data/elements';
+import { CRAFTED_MATERIALS } from '@/data/crafted-materials';
 
 // ─── Планеты ────────────────────────────────────────────────────────────
 import {
@@ -160,6 +177,13 @@ export function ReferenceDialog({
               Экономика
             </TabsTrigger>
             <TabsTrigger
+              value="processing"
+              className="data-[state=active]:bg-cyan-500/15 data-[state=active]:text-cyan-200 text-slate-300 justify-start text-xs h-8 sm:h-[calc(100%-1px)]"
+            >
+              <Recycle className="size-3.5 mr-1.5" />
+              Переработка
+            </TabsTrigger>
+            <TabsTrigger
               value="fleet"
               className="data-[state=active]:bg-cyan-500/15 data-[state=active]:text-cyan-200 text-slate-300 justify-start text-xs h-8 sm:h-[calc(100%-1px)]"
             >
@@ -185,6 +209,9 @@ export function ReferenceDialog({
             </TabsContent>
             <TabsContent value="economy" className="mt-0 outline-none">
               <EconomyTab />
+            </TabsContent>
+            <TabsContent value="processing" className="mt-0 outline-none">
+              <ProcessingTab />
             </TabsContent>
             <TabsContent value="fleet" className="mt-0 outline-none">
               <FleetTab />
@@ -402,7 +429,7 @@ function EconomyTab() {
       base: ORE_WAREHOUSE_BASE,
       perLevel: ORE_WAREHOUSE_PER_LEVEL,
       accent: 'text-amber-300',
-      hint: 'Руды, газы (сырые), ледяные соединения.',
+      hint: 'Руды, газы (сырые), вода/лёд (H₂O).',
     },
     {
       id: 'processed',
@@ -497,6 +524,266 @@ function EconomyTab() {
           <li>Компонентный (+15%) — для высокотехнологичных миров.</li>
         </ul>
       </section>
+    </div>
+  );
+}
+
+// ============================================================================
+// ВКЛАДКА: ПЕРЕРАБОТКА (R-27)
+// ============================================================================
+
+/** Рецепт по единственному входному ресурсу (руда/газ/лёд → выходы). */
+const RECIPE_BY_INPUT = new Map<
+  string,
+  { outputs: Record<string, number>; buildingId: string; energyCost: number }
+>();
+for (const r of RECIPES) {
+  const inputIds = Object.keys(r.inputs);
+  const single = inputIds.length === 1 ? inputIds[0] : undefined;
+  if (single && !RECIPE_BY_INPUT.has(single)) {
+    RECIPE_BY_INPUT.set(single, {
+      outputs: r.outputs,
+      buildingId: r.buildingId,
+      energyCost: r.energyCost,
+    });
+  }
+}
+
+/** Отображаемое имя + символ ресурса (элемент или крафтовый/побочный материал). */
+function resourceLabel(id: string): { name: string; symbol: string } {
+  const el = ELEMENT_MAP.get(id);
+  if (el) return { name: el.name, symbol: el.symbol };
+  const crafted = CRAFTED_MATERIALS[id];
+  if (crafted) return { name: crafted.name, symbol: crafted.symbol };
+  return { name: id, symbol: id };
+}
+
+/** Названия зданий переработки для колонки «Переработка». */
+const PROCESSOR_NAMES: Record<string, string> = {
+  processor: 'Переработчик',
+  refinery: 'Очистит. комплекс',
+  synthesizer: 'Синтезатор',
+  shipyard: 'Верфь',
+};
+
+interface ChainRowData {
+  key: string;
+  /** Название сырья */
+  name: string;
+  /** Подзаголовок: прототип/формула */
+  sub?: string;
+  /** Выход из 10 ед. — по рецепту (игровая правда) или containedElements */
+  outputs: Array<[string, number]>;
+  /** Прямое использование без переработки */
+  direct: boolean;
+  /** Здание переработки + энергия (если есть рецепт) */
+  processorLabel: string;
+  /** Пометка (напр. «рецепт в планах») */
+  note?: string;
+}
+
+function ChainRow({ row }: { row: ChainRowData }) {
+  return (
+    <tr className="border-b border-white/5 hover:bg-white/5">
+      <td className="py-1.5 pr-3 align-top">
+        <div className="text-xs text-slate-200 font-medium">{row.name}</div>
+        {row.sub && <div className="text-[9px] text-slate-500">{row.sub}</div>}
+      </td>
+      <td className="py-1.5 px-2 align-top">
+        <div className="flex flex-wrap gap-1">
+          {row.outputs.map(([id, amount]) => {
+            const label = resourceLabel(id);
+            return (
+              <span
+                key={id}
+                title={label.name}
+                className="bg-white/5 border border-white/10 rounded px-1.5 py-0.5 text-[10px] font-mono whitespace-nowrap"
+              >
+                <span className="text-cyan-300">{label.symbol}</span>
+                <span className="text-slate-400"> {amount}</span>
+              </span>
+            );
+          })}
+          {row.note && (
+            <span className="text-[9px] text-slate-600 italic self-center">{row.note}</span>
+          )}
+        </div>
+      </td>
+      <td className="py-1.5 pl-2 align-top text-right text-[10px] font-mono text-slate-400 whitespace-nowrap">
+        {row.direct ? <span className="text-emerald-400/80">напрямую</span> : row.processorLabel}
+      </td>
+    </tr>
+  );
+}
+
+function ChainSection({ title, hint, rows }: { title: string; hint?: string; rows: ChainRowData[] }) {
+  return (
+    <section>
+      <h3 className="text-sm font-semibold text-cyan-200 mb-2">{title}</h3>
+      {hint && <p className="text-[11px] text-slate-400 mb-2">{hint}</p>}
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs border-collapse">
+          <thead>
+            <tr className="text-slate-400 border-b border-white/10">
+              <th className="text-left py-1.5 pr-3 font-medium">Сырьё</th>
+              <th className="text-left py-1.5 px-2 font-medium">Выход из 10 ед.</th>
+              <th className="text-right py-1.5 pl-2 font-medium">Переработка</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <ChainRow key={row.key} row={row} />
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+/** Руды (OreDefinition) → строки цепочек: выход по рецепту, fallback — containedElements. */
+function oreRows(
+  ores: Array<{
+    id: string;
+    name: string;
+    prototype?: string;
+    molarFormula?: string;
+    containedElements: Array<{ elementId: string; yield: number }>;
+    processingBuildingId: string | null;
+  }>,
+): ChainRowData[] {
+  return ores.map((ore) => {
+    const recipe = RECIPE_BY_INPUT.get(ore.id);
+    const outputs: Array<[string, number]> = recipe
+      ? Object.entries(recipe.outputs)
+      : ore.containedElements.map((ce) => [ce.elementId, ce.yield] as [string, number]);
+    return {
+      key: ore.id,
+      name: ore.name,
+      sub: ore.prototype ?? ore.molarFormula,
+      outputs,
+      direct: ore.processingBuildingId === null,
+      processorLabel: recipe
+        ? `${PROCESSOR_NAMES[recipe.buildingId] ?? recipe.buildingId} · −${recipe.energyCost}⚡`
+        : (PROCESSOR_NAMES[ore.processingBuildingId ?? 'processor'] ?? '—'),
+      note: recipe ? undefined : 'рецепт в планах',
+    };
+  });
+}
+
+function ProcessingTab() {
+  const mineRows = oreRows(ORE_DEFINITIONS.filter((o) => o.sourceBuildingId === 'mine'));
+  const quarryRows = oreRows(ORE_DEFINITIONS.filter((o) => o.sourceBuildingId === 'quarry'));
+  const deepRows = oreRows(DEEP_ORES);
+
+  const atmoRows: ChainRowData[] = ATMOSPHERIC_COMPOUNDS.map((c) => {
+    const recipe = RECIPE_BY_INPUT.get(c.id);
+    const outputs: Array<[string, number]> = recipe
+      ? Object.entries(recipe.outputs)
+      : c.containedElements.map((ce) => [ce.elementId, ce.yield] as [string, number]);
+    return {
+      key: c.id,
+      name: c.name,
+      sub: c.formula,
+      outputs,
+      direct: c.processingBuildingId === null,
+      processorLabel: recipe
+        ? `${PROCESSOR_NAMES[recipe.buildingId] ?? recipe.buildingId} · −${recipe.energyCost}⚡`
+        : 'Переработчик',
+    };
+  });
+
+  const iceRowsData: ChainRowData[] = ICE_COMPOUNDS.map((c) => {
+    const recipe = RECIPE_BY_INPUT.get(c.id);
+    const outputs: Array<[string, number]> = recipe
+      ? Object.entries(recipe.outputs)
+      : c.containedElements.map((ce) => [ce.elementId, ce.yield] as [string, number]);
+    return {
+      key: c.id,
+      name: c.name,
+      sub: c.formula,
+      outputs,
+      direct: c.processingBuildingId === null,
+      processorLabel: recipe
+        ? `${PROCESSOR_NAMES[recipe.buildingId] ?? recipe.buildingId} · −${recipe.energyCost}⚡`
+        : 'Переработчик',
+      note: recipe ? undefined : 'ледодобыча в планах',
+    };
+  });
+
+  return (
+    <div className="space-y-5">
+      <section>
+        <h3 className="text-sm font-semibold text-cyan-200 mb-2">
+          Как устроена переработка
+        </h3>
+        <ul className="text-xs text-slate-300 list-disc list-inside space-y-1">
+          <li>
+            Шахта и карьер добывают из гексов планеты <b>руды</b> — сырьё падает на рудный склад.
+          </li>
+          <li>
+            Переработчик разлагает руду на чистые элементы пропорционально молярной массе
+            минерала-прототипа: из 10 ед. руды ≈ 10 ед. элементов суммарно.
+          </li>
+          <li>
+            <b>Кислород и водород не встречаются в виде отдельных залежей — это же вода!</b>
+            Их источники: Вода (H₂O, залежи, электролиз) и атмосфера (газовый экстрактор).
+          </li>
+          <li>
+            Чистые атмосферные газы (O₂, H₂, N₂, He, Ne, Ar) используются напрямую;
+            сложные (CO₂, CH₄, NH₃, H₂S, SO₂) разлагает переработчик.
+          </li>
+          <li>
+            Синтезатор собирает из элементов материалы и компоненты (сталь, пластик,
+            микрочипы…) — список рецептов смотрите в «Производстве» планеты.
+          </li>
+        </ul>
+      </section>
+
+      <section className="rounded-md border border-cyan-500/20 bg-cyan-500/5 px-3 py-2">
+        <h3 className="text-sm font-semibold text-cyan-200 mb-1">
+          Новые цепочки (R-27)
+        </h3>
+        <ul className="text-xs text-slate-300 list-disc list-inside space-y-1">
+          <li>
+            <b>Уголь → Углерод + Шлак</b>. Шлак — отдельный ресурс: накапливается на складе,
+            на следующем этапе будет добавляться в бетон.
+          </li>
+          <li>
+            <b>Песок → Кремний</b> (SiO₂); <b>Каолин → Алюминий</b> (плюс Si, O, H из глины
+            Al₂Si₂O₅(OH)₄).
+          </li>
+          <li>
+            <b>Вода (лёд) → Водород + Кислород</b> — электролиз в переработчике.
+          </li>
+        </ul>
+      </section>
+
+      <ChainSection
+        title="Шахта — металлические руды"
+        hint="Добываются шахтой на гексах планеты. Au/Pt/U дополнительно можно очищать до 9 ед. в Очистительном комплексе."
+        rows={mineRows}
+      />
+      <ChainSection
+        title="Карьер — неметаллическое сырьё"
+        hint="Уголь, песок, сера, соли и минералы. Уголь даёт Углерод + Шлак."
+        rows={quarryRows}
+      />
+      <ChainSection
+        title="Глубинная добыча (буровая)"
+        hint="Редкие и тугоплавкие металлы. Буровая установка в MVP не реализована — руды уже присутствуют в модели галактики."
+        rows={deepRows}
+      />
+      <ChainSection
+        title="Атмосфера — газовый экстрактор"
+        hint="Добыча из атмосферного слота. Состав зависит от типа атмосферы планеты."
+        rows={atmoRows}
+      />
+      <ChainSection
+        title="Вода и лёд"
+        hint="Вода (H₂O) — единственная залежь-источник водорода и кислорода: добывается шахтой/карьером, электролиз даёт H + O. Прочие льды — будущая ледодобыча."
+        rows={iceRowsData}
+      />
     </div>
   );
 }

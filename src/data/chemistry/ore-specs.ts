@@ -4,7 +4,7 @@
  * Extracted from `chemistry-generator.ts` as part of Block 01 C5 (audit §2.3):
  * split a 1704-line file into focused modules.
  *
- * Contains ORE_SPECS (element→ore), SPECIAL_ORE_SPECS (O-rock),
+ * Contains ORE_SPECS (element→ore), SPECIAL_ORE_SPECS (empty — R-27),
  * ELEMENT_TO_SPEC_KEY, ELEMENTS_WITH_QUARRY_ALT, REFINERY_ALTERNATIVES.
  *
  * @see docs/chemistry.md §4 — ore formation rules
@@ -113,11 +113,16 @@ export const ORE_SPECS: Record<string, OreSpec> = {
     prototype: 'Молибденит (MoS₂)', molarFormula: 'MoS₂',
   },
   Al: {
-    id: 'Al-ore', name: 'Алюминиевая руда', oreType: 'metal_ore', sourceBuildingId: 'mine',
-    formula: [{ elementId: 'Al', count: 2 }, { elementId: 'O', count: 3 }],
+    // R-27: алюминиевая руда = Каолин (каолиновая глина). Каолинит Al₂Si₂O₅(OH)₄ —
+    // выход из 10 ед. по молярной массе: Al 2.1 / Si 2.2 / O 5.6 / H 0.2.
+    id: 'Al-ore', name: 'Каолин (каолиновая глина)', oreType: 'metal_ore', sourceBuildingId: 'mine',
+    formula: [
+      { elementId: 'Al', count: 2 }, { elementId: 'Si', count: 2 },
+      { elementId: 'O', count: 9 }, { elementId: 'H', count: 4 },
+    ],
     minSourceLevel: 1, processingBuildingId: 'processor', minProcessingLevel: 1,
     processingEnergyCost: 3, processingTime: 150,
-    prototype: 'Боксит (Al₂O₃)', molarFormula: 'Al₂O₃',
+    prototype: 'Каолинит (Al₂Si₂O₅(OH)₄)', molarFormula: 'Al₂Si₂O₅(OH)₄',
   },
   Cd: {
     id: 'Cd-ore', name: 'Кадмиевая руда', oreType: 'metal_ore', sourceBuildingId: 'mine',
@@ -188,24 +193,23 @@ export const ORE_SPECS: Record<string, OreSpec> = {
   },
 
   Si: {
-    id: 'Si-ore', name: 'Кремниевая руда', oreType: 'nonmetal_ore', sourceBuildingId: 'quarry',
+    // R-27: кремниевая руда = Песок (SiO₂).
+    id: 'Si-ore', name: 'Песок', oreType: 'nonmetal_ore', sourceBuildingId: 'quarry',
     formula: [{ elementId: 'Si', count: 1 }, { elementId: 'O', count: 2 }],
     minSourceLevel: 1, processingBuildingId: 'processor', minProcessingLevel: 1,
     processingEnergyCost: 2, processingTime: 150,
-    prototype: 'Кварц (SiO₂)', molarFormula: 'SiO₂',
+    prototype: 'Песок (SiO₂)', molarFormula: 'SiO₂',
   },
   C: {
-    id: 'C-ore', name: 'Углеродная руда', oreType: 'nonmetal_ore', sourceBuildingId: 'quarry',
+    // R-27: углеродная руда = Уголь. При переработке даёт Углерод + Шлак (зола);
+    // Шлак — отдельный ресурс (см. crafted-materials.ts), на следующем этапе
+    // добавляется в бетон. Следы H/O/S из руды убраны — чистая семантика «C + зола».
+    id: 'C-ore', name: 'Уголь', oreType: 'nonmetal_ore', sourceBuildingId: 'quarry',
     formula: null,
-    containedElements: [
-      { elementId: 'C', yield: 8.0 },
-      { elementId: 'H', yield: 0.5 },
-      { elementId: 'O', yield: 1.3 },
-      { elementId: 'S', yield: 0.2 },
-    ],
+    containedElements: [{ elementId: 'C', yield: 8.0 }],
     minSourceLevel: 1, processingBuildingId: 'processor', minProcessingLevel: 1,
     processingEnergyCost: 2, processingTime: 120,
-    prototype: 'Каменный уголь', molarFormula: 'C+H+O+S',
+    prototype: 'Каменный уголь', molarFormula: 'C + зола',
   },
   S: {
     id: 'S-ore', name: 'Серная руда', oreType: 'nonmetal_ore', sourceBuildingId: 'quarry',
@@ -281,18 +285,9 @@ export const ORE_SPECS: Record<string, OreSpec> = {
     processingEnergyCost: 5, processingTime: 250,
     prototype: 'Барит (BaSO₄)', molarFormula: 'BaSO₄',
   },
-  'O-rock': {
-    id: 'O-rock', name: 'Кислородсодержащие породы', oreType: 'nonmetal_ore', sourceBuildingId: 'quarry',
-    formula: null,
-    containedElements: [
-      { elementId: 'Si', yield: 3.0 },
-      { elementId: 'O', yield: 5.0 },
-      { elementId: 'Al', yield: 2.0 },
-    ],
-    minSourceLevel: 1, processingBuildingId: 'processor', minProcessingLevel: 1,
-    processingEnergyCost: 2, processingTime: 150,
-    prototype: 'Кислородсодержащие силикаты', molarFormula: 'SiO₂+Al₂O₃',
-  },
+  // R-27: 'O-rock' (кислородсодержащие породы) удалён — кислород в залежах
+  // больше не встречается. Единственный источник H и O в залежах — Вода
+  // (H2O-ice, см. ice-generator.ts + generate-resources.ts).
 
   In: {
     id: 'In-ore', name: 'Индиевая руда', oreType: 'deep_ore', sourceBuildingId: 'drilling_rig',
@@ -429,21 +424,12 @@ export const ORE_SPECS: Record<string, OreSpec> = {
   },
 };
 
-/** Special ores not tied to a single element — added after element-based generation. */
-export const SPECIAL_ORE_SPECS: OreSpec[] = [
-  {
-    id: 'O-rock', name: 'Кислородсодержащие породы', oreType: 'nonmetal_ore', sourceBuildingId: 'quarry',
-    formula: null,
-    containedElements: [
-      { elementId: 'Si', yield: 3.0 },
-      { elementId: 'O', yield: 5.0 },
-      { elementId: 'Al', yield: 2.0 },
-    ],
-    minSourceLevel: 1, processingBuildingId: 'processor', minProcessingLevel: 1,
-    processingEnergyCost: 2, processingTime: 150,
-    prototype: 'Кислородсодержащие силикаты', molarFormula: 'SiO₂+Al₂O₃',
-  },
-];
+/**
+ * Special ores not tied to a single element — added after element-based generation.
+ * R-27: пусто — «O-rock» (кислородсодержащие породы) удалён: кислород и водород
+ * не существуют в виде залежей, их источник — Вода (H₂O, электролиз).
+ */
+export const SPECIAL_ORE_SPECS: OreSpec[] = [];
 
 /**
  * Maps element IDs to their primary ore spec key in ORE_SPECS.

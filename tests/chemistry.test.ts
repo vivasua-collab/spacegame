@@ -106,10 +106,12 @@ describe('Block 01 T4: Chemistry-generator — molar masses, yields, consistency
     for (const iceId of lookups.iceMap.keys()) validIds.add(iceId);
     for (const elementId of ELEMENT_MAP.keys()) validIds.add(elementId);
     // Crafted materials (steel, microchip, etc.) — add manually
+    // R-27: + slag (Шлак — побочный продукт переработки угля, см. crafted-materials.ts)
     const craftedIds = [
       'steel', 'microchip', 'superconductor', 'titanium_alloy', 'silicon_crystal',
       'sensor_array', 'shield_generator', 'engine_section', 'ion_engine',
       'laser', 'cargo_bay', 'scanner', 'plastic', 'synfuel', 'hull_element', 'armor_plate',
+      'slag',
     ];
     for (const id of craftedIds) validIds.add(id);
 
@@ -138,7 +140,7 @@ describe('Block 01 T4: Chemistry-generator — molar masses, yields, consistency
     for (const [elementId, spec] of Object.entries(ORE_SPECS)) {
       // Some ORE_SPECS entries are for native elements (Au, Pt, C, S) which have
       // formula: null — they are pure elements, no compound formula. Skip these.
-      // Others (like 'O-rock' — silicate rocks) use `containedElements` instead of `formula`.
+      // Others (like 'Ba-quarry' — barite) use `containedElements` alongside `formula`.
       const hasFormula = spec.formula && spec.formula.length > 0;
       const hasContainedElements = (spec as any).containedElements && (spec as any).containedElements.length > 0;
       if (!hasFormula && !hasContainedElements) {

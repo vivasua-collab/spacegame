@@ -183,10 +183,13 @@ export const RECIPES: RecipeDef[] = [
   },
   {
     id: 'smelt_al',
-    name: 'Плавка алюминия (боксит)',
+    name: 'Обжиг каолина',
     category: 'raw_to_material',
     inputs: { 'Al-ore': 10 },
-    outputs: { Al: 5.3, O: 4.7 },
+    // R-27: каолинит Al₂Si₂O₅(OH)₄, M = 258.2. Выход по молярной массе:
+    // Al 2×27.0/258.2×10 ≈ 2.1, Si 2×28.1/258.2×10 ≈ 2.2,
+    // O 9×16.0/258.2×10 ≈ 5.6, H 4×1.0/258.2×10 ≈ 0.2.
+    outputs: { Al: 2.1, Si: 2.2, O: 5.6, H: 0.2 },
     energyCost: 2,
     time: 5,
     buildingId: 'processor',
@@ -247,7 +250,7 @@ export const RECIPES: RecipeDef[] = [
 
   {
     id: 'smelt_si',
-    name: 'Плавка кремния (кварц)',
+    name: 'Плавка кремния (песок)',
     category: 'raw_to_material',
     inputs: { 'Si-ore': 10 },
     outputs: { Si: 4.7, O: 5.3 },
@@ -257,10 +260,13 @@ export const RECIPES: RecipeDef[] = [
   },
   {
     id: 'smelt_c',
-    name: 'Плавка углерода (каменный уголь)',
+    name: 'Переработка угля',
     category: 'raw_to_material',
     inputs: { 'C-ore': 10 },
-    outputs: { C: 8.0, H: 0.5, O: 1.3, S: 0.2 },
+    // R-27: углеродная руда = Уголь. Даёт Углерод + Шлак (зола).
+    // Шлак — отдельный ресурс (crafted-materials.ts): пока накапливается,
+    // на следующем этапе будет добавляться в бетон.
+    outputs: { C: 8.0, slag: 2.0 },
     energyCost: 2,
     time: 5,
     buildingId: 'processor',
@@ -358,16 +364,8 @@ export const RECIPES: RecipeDef[] = [
     time: 12,
     buildingId: 'processor',
   },
-  {
-    id: 'process_rock',
-    name: 'Обработка кислородсодержащих пород',
-    category: 'raw_to_material',
-    inputs: { 'O-rock': 10 },
-    outputs: { Si: 3.0, Al: 2.0, O: 5.0 },
-    energyCost: 2,
-    time: 5,
-    buildingId: 'processor',
-  },
+  // R-27: рецепт process_rock («Обработка кислородсодержащих пород») удалён вместе
+  // с рудой O-rock — кислород больше не добывается из породы. Источник H и O — Вода.
 
   // --- Глубинные руды (18 рецептов) ---
   // Данные из docs/mendeleev.md §3.3 (молярная масса) + processing-chains.ts
@@ -825,6 +823,23 @@ export const RECIPES: RecipeDef[] = [
     time: 150,
     buildingId: 'processor',
   },
+
+  // === R-27: Вода → H + O (электролиз) ===
+  // Кислород и водород не существуют в виде залежей — их единственный источник
+  // в залежах: Вода (H2O-ice, добывается шахтой/карьером). Электролиз в processor
+  // разлагает H₂O по молярной массе: H 2×1.0/18.0 ≈ 1.1, O 16.0/18.0 ≈ 8.9.
+  // (Дополнительно O₂/H₂ можно добывать газовым экстрактором из атмосферы
+  // планет соответствующего типа — см. атмосферные соединения.)
+  {
+    id: 'process_H2O',
+    name: 'Электролиз воды',
+    category: 'raw_to_material',
+    inputs: { 'H2O-ice': 10 },
+    outputs: { H: 1.1, O: 8.9 },
+    energyCost: 4,
+    time: 150,
+    buildingId: 'processor',
+  },
 ];
 
 export const RECIPE_MAP = new Map(RECIPES.map(r => [r.id, r]));
@@ -853,8 +868,8 @@ export const RAW_ORES = [
   // Карьер (8)
   'Si-ore', 'C-ore', 'S-ore', 'K-ore', 'B-ore', 'F-ore',
   'CaCO3', 'NaCl',
-  // Доп. карьер (4)
-  'P-ore', 'Mg-ore', 'Ba-ore-quarry', 'O-rock',
+  // Доп. карьер (3) — R-27: O-rock удалён
+  'P-ore', 'Mg-ore', 'Ba-ore-quarry',
   // Глубинные (18)
   'Y-ore', 'Ba-ore', 'Zr-ore', 'Be-ore', 'In-ore',
   'Nd-ore', 'Ce-ore', 'La-ore', 'Dy-ore', 'Ir-ore',

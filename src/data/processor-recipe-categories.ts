@@ -11,8 +11,8 @@
  * - `smelt_*` металлических руд (Fe, Ti, Cu, Cr, V, Ni, Mn, Zn, Sn, Pb, Co,
  *   W, Mo, Ag, Au, Pt, Al, Li, Cd, Se, Te, U) → `metal_smelting`
  * - `smelt_*` неметаллических руд (Si, C, S, K, B, F, P, Mg) → `nonmetal_smelting`
- * - `smelt_ba_quarry` (поверхностный барит), `process_rock`, `process_limestone`,
- *   `process_salt` → `chemical_decomp` (составные соединения)
+ * - `smelt_ba_quarry` (поверхностный барит), `process_limestone`,
+ *   `process_salt`, `process_H2O` (электролиз воды, R-27) → `chemical_decomp` (составные соединения)
  * - Глубинные руды (Y, Ba, Zr, Be, In, Nd, Ce, La, Dy, Ir, Os, Ru, Rh, Pd,
  *   Hf, Ta, Nb, Re) → `deep_ore_smelting` + minSpecializationLevel=5
  * - `process_*` (CO2, CH4, NH3, H2S, SO2) → `gas_processing`
@@ -46,10 +46,11 @@ const NONMETAL_SMELTING_IDS = new Set([
 
 /**
  * Химическое разложение (составные соединения: соли, известняк, силикаты).
- * Карьер + доп.карьер.
+ * Карьер + доп.карьер. R-27: + электролиз воды (process_H2O),
+ * process_rock удалён вместе с рудой O-rock.
  */
 const CHEMICAL_DECOMP_IDS = new Set([
-  'process_limestone', 'process_salt', 'process_rock', 'smelt_ba_quarry',
+  'process_limestone', 'process_salt', 'smelt_ba_quarry', 'process_H2O',
 ]);
 
 /**
