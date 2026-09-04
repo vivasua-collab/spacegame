@@ -2619,3 +2619,71 @@ Stage Summary:
 - MINOR (7): мёртвый resource-panel.tsx (297 строк, ResourcePanel нигде не импортируется — «старый рендер резервов», логика AmountCell уже разошлась с WarehousePanel по резерву=0); reference-dialog EconomyTab не знает 4-й газовый склад R-27 и «10 000» вместо 12 000; BuildingsTab хардкод «+10 энерг.» для всех energy (nuclear=25, solar зависит от L☉); хардкод-блок «Новые цепочки (R-27)» дублирует data-driven таблицы (сейчас совпадает, но может дрейфовать; «Песок→Кремний» умалчивает O 5.3); eslint-остатки (getSpecInfo/getResourceCategory, centerX/centerY, gameState, проп specialization); enqueueProduction-результат игнорируется; занятый слот в SlotCard — <span onClick> без keyboard-доступа.
 - ЧИСТО (no-bug): плоские build-меню по слоям (filter layer.includes(layer) корректен: гекс→surface+gas_extractor, орб.слот→spaceport/solar/shipyard, атм.слот→gas_extractor, orbit-only скрыты с поверхности, size-фильтр только surface — engine для слотов size тоже не проверяет); starLuminosity-проводка полная и идентична engine; единый список «кол-во/резерв» — математика верна (<минимума→красный, ≥→зелёный, без резерва→нейтральный, резервы-при-нуле включены); бейджи карусели describeAssignment декодирует ровно по конвенции движка (undefined=ждёт, 1-базовая нумерация согласована с targetLabel/SlotCard); прогресс-бар верен (progress=оставшиеся тики, engine декрементирует); 2-шаговый DemolishConfirmDialog корректен (preventDefault-паттерн, сброс шага через auto-close→onOpenChange); React-гигиена: хуки до early-return во всех компонентах, ключи во всех списках, page.tsx handleLoad toast надёжен; химия справки data-driven (RECIPE_BY_INPUT + fallback containedElements + «рецепт в планах», slag→«Sl»).
 - TS-ошибки зоны (8+6) — ВСЕ строгий noUncheckedIndexedAccess-шум: planet-view 659/660×2/678/712/722/729×2 — hexes[pos.index] (pos.index < hexes.length по построению); building-dialog 126×2/127/128/137 — planet.hexes[target.hexIndex] после bounds-валидации target (строки 109-121), 654 — terrain при kind==='hex'. Runtime-безопасны; лечатся !-assert/локальной переменной после guard.
+
+---
+Task ID: 32
+Agent: main
+Task: Новый день — получить актуальный код с GitHub, детальный аудит и ревю
+кода, исправить найденные ошибки, чекпоинт по checkpoints/RULES.md.
+
+Work Log:
+- СИНХРОНИЗАЦИЯ: git fetch — local main == origin/main (110bcd4, merge
+  R-26/R27 из потерянной сессии завершён и запушен полностью). «Изменения»
+  в git status — только права файлов (644→755, шум песочницы) →
+  core.fileMode=false, дерево чистое. Слияние НЕ требовалось — код актуален.
+- ГЕЙТЫ НА ВХОДЕ: 567/567, lint 0/48, tsc src 91 (= базлайн слияния),
+  validate:all 4/4 — дрейфа нет. DEV-жив (порт 3000), остановлен на кодинг.
+- РЕВЬЮ: 3 параллельных ревью-агента (32-a economy, 32-b state/save,
+  32-c UI; отчёты выше в worklog). Итог: 5 major + ~15 значимых minor.
+- 10 ИСПРАВЛЕНИЙ (все major + значимые minor):
+  1) specializeBuilding: смена категории X→Y — полная стоимость (было
+     бесплатно после первой оплаты);
+  2) двойной энергобюджет: порядок тика — очередь ПЕРЕД авто-переработкой,
+     декремент энергии очереди виден авто-гейту;
+  3) коллизия ID queue после Load: restoreProductionItemCounter(queues)
+     (max суффикс + 1) вместо reset в 0;
+  4) HexInfoCard: getBuildingEnergyOutput (P1-26) + starLuminosity/
+     orbitalRadius — вместо хардкода «+10/tick»;
+  5) общий бар склада: totalCapacity = ore+processed+highTech+GAS (engine)
+     + живые caps в UI (был «прыжок» 12000→10000, бар >100%);
+  6) build-dialog: handleBuild проверяет результат — тост «Не удалось
+     построить» + диалог открыт; карточка disabled с причиной (атмосфера/
+     местность);
+  7) save-format-v3 idOf: throw при битом индексе словаря (строгий v3);
+  8) карусель: сброс фантомных activeRecipes (пустая очередь → все;
+     незадействованные экземпляры → []);
+  9) API: Buffer.byteLength (UTF-8) вместо length;
+  10) справка/описания: 4-й газовый склад (2000, сумма 12000), реальная
+      энергия BuildingsTab (nuclear 25), точные выходы цепочек R-27,
+      описания складов из констант (3500/5000/1500).
+- УБОРКА: resource-panel.tsx удалён (0 импортов); дубль чекпоинта старого
+  формата audit_2026_08_28_09_* (пропущен при R-25) удалён; мёртвые
+  импорты engine (getCurrentLookups, calculateWarehouseCapacity),
+  осиротевший комментарий; getSpecInfo/getResourceCategory, centerX/Y;
+  prop specialization панели; мёртвый селектор gameState в page.tsx;
+  занятый слот span→button (a11y); тост при отказе enqueue.
+- ГЕЙТЫ НА ВЫХОДЕ: 567/567 (=), lint 0 errors/40 warnings (−8), tsc src
+  93 (+2 strict-noise), validate:all 4/4.
+- E2E (agent-browser, seed 42): склад 1110/12000 (газ в знаменателе, 4
+  суб-бара); постройка солнечной станции (орбита, слот +1.9/tick P1-26);
+  HexInfoCard «+1.6/tick (L☉ 0.00, R 0.0)»; очередь 2 автоповтора (бейдж
+  «гекс #31») → Save → полная перезагрузка → Load → очередь/бейджи
+  восстановлены → enqueue 3-й → cancel 3-й → исходные 2 нетронуты
+  (коллизия ID отсутствует); консоль без ошибок; тест-сейв удалён.
+- ЧЕКПОИНТ по RULES.md: checkpoints/09_04_audit_12_code_review.md +
+  _code.md (полные таблицы багов/фиксов/отложенного); README счётчик 48;
+  STATUS.md метрики + история R-31.
+- Commit 13e5270, push origin main.
+
+Stage Summary:
+- Код с GitHub получен и подтверждён актуальным (110bcd4); слияние прошлой
+  сессии завершено — расхождений нет.
+- Детальный аудит трёх зон (economy / state+save / UI) консолидирован:
+  5 major закрыто, 10 багов исправлено, 6 отложено как дизайн-решения
+  (таблица О1-О6 в чекпоинте: гейты глубинных руд, мульти-рецептный штраф,
+  липкость spec, счётчики ships, фолбэк кодека, tsc-базлайн).
+- 567/567, lint 0/40 (−8), tsc 93, validate 4/4; E2E-раундтрип без
+  коллизий ID. Push 13e5270.
+- DEV-сервер оставлен работающим (double-fork, dev2.log) для превью.
+- Следующий шаг: Etap 4.2 (планетарный каталог) или решения владельца
+  по отложенным дизайн-вопросам.
