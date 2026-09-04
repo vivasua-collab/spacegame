@@ -102,10 +102,13 @@ export async function POST(request: Request) {
         { status: 400 },
       );
     }
-    // Реальный лимит — на raw JSON (после декодирования), Block 08 gap-8
-    if (stateJson.length > MAX_STATE_BYTES) {
+    // Реальный лимит — на raw JSON (после декодирования), Block 08 gap-8.
+    // R-31: считаем байты UTF-8, а не символы (многобайтовые юникод-строки
+    // раздули бы фактический размер до 4× без этой проверки).
+    const stateBytes = Buffer.byteLength(stateJson, 'utf8');
+    if (stateBytes > MAX_STATE_BYTES) {
       return NextResponse.json(
-        { error: `State too large after decoding: ${stateJson.length} bytes (max ${MAX_STATE_BYTES})` },
+        { error: `State too large after decoding: ${stateBytes} bytes (max ${MAX_STATE_BYTES})` },
         { status: 400 },
       );
     }

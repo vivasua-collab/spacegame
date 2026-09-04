@@ -84,9 +84,12 @@ import {
   PROCESSED_WAREHOUSE_PER_LEVEL,
   HIGH_TECH_STORAGE_BASE,
   HIGH_TECH_STORAGE_PER_LEVEL,
+  GAS_WAREHOUSE_BASE,
+  GAS_WAREHOUSE_PER_LEVEL,
   SPACEPORT_PER_LEVEL,
 } from '@/data/warehouse';
 import { CATEGORY_LABELS } from '@/data/element-helpers';
+import { getBuildingEnergyOutput } from '@/economy/engine';
 import type { ElementCategory } from '@/core/types';
 
 // ─── Флот ────────────────────────────────────────────────────────────────
@@ -429,7 +432,7 @@ function EconomyTab() {
       base: ORE_WAREHOUSE_BASE,
       perLevel: ORE_WAREHOUSE_PER_LEVEL,
       accent: 'text-amber-300',
-      hint: 'Руды, газы (сырые), вода/лёд (H₂O).',
+      hint: 'Руды, вода/лёд (H₂O).',
     },
     {
       id: 'processed',
@@ -449,6 +452,15 @@ function EconomyTab() {
       accent: 'text-emerald-300',
       hint: 'Микрочипы, сверхпроводники, электроника, редкие/уникальные элементы.',
     },
+    {
+      id: 'gas',
+      label: 'Газовый (сжимаемый)',
+      building: 'gas_tank (в планах)',
+      base: GAS_WAREHOUSE_BASE,
+      perLevel: GAS_WAREHOUSE_PER_LEVEL,
+      accent: 'text-violet-300',
+      hint: 'Сырые атмосферные газы: CO₂, CH₄, NH₃, H₂S, SO₂ (R-27; лёд — в рудном).',
+    },
   ];
 
   return (
@@ -459,7 +471,7 @@ function EconomyTab() {
         </h3>
         <p className="text-xs text-slate-400 mb-2">
           Единица измерения: 1 ед. = 1 млн т = 0.001 млрд т.
-          Стартовая суммарная вместимость = 10 000 ед. (5000 + 3500 + 1500).
+          Стартовая суммарная вместимость = 12 000 ед. (5000 + 3500 + 1500 + 2000).
         </p>
         <div className="space-y-2">
           {warehouseTiers.map((tier) => (
@@ -746,15 +758,18 @@ function ProcessingTab() {
         </h3>
         <ul className="text-xs text-slate-300 list-disc list-inside space-y-1">
           <li>
-            <b>Уголь → Углерод + Шлак</b>. Шлак — отдельный ресурс: накапливается на складе,
-            на следующем этапе будет добавляться в бетон.
+            <b>Уголь → Углерод ×8 + Шлак ×2</b> (на 10 ед. угля). Шлак — отдельный
+            ресурс: накапливается на складе, на следующем этапе будет
+            добавляться в бетон.
           </li>
           <li>
-            <b>Песок → Кремний</b> (SiO₂); <b>Каолин → Алюминий</b> (плюс Si, O, H из глины
-            Al₂Si₂O₅(OH)₄).
+            <b>Песок → Кремний ×4.7 + Кислород ×5.3</b> (SiO₂); <b>Каолин → Алюминий
+            ×2.1 + Si ×2.2 + O ×5.6 + H ×0.2</b> (глина Al₂Si₂O₅(OH)₄).
           </li>
           <li>
-            <b>Вода (лёд) → Водород + Кислород</b> — электролиз в переработчике.
+            <b>Вода (лёд) → Водород ×1.1 + Кислород ×8.9</b> — электролиз в
+            переработчике. Залежей O₂/H₂ нет — единственный источник O и H
+            помимо атмосферы.
           </li>
         </ul>
       </section>
@@ -920,7 +935,12 @@ function BuildingsTab() {
               {b.energyConsumption > 0 ? (
                 <span className="text-orange-400 font-mono">−{b.energyConsumption} энерг.</span>
               ) : b.category === 'energy' ? (
-                <span className="text-green-400 font-mono">+10 энерг.</span>
+                // R-31 (audit): реальная базовая выработка ур.1 вместо хардкода
+                // «+10» (nuclear_reactor = 25; solar_plant зависит от L☉/R —
+                // указан базовый максимум при L☉=1, R=1)
+                <span className="text-green-400 font-mono">
+                  +{getBuildingEnergyOutput(b.id, 1, b.layer[0] === 'orbit' ? 'orbit' : 'surface', 1.0, 1.0)} энерг.
+                </span>
               ) : null}
               <span className="text-slate-300 font-mono text-[11px]">
                 {costEntries.map(([rid, amt]) => `${rid} ${amt}`).join(' · ')}

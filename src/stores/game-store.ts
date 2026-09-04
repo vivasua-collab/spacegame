@@ -29,7 +29,7 @@ import { ELEMENTS } from '@/data/elements';
 import { setCurrentLookups } from '@/data/baked-lookups';
 import { EconomyModule } from '@/economy/economy-module';
 import { GalaxyModule } from '@/galaxy/galaxy-module';
-import { resetProductionItemCounter } from '@/economy/engine';
+import { resetProductionItemCounter, restoreProductionItemCounter } from '@/economy/engine';
 import { SerializedGameStateSchema } from '@/lib/schemas/game-state-schema'; // Block 08 gap-9: state validation on deserialize
 import { compactSaveV3, expandSaveV3 } from '@/lib/save-format-v3'; // R-29: ленивые залежи + словарь; R-30: v3 — единственный формат
 import { gzipBase64, gunzipBase64, isBrowserCodecAvailable } from '@/lib/save-codec-browser'; // R-26: сжатый транспорт сейвов
@@ -1034,9 +1034,11 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
 
         const loadedState = deserializeGameState(stateJson);
 
-        // Сброс детерминированного счётчика ProductionItem IDs (gap-6, P9)
-        // при загрузке сейва — новые ID будут идти с 0, что упрощает расследование.
-        resetProductionItemCounter();
+        // R-31 (audit): восстановить счётчик ProductionItem IDs из загруженных
+        // очередей (max суффикс + 1). Раньше счётчик сбрасывался в 0 — новые
+        // ID коллидировали с существующими элементами из сейва (cancelProduction
+        // удаляет по первому совпадению — отменялась не та задача).
+        restoreProductionItemCounter(loadedState.productionQueues);
         // Block 02 (F5): reset ship ID counter — newly built ships get fresh IDs.
         resetShipCounter();
 

@@ -35,7 +35,8 @@ function seededRng(seed: number) {
 }
 
 export default function Home() {
-  const gameState = useGameStore((s) => s.gameState);
+  // R-31 (audit): gameState здесь не используется (мёртвый селектор —
+  // подписка на весь стейт перерисовывала меню на каждый тик).
   const isInitialized = useGameStore((s) => s.isInitialized);
   const newGame = useGameStore((s) => s.newGame);
   const loadGame = useGameStore((s) => s.loadGame);

@@ -103,9 +103,11 @@ export async function PUT(request: Request, context: RouteContext) {
         { status: 400 },
       );
     }
-    if (stateJson.length > MAX_STATE_BYTES) {
+    // R-31: считаем байты UTF-8, а не символы (как в POST /api/save).
+    const stateBytes = Buffer.byteLength(stateJson, 'utf8');
+    if (stateBytes > MAX_STATE_BYTES) {
       return NextResponse.json(
-        { error: `State too large after decoding: ${stateJson.length} bytes (max ${MAX_STATE_BYTES})` },
+        { error: `State too large after decoding: ${stateBytes} bytes (max ${MAX_STATE_BYTES})` },
         { status: 400 },
       );
     }

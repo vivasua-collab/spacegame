@@ -2473,3 +2473,149 @@ Stage Summary:
 - Merge-коммит (два родителя) + push origin main; ветка r27-chemistry
   оставлена как история линии химии.
 - Чекпоинт checkpoints/09_03_merge_r26_r27_to_main.md; README счётчик 44.
+
+---
+Task ID: 32-b
+Agent: code-reviewer-state-save
+Task: Детальное ревью state/save (game-store, save-format-v3, codecs, lazy deposits)
+
+Work Log:
+- Прочитаны все файлы зоны: src/lib/save-format-v3.ts (314), src/stores/game-store.ts (1593),
+  src/lib/save-codec-browser.ts, src/lib/save-codec-server.ts,
+  src/galaxy/generate-resources.ts, src/app/api/save/route.ts + [id]/route.ts,
+  src/lib/schemas/{game-state,save}-schema.ts, src/core/types.ts, prisma/schema.prisma.
+- Проверен roundtrip compactSaveV3 → expandSaveV3 по всем полям GameState/Planet/
+  HexCell/AtmosphericSlot/OrbitalSlot/Warehouse/ProductionItem (включая processorType/
+  specialization/specializationLevel/activeRecipes, resourcePurity, energyBalance,
+  orbitBuffer, assignedTo); проверено, какие поля пишутся, но не читаются, и наоборот.
+- Прослежен путь ленивых залежей: generate-planets.ts (снимок snapshotState ДО прогона,
+  стирание hex.deposits) → engine.ts colonizePlanet:1638 (materializePlanetDeposits)
+  → compactBody ds/dm → expandBody восстановление; проверена идемпотентность и
+  бит-идентичность replay (Xoshiro256.fromState, uint32 точны в JSON).
+- Проверено surfaced-поведение ошибок: expandSaveV3 throw fmt≠3 → deserializeGameState
+  throw → loadGame catch → page.tsx handleLoad toast (destructive); saveGame ошибки →
+  toast в game-layout SaveButton. Grep на expandSaveV2/migrate* — только комментарии.
+- Проверена логика productionItemCounter: enqueue id = prod_<planetId>_<counter++>
+  (engine.ts:1345), счётчик глобальный, НЕ сохраняется в сейв, loadGame сбрасывает
+  в 0 (game-store.ts:1039) → анализ коллизий с загруженными item id.
+- Проверены API-роуты: rate-limit, zod-схемы, decodeStatePayload ДО лимита 50 МБ,
+  gzip-ошибки → 400, GET-порог 512 КБ → encodeStatePayload, Prisma create/update
+  (upsert не используется — корректно для flow currentSaveId; P2025 → 500 → тост).
+- Запущены тесты: bun test → 567/567 pass; tsc --noEmit — 7 ошибок в зоне
+  (game-store 2, generate-resources 3, save-format-v3.test 2) — все классифицированы.
+- Сверены смежные пути: clearCellInstanceState (снос чистит processor-поля → нет
+  утечки полей при buildingId=null), generateHexCoords (детерминированный rebuild
+  coord), bakedModel rebuild (документированный createdAt-нондетерминизм).
+
+Stage Summary:
+- НАЙДЕН 1 major-баг: resetProductionItemCounter() после loadGame (game-store.ts:1039)
+  обнуляет счётчик, а загруженные очереди хранят items prod_<planetId>_<0..N> →
+  следующий enqueue даёт ДУБЛИКАТ id → cancelProduction снимает не тот item
+  (findIndex = первый match, engine.ts:1612), дубли React-ключей
+  (production-queue.tsx:70 key={item.id}). Фикс: восстановить счётчик из
+  загруженных очередей (max суффикс + 1) или включить tick в id.
+- Minor: тот же класс коллизий для ship_/fleet_/slot_ id (счётчики сессионные,
+  коллизия только при совпадении tick; ship-коллизия молча перезаписывает корабль
+  в ships Map); idOf в expandSaveV3 молча возвращает String(i) при битом индексе
+  словаря (тихая порча вместо throw — нарушает строгий контракт v3); фолбэк
+  plain-JSON (>32 МБ без CompressionStream) может дать 413; MAX_STATE_BYTES меряется
+  в символах, а не байтах.
+- Roundtrip v3 чист: все игровые поля сохраняются/восстанавливаются; coord/
+  systemMap/bakedModel перестраиваются детерминированно; идемпотентность
+  encode(decode(encode)) подтверждена тестом №10. Ленивые залежи корректны:
+  идемпотентность dm, ds→depositRngState, replay бит-в-бит, истощённые (qty<=0)
+  не пишутся осознанно. Строгость fmt≠3 доведена до UI (тост). Динамических
+  вызовов удалённых v2-хелперов нет (только док-комментарии).
+- Все 7 TS-ошибок зоны — strict-noise от noUncheckedIndexedAccess (runtime-безопасны:
+  guard'ы ?? 0 + ранние return, фолбэки ?? rocky, границы циклов); тест-ошибка 263 —
+  локальная аннотация типа объявляет dm на гексах вместо планеты (косметика).
+
+---
+Task ID: 32-a
+Agent: code-reviewer-economy
+Task: Детальное ревью economy-ядра (engine.ts, adjacency, auto-processing, recipes, chemistry)
+
+Work Log:
+- Прочитаны полностью: src/economy/engine.ts (1718 строк), src/economy/adjacency.ts,
+  src/data/auto-processing.ts, src/data/processor-recipe-categories.ts,
+  src/data/processor-categories.ts, src/data/recipes.ts, src/data/warehouse.ts,
+  src/data/crafted-materials.ts, src/data/atmosphere-gases.ts,
+  src/data/chemistry/ore-specs.ts, src/galaxy/generate-resources.ts,
+  src/economy/economy-module.ts, src/data/buildings/{index,surface,synergy}.{ts,json}.
+- Проверена химия R-27: C-ore=Уголь (C 8.0 + slag 2.0), Si-ore=Песок, Al-ore=Каолин,
+  H/O isAtmospheric → залежей нет, O-rock удалён, SPECIAL_ORE_SPECS пуст, H2O-ice —
+  единственный залежь-источник H/O (электролиз process_H2O → H 1.1 + O 8.9);
+  slag есть в crafted-materials → склад 'processed'; validate:recipes 75/75, validate:buildings OK,
+  bun test tests/economy* 131/131.
+- Карусель R-26: трассированы assignQueueTasks (Pass 1 spec-priority → Pass 2 sticky →
+  Pass 3 carousel), collectProcessorInstances, конвенции ключей (hex ≥ 0; -1-i; -100-i)
+  по engine/economy-module/UI describeAssignment — консистентны.
+- Энергетика: трассирован порядок processEconomyTick (extraction → auto → queue →
+  recalc) и списание planet.energyBalance -= perTickCost; runtime-проверка
+  (nuclear 31.5 − processor 5.7 = 25.8; траты очереди 0.4/тик стёрты recalc) — подтверждено.
+- Runtime-проверки bun: (а) бесплатное переключение специализации metal→nonmetal→
+  chemical_decomp (потрачено 0 ед. ресурсов); (б) L1 шахта добывает Y-ore (deep, depth 4,
+  drilling_rig post-MVP), L1 universal processor выплавляет smelt_y (minSpecializationLevel=5
+  игнорируется, Y=3.6 произведено).
+- tsc --noEmit: классифицированы все 48 ошибок src/economy/engine.ts (TS18048/TS2532/TS2345).
+- Прогнан bunx tsc, validate:recipes, validate:buildings, bun test tests/economy; 
+  git log/checkpoints 09_03_merge проверены на residuals (SOLAR_SYNERGY*, v1/v2 стабы — чисто).
+
+Stage Summary:
+- КРИТИЧЕСКИХ нет. MAJOR (4): (1) engine.ts:1492-1496 — бесплатное переключение категории
+  специализации X→Y (guard `processorType !== 'specialized'` пропускает списание, вопреки
+  комментарию «switching требует полной стоимости»; проверено runtime). (2) engine.ts:471-474 +
+  934 + 46-65 — списание perTickCost энергии очереди стирается recalcEnergyBalance в конце
+  того же тика: энергия очереди НЕ персистентна (работает только как внутритиковый гейт
+  параллелизма), авто-переработка (гейт до очереди) не видит трат очереди — бюджет считается
+  дважды. (3) Системный разрыв гейтов уровней: processExtraction не проверяет deposit depth /
+  sourceBuildingId, assignQueueTasks/enqueueProduction не проверяют minSpecializationLevel/
+  minProcessingLevel → L1 mine добывает глубинные руды, L1 universal processor плавит их
+  (runtime-подтверждено). (4) game-store.ts:1039 — resetProductionItemCounter() при loadGame
+  даёт коллизии ID `prod_<planet>_<n>` с загруженными элементами очереди → cancelProduction
+  удаляет не тот элемент. MINOR (10): мёртвые импорты engine.ts:12-13 (getCurrentLookups,
+  calculateWarehouseCapacity); осиротевший док-комментарий engine.ts:175; мульти-рецептный
+  штраф 1/sqrt(n) структурно недостижим после R-26 (≤1 задача на экземпляр; activeRecipes ≤ 1;
+  UI building-dialog.tsx:1166 мёртв) + несвежие activeRecipes простаивающих экземпляров
+  (очередь пуста → ранний return, очистки нет); нарушение липкости для spec-экземпляров при
+  более ранней той же категории задаче (assignQueueTasks:698-709); устаревшие описания складов
+  в surface.json (100/+25 vs факт 3500/875; open_warehouse заявляет хранение газов, перенесённых
+  R-27 в газовый склад); recalcEnergyBalance без system в build/upgrade/demolish → солнечная
+  выработка считается с luminosity=1.0 до следующего тика; коллизия ключей atmosphere#99=orbit#0
+  (-100); repeat-задача без входов эмитит production-cancelled(insufficient_inputs) каждый цикл;
+  рассинхрон комментариев прогрессий уровней (1+L×0.15 у добычи vs 1+(L−1)×0.15 у авто);
+  косметическая асимметрия ветки else чистоты в processAutoProcessing:386.
+- ЧИСТО (без багов): конвенции ключей карусели; параллелизм = числу экземпляров (off-by-one
+  нет); автоповторы занимают слот и идут параллельно (сценарий A); ссылки задач на снесённые
+  экземпляры корректно переназначаются (sticky → carousel), процессорные поля чистятся
+  clearCellInstanceState; consistency resolveProcessorCategory ↔ r?.processorCategory
+  (recipes.ts мутирует поля тем же резолвером, тест T5.8 PASS); BASE_CONSTRUCTION_RECIPE_IDS ↔
+  RECIPE_MAP (все 6 существуют, категории metal/nonmetal бьются с AUTO_SPECIALIZATIONS);
+  стартовые ресурсы влезают в склады; пол резерва и fitting комбинированных выходов в
+  processAutoProcessing математически корректны (тесты 2/10); формулы P1-26 едины с UI-хелпером
+  getBuildingEnergyOutput; локальная солнечная синергия R-26 удалена без остатков; отмена
+  non-repeat задачи при нехватке входов — документированное поведение (gap-7 C7); все 48 TS-ошибок
+  engine.ts — строгий noise (guard'ы границ/доступности/минимумов; стоимость зданий > 0 проверена),
+  0 реальных crash-рисков.
+
+---
+Task ID: 32-c
+Agent: code-reviewer-ui
+Task: Детальное ревью UI (building-dialog, planet-view, production-queue, reference-dialog)
+
+Work Log:
+- Прочитал полностью: planet-view.tsx (1240), building-dialog.tsx (1257), production-queue.tsx (176), production-queue-panel.tsx (225), reference-dialog.tsx (976), resource-panel.tsx (296), src/app/page.tsx (373).
+- Сверил UI-контракты с движком: economy/engine.ts (collectProcessorInstances key=i/-1-i/-100-i, assignedTo, progress=оставшиеся тики, getBuildingEnergyOutput P1-26, buildOnHex/Atmosphere/Orbit валидации), economy/adjacency.ts (getActiveSynergiesForHex, SYNERGY_TARGET_LABELS ↔ synergy.json — все 5 bonusTarget покрыты), data/warehouse.ts (caps/used/reserves/gas), data/buildings/*.json (layer/size/requiresAtmosphere/requiresTechs), data/recipes.ts (C-ore→C8+slag2, Si-ore→Si4.7+O5.3, Al-ore→Al2.1+Si2.2+O5.6+H0.2, H2O-ice→H1.1+O8.9), data/crafted-materials.ts (slag ✓).
+- Запустил: `bun test` → 567/567 pass (подтверждено); `npx tsc --noEmit` → 8 ошибок planet-view + 6 building-dialog (все noUncheckedIndexedAccess-шум, см. ниже); `npx eslint` на 7 файлов зоны → 0 ошибок / 6 предупреждений (мёртвые импорты/переменные).
+- Git-археология merge-остатков: `git log -S` показал, что ResourcePanel использовался из planet-view до R-28; после слияния 110bcd4 использование выпилено, а сам файл (с R-26-правками AmountCell) остался мёртвым. Tabs-код в building-dialog отсутствует (0 совпадений), старой секции «Резервы» в planet-view нет.
+- Проверил проводку starLuminosity (systemMap.get → stars[0].luminosity, идентично engine.ts:874) и toast-путь handleLoad (loadGame ловит исключения → false → destructive-toast; Toaster смонтирован в layout.tsx).
+- Проверил генерацию слотов (atmosphericSlots только у gas_giant → gas_extractor из атмосферных слотов всегда валиден; сценарий тихого отказа — поверхность без атмосферы).
+
+Stage Summary:
+- КРИТИЧЕСКИХ багов нет. 3 MAJOR:
+  1) planet-view.tsx:779-788 HexInfoCard — merge-остаток R-24: захардкожено «+10/tick» (energy-категория) и «+5/tick» (colony_hub), игнорирует уровень/светимость P1-26/орб.бонус — те же цифры, которые R-24 убирал из building-dialog. Фикс: переиспользовать EnergyStats + starLuminosity.
+  2) building-dialog.tsx:637-647 BuildList.handleBuild — игнорирует boolean-результат buildOnHex/Atmosphere/Orbit, диалог закрывается всегда → тихий провал без тоста (gas_extractor с requiresAtmosphere на планете с atmosphere.type='none' показывается как доступный; комментарий 623-626 обещает «greyed out», но логики нет). Фикс: disabled-карточка + подсказка, при false — destructive-toast и не закрывать.
+  3) planet-view.tsx:975-1008 WarehousePanel общий бар — used=getUsedCapacity (вкл. газ) делится на wh.totalCapacity, который engine после первой постройки пересчитывает БЕЗ газа (engine.ts:942) → бар >100% (кламп)/красный при свободных складах, знаменатель «прыгает» 12000→10000. Фикс UI: total = caps.ore+processed+highTech+gas (caps уже вычислены, стр. 983); корневой фикс — engine (включить газ).
+- MINOR (7): мёртвый resource-panel.tsx (297 строк, ResourcePanel нигде не импортируется — «старый рендер резервов», логика AmountCell уже разошлась с WarehousePanel по резерву=0); reference-dialog EconomyTab не знает 4-й газовый склад R-27 и «10 000» вместо 12 000; BuildingsTab хардкод «+10 энерг.» для всех energy (nuclear=25, solar зависит от L☉); хардкод-блок «Новые цепочки (R-27)» дублирует data-driven таблицы (сейчас совпадает, но может дрейфовать; «Песок→Кремний» умалчивает O 5.3); eslint-остатки (getSpecInfo/getResourceCategory, centerX/centerY, gameState, проп specialization); enqueueProduction-результат игнорируется; занятый слот в SlotCard — <span onClick> без keyboard-доступа.
+- ЧИСТО (no-bug): плоские build-меню по слоям (filter layer.includes(layer) корректен: гекс→surface+gas_extractor, орб.слот→spaceport/solar/shipyard, атм.слот→gas_extractor, orbit-only скрыты с поверхности, size-фильтр только surface — engine для слотов size тоже не проверяет); starLuminosity-проводка полная и идентична engine; единый список «кол-во/резерв» — математика верна (<минимума→красный, ≥→зелёный, без резерва→нейтральный, резервы-при-нуле включены); бейджи карусели describeAssignment декодирует ровно по конвенции движка (undefined=ждёт, 1-базовая нумерация согласована с targetLabel/SlotCard); прогресс-бар верен (progress=оставшиеся тики, engine декрементирует); 2-шаговый DemolishConfirmDialog корректен (preventDefault-паттерн, сброс шага через auto-close→onOpenChange); React-гигиена: хуки до early-return во всех компонентах, ключи во всех списках, page.tsx handleLoad toast надёжен; химия справки data-driven (RECIPE_BY_INPUT + fallback containedElements + «рецепт в планах», slag→«Sl»).
+- TS-ошибки зоны (8+6) — ВСЕ строгий noUncheckedIndexedAccess-шум: planet-view 659/660×2/678/712/722/729×2 — hexes[pos.index] (pos.index < hexes.length по построению); building-dialog 126×2/127/128/137 — planet.hexes[target.hexIndex] после bounds-валидации target (строки 109-121), 654 — terrain при kind==='hex'. Runtime-безопасны; лечатся !-assert/локальной переменной после guard.

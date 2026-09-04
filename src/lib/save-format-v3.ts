@@ -224,9 +224,18 @@ export function expandSaveV3<T extends Plain>(raw: T): T {
   }
 
   const dict = (galaxy.dict as string[] | undefined) ?? [];
+  // R-31 (audit): строгий контракт v3 — битый индекс словаря (кортеж
+  // ссылается за пределы dict) раньше молча возвращал число-строкой как
+  // elementId (тихая порча данных); теперь — явная ошибка, как и fmt≠3.
   const idOf = (i: unknown): string => {
     const idx = typeof i === 'number' ? i : -1;
-    return dict[idx] ?? String(i);
+    const id = idx >= 0 && idx < dict.length ? dict[idx] : undefined;
+    if (id === undefined) {
+      throw new Error(
+        `Повреждённый сейв: индекс ${String(i)} вне словаря id (dict.len=${dict.length})`,
+      );
+    }
+    return id;
   };
 
   for (const sys of galaxy.systems as Plain[]) {

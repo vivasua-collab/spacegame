@@ -9,8 +9,7 @@ import { BUILDING_MAP, areBuildingTechsMet } from '@/data/buildings';
 import { RECIPE_MAP } from '@/data/recipes';
 import { PROCESSOR_CATEGORIES } from '@/data/processor-categories';
 import { ELEMENT_MAP } from '@/data/elements';
-import { getCurrentLookups } from '@/data/baked-lookups';
-import { canStoreResource, calculateWarehouseCapacity, calculateWarehouseCapacities, getOrbitBufferCapacity, ensureReservesForResources, getWarehouseType } from '@/data/warehouse';
+import { canStoreResource, calculateWarehouseCapacities, getOrbitBufferCapacity, ensureReservesForResources, getWarehouseType } from '@/data/warehouse';
 import { DIRECT_GAS_MAP, getAtmosphericGasesForType } from '@/data/atmosphere-gases';
 import {
   BASE_CONSTRUCTION_RECIPE_IDS,
@@ -41,6 +40,31 @@ export function resetProductionItemCounter(): void {
 }
 
 /**
+ * R-31 (audit): восстановить счётчик ProductionItem IDs из загруженных очередей.
+ *
+ * Вызывать после loadGame вместо resetProductionItemCounter(): загруженный сейв
+ * содержит элементы с id `prod_<planetId>_<0..N>`; сброс счётчика в 0 порождал
+ * бы коллизии (cancelProduction удаляет по ПЕРВОМУ совпадению id — была бы
+ * отменена старая задача вместо новой; дубли React-ключей в очереди).
+ * Счётчик выставляется на max(числовой суффикс)+1 — новые ID гарантированно
+ * не пересекаются с существующими.
+ */
+export function restoreProductionItemCounter(queues: Map<EntityId, ProductionQueue>): void {
+  let max = -1;
+  for (const queue of queues.values()) {
+    for (const item of queue.items) {
+      const m = /_(\d+)$/.exec(item.id);
+      const suffix = m?.[1];
+      if (suffix !== undefined) {
+        const n = parseInt(suffix, 10);
+        if (!Number.isNaN(n) && n > max) max = n;
+      }
+    }
+  }
+  productionItemCounter = max + 1;
+}
+
+/**
  * Обработка одного тика экономики для всех планет.
  */
 export function processEconomyTick(planets: Planet[], queues: Map<EntityId, ProductionQueue>, systemMap?: Map<EntityId, StarSystem>): void {
@@ -48,14 +72,18 @@ export function processEconomyTick(planets: Planet[], queues: Map<EntityId, Prod
     // 1. Добыча ресурсов зданиями
     processExtraction(planet);
 
-    // 2. R-27: авто-переработка базовых строительных руд переработчиками
+    // 2. Обработка очереди производства (R-31: ПЕРЕД авто-переработкой —
+    //    внутри тика энергобюджет делится честно: ручная очередь тратит
+    //    первой, авто-режим гейтится по остатку, двойного бюджета нет)
+    processProductionQueue(planet, queues);
+
+    // 3. R-27: авто-переработка базовых строительных руд переработчиками
     //    (universal — все базовые; metal/nonmetal_smelting — своя категория с бустом)
     processAutoProcessing(planet);
 
-    // 3. Обработка очереди производства
-    processProductionQueue(planet, queues);
-
-    // 4. Расчёт энергетического баланса
+    // 4. Расчёт энергетического баланса (статический нетто: генерация −
+    //    потребление зданий; внутритиковые траты очереди сбрасываются —
+    //    следующий тик снова начинает со статического бюджета)
     const system = systemMap?.get(planet.systemId);
     recalcEnergyBalance(planet, system);
 
@@ -172,8 +200,6 @@ function processExtraction(planet: Planet): void {
   convertDirectAtmosphericElements(planet);
 }
 
-/** Получить доступные газы для типа атмосферы (gap-3, C3 — вынесено в data/atmosphere-gases.ts) */
-
 /** Конвертация чистых атмосферных газов в элементы (1:1, переработка не нужна) */
 function convertDirectAtmosphericElements(planet: Planet): void {
   for (const [gasId, elementId] of Object.entries(DIRECT_GAS_MAP)) {
@@ -234,8 +260,9 @@ function getAtmosphereEfficiency(type: string): number {
  *     дополнительно НЕ списывается — авто-режим не двойной тариф).
  */
 function processAutoProcessing(planet: Planet): void {
-  // Гейт энергии: без энергии переработчики стоят (баланс с прошлого тика —
-  // та же семантика, что у processProductionQueue P3-02).
+  // Гейт энергии: без энергии переработчики стоят. R-31: очередь уже
+  // потратила свой бюджет (траты очереди видны в балансе этого тика) —
+  // авто-режим работает по остатку, двойного энергобюджета нет.
   if (planet.energyBalance <= 0) return;
 
   const processorDef = BUILDING_MAP.get('processor');
@@ -426,7 +453,21 @@ function processAutoProcessing(planet: Planet): void {
  */
 function processProductionQueue(planet: Planet, queues: Map<EntityId, ProductionQueue>): void {
   const queue = queues.get(planet.id);
-  if (!queue || queue.items.length === 0) return;
+  if (!queue || queue.items.length === 0) {
+    // R-31 (audit): пустая очередь — сбросить фантомные activeRecipes всех
+    // экземпляров (иначе после удаления задач в диалоге здания отображался
+    // «активный рецепт» у простаивающего переработчика).
+    for (const hex of planet.hexes) {
+      if (hex.activeRecipes?.length) hex.activeRecipes = [];
+    }
+    for (const slot of planet.atmosphericSlots) {
+      if (slot.activeRecipes?.length) slot.activeRecipes = [];
+    }
+    for (const slot of planet.orbitSlots) {
+      if (slot.activeRecipes?.length) slot.activeRecipes = [];
+    }
+    return;
+  }
 
   // 1. Назначить задачи на экземпляры зданий (spec-priority → sticky → carousel).
   const assignments = assignQueueTasks(planet, queue.items);
@@ -468,7 +509,9 @@ function processProductionQueue(planet: Planet, queues: Map<EntityId, Production
     item.progress -= synergySpeedMult;
     item.assignedTo = instance.key;
 
-    // Тратим энергию
+    // Тратим энергию (внутритиковый бюджет: декремент гейтит следующие
+    // задачи очереди И виден авто-переработке (шаг 3); в конце тика
+    // recalcEnergyBalance сбрасывает баланс на статический нетто)
     if (recipe.energyCost > 0) {
       planet.energyBalance -= perTickCost;
     }
@@ -726,8 +769,15 @@ function assignQueueTasks(
     }
 
     // Записать активные рецепты в ячейки зданий (реальная картина).
+    // R-31 (audit): незадействованным экземплярам — сброс (иначе у простаивающих
+    // переработчиков в диалоге висел фантомный «активный рецепт» из прошлых тиков).
     for (const [instance, recipes] of assignedRecipes) {
       instance.cell.activeRecipes = [...recipes];
+    }
+    for (const instance of instances) {
+      if (!assignedRecipes.has(instance)) {
+        instance.cell.activeRecipes = [];
+      }
     }
   }
 
@@ -938,8 +988,10 @@ export function recalcEnergyBalance(planet: Planet, system?: StarSystem): void {
     // v3.0: раздельная система складов
     const caps = calculateWarehouseCapacities(planet);
     planet.warehouse.capacities = caps;
-    // Legacy totalCapacity (сумма всех 3) — для обратной совместимости
-    planet.warehouse.totalCapacity = caps.ore + caps.processed + caps.highTech;
+    // Legacy totalCapacity — сумма всех 4 складов, включая газовый (R-31:
+    // аудит нашёл, что после первой постройки итог «прыгал» с 12000 на
+    // 10000 — газовый склад выпадал из знаменателя общего бара UI).
+    planet.warehouse.totalCapacity = caps.ore + caps.processed + caps.highTech + caps.gas;
     planet.warehouse.orbitBuffer.capacity = getOrbitBufferCapacity(planet);
   }
 }
@@ -1486,10 +1538,14 @@ export function specializeBuilding(
   if (hex.processorType === 'specialized' && hex.specialization === category) {
     return { success: false, reason: 'already-specialized-this-category' };
   }
-  // Списание стоимости (если переходим universal → specialized в другой категории,
-  // это считается как переключение; дешевле — построить новый processor).
-  // Для упрощения: switching category требует полной стоимости specializeCost.
-  if (hex.processorType !== 'specialized') {
+  // Списание стоимости. R-31 (audit): смена категории X→Y у уже
+  // специализированного экземпляра тоже требует полной стоимости
+  // specializeCost — раньше списание выполнялось только при переходе
+  // universal → specialized, что позволяло после первой оплаты менять
+  // категории бесконечно бесплатно (буст специализации во всех категориях).
+  // Возврата за «старую» категорию нет — переключение осознанный выбор.
+  const isSwitching = hex.processorType === 'specialized' && hex.specialization !== category;
+  if (hex.processorType !== 'specialized' || isSwitching) {
     if (!spendSpecializeCost(planet, def.specializeCost ?? {})) {
       return { success: false, reason: 'cannot-afford' };
     }

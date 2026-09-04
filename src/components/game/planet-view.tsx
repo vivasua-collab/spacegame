@@ -10,7 +10,8 @@ import { ELEMENT_MAP } from '@/data/elements';
 import { getCurrentLookups, findResourceDisplay } from '@/data/baked-lookups';
 import { getCraftedMaterial } from '@/data/crafted-materials';
 import { CATEGORY_LABELS } from '@/data/element-helpers';
-import { getUsedCapacity, getUsedCapacityByType, calculateWarehouseCapacities, getOrbitBufferUsed, getSpecInfo, getResourceType, getResourceCategory } from '@/data/warehouse';
+import { getUsedCapacity, getUsedCapacityByType, calculateWarehouseCapacities, getOrbitBufferUsed, getResourceType } from '@/data/warehouse';
+import { getBuildingEnergyOutput } from '@/economy/engine';
 import { BuildingDialog, type BuildingDialogTarget } from './building-dialog';
 import { ShipyardDialog } from './shipyard-dialog';
 import { ProductionQueuePanel } from './production-queue-panel';
@@ -40,7 +41,7 @@ import {
   Rocket,
   Globe,
 } from 'lucide-react';
-import type { Planet, HexCell, AtmosphereType, LifeLevel, AtmosphericSlot, OrbitalSlot, PlanetResourceDeposit, ColonyRole, WarehouseSpecialization, BuildingLayer } from '@/core/types';
+import type { Planet, HexCell, AtmosphereType, LifeLevel, AtmosphericSlot, OrbitalSlot, PlanetResourceDeposit, ColonyRole, WarehouseSpecialization, BuildingLayer, StarSystem } from '@/core/types';
 
 const ATMO_DISPLAY: Record<AtmosphereType, string> = {
   none: 'Нет', thin: 'Тонкая', standard: 'Стандартная', dense: 'Плотная',
@@ -93,11 +94,12 @@ export function PlanetView() {
     );
   }
 
-  // Find the planet
+  // Find the planet (и систему — для светимости звезды в HexInfoCard, R-31)
   let planet: Planet | undefined;
+  let planetSystem: StarSystem | undefined;
   for (const sys of gameState.galaxy.systems) {
     const found = sys.planets.find((p) => p.id === selectedPlanetId);
-    if (found) { planet = found; break; }
+    if (found) { planet = found; planetSystem = sys; break; }
   }
 
   if (!planet) {
@@ -112,7 +114,6 @@ export function PlanetView() {
     setDialogTarget({ kind: 'hex', hexIndex });
     setDialogOpen(true);
   };
-
   /** Открыть диалог постройки на атмосферном слоте. */
   const handleAtmosphereSlotClick = (slotIndex: number) => {
     setDialogTarget({ kind: 'atmosphere', slotIndex });
@@ -320,7 +321,11 @@ export function PlanetView() {
 
             {/* Hovered hex info */}
             {activeTab === 'map' && hoveredHexIndex !== null && planet.hexes[hoveredHexIndex] && (
-              <HexInfoCard hex={planet.hexes[hoveredHexIndex]} />
+              <HexInfoCard
+                hex={planet.hexes[hoveredHexIndex]}
+                starLuminosity={planetSystem?.stars[0]?.luminosity ?? 1.0}
+                orbitalRadius={planet.orbitalRadius}
+              />
             )}
 
             {/* Atmospheric Slots (gas giants) */}
@@ -607,9 +612,9 @@ function HexGrid({ hexes, onHexClick, onHexHover, hoveredHexIndex }: HexGridProp
   }, [hexes]);
 
   // Compute bounds
-  const { viewBox, centerX, centerY } = useMemo(() => {
+  const { viewBox } = useMemo(() => {
     if (hexPositions.length === 0) {
-      return { viewBox: '0 0 100 100', centerX: 50, centerY: 50 };
+      return { viewBox: '0 0 100 100' };
     }
 
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
@@ -626,11 +631,7 @@ function HexGrid({ hexes, onHexClick, onHexHover, hoveredHexIndex }: HexGridProp
     const vw = maxX - minX + padding * 2;
     const vh = maxY - minY + padding * 2;
 
-    return {
-      viewBox: `${vx} ${vy} ${vw} ${vh}`,
-      centerX: (minX + maxX) / 2,
-      centerY: (minY + maxY) / 2,
-    };
+    return { viewBox: `${vx} ${vy} ${vw} ${vh}` };
   }, [hexPositions]);
 
   // Hex corner points (flat-top)
@@ -744,7 +745,13 @@ function HexGrid({ hexes, onHexClick, onHexHover, hoveredHexIndex }: HexGridProp
 
 // ============ Hex Info Card ============
 
-function HexInfoCard({ hex }: { hex: HexCell }) {
+function HexInfoCard({ hex, starLuminosity, orbitalRadius }: {
+  hex: HexCell;
+  /** R-31: светимость звезды системы — реальная выработка солнечных станций (P1-26). */
+  starLuminosity: number;
+  /** R-31: орб. радиус планеты — дистанционный фактор P1-26. */
+  orbitalRadius: number;
+}) {
   const buildingDef = hex.buildingId ? BUILDING_MAP.get(hex.buildingId) : null;
 
   return (
@@ -776,14 +783,15 @@ function HexInfoCard({ hex }: { hex: HexCell }) {
                 <Zap className="size-3" />-{buildingDef.energyConsumption}/tick
               </div>
             )}
-            {buildingDef.category === 'energy' && (
-              <div className="text-xs text-green-400 flex items-center gap-1">
-                <Zap className="size-3" />+10/tick
-              </div>
-            )}
-            {buildingDef.id === 'colony_hub' && (
-              <div className="text-xs text-cyan-400 flex items-center gap-1">
-                <Zap className="size-3" />+5/tick (базовая энергия)
+            {(buildingDef.category === 'energy' || buildingDef.id === 'colony_hub') && (
+              <div className={`text-xs flex items-center gap-1 ${buildingDef.id === 'colony_hub' ? 'text-cyan-400' : 'text-green-400'}`}>
+                <Zap className="size-3" />+{getBuildingEnergyOutput(
+                  buildingDef.id,
+                  hex.buildingLevel,
+                  'surface',
+                  starLuminosity,
+                  orbitalRadius,
+                ).toFixed(1)}/tick{buildingDef.id === 'solar_plant' ? ` (L☉ ${starLuminosity.toFixed(2)}, R ${orbitalRadius.toFixed(1)})` : buildingDef.id === 'colony_hub' ? ' (базовая энергия)' : ''}
               </div>
             )}
           </div>
@@ -891,13 +899,15 @@ function SlotCard({
               >
                 <span className="text-slate-500 font-mono shrink-0">#{slot.index + 1}</span>
                 {buildingDef ? (
-                  <span
-                    className="text-amber-400 cursor-pointer truncate"
+                  <button
+                    type="button"
+                    className="text-amber-400 cursor-pointer truncate text-left hover:text-amber-300 transition-colors"
                     title={`${buildingDef.name} — нажмите для просмотра`}
                     onClick={() => onSlotClick(slot.index)}
+                    aria-label={`${buildingDef.name} — открыть диалог здания`}
                   >
                     {buildingDef.name} {slot.buildingLevel > 1 ? `(Lv.${slot.buildingLevel})` : ''}
-                  </span>
+                  </button>
                 ) : (
                   <button
                     className="text-[10px] px-2 py-0.5 rounded bg-white/5 text-slate-400 hover:bg-white/10 hover:text-slate-200 transition-colors"
@@ -973,7 +983,12 @@ function WarehousePanel({ planet }: { planet: Planet }) {
 
   const wh = planet.warehouse;
   const used = getUsedCapacity(planet);
-  const pct = wh.totalCapacity > 0 ? (used / wh.totalCapacity) * 100 : 0;
+  // R-31 (audit): знаменатель — сумма живых caps ВСЕХ 4 складов (включая
+  // газовый). Раньше брались wh.totalCapacity (в старых сейвах без газа),
+  // при том что числитель used газ включал — бар мог показывать >100%.
+  const liveCaps = calculateWarehouseCapacities(planet);
+  const totalCapacity = liveCaps.ore + liveCaps.processed + liveCaps.highTech + liveCaps.gas;
+  const pct = totalCapacity > 0 ? (used / totalCapacity) * 100 : 0;
   const orbitUsed = getOrbitBufferUsed(planet);
   const orbitPct = wh.orbitBuffer.capacity > 0 ? (orbitUsed / wh.orbitBuffer.capacity) * 100 : 0;
 
@@ -997,7 +1012,7 @@ function WarehousePanel({ planet }: { planet: Planet }) {
       <div className="space-y-1">
         <div className="flex justify-between text-xs">
           <span className="text-slate-400">Вместимость (всего)</span>
-          <span className="font-mono text-slate-300">{Math.floor(used)} / {wh.totalCapacity}</span>
+          <span className="font-mono text-slate-300">{Math.floor(used)} / {totalCapacity}</span>
         </div>
         <div className="h-2.5 bg-white/5 rounded-full overflow-hidden">
           <div

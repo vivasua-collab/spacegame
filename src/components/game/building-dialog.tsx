@@ -38,6 +38,7 @@ import {
 } from '@/economy/adjacency';
 import { PROCESSOR_CATEGORIES } from '@/data/processor-categories';
 import { SpecializeDialog } from './specialize-dialog';
+import { toast } from '@/hooks/use-toast';
 import { ShipyardDialog } from './shipyard-dialog';
 import { getResearchRate } from '@/research/engine'; // Block 03 R2: RP/sec для laboratory
 
@@ -402,7 +403,6 @@ function UpgradeMode({
                   isLimitSpecializedForm={isLimitSpecializedForm}
                   isUniversalInstance={isUniversalInstance}
                   isSpecializedInstance={isSpecializedInstance}
-                  specialization={specialization}
                   specializationLevel={specializationLevel}
                   categoryDefName={categoryDef?.name}
                   yieldMult={processorOutput.yieldMult}
@@ -636,12 +636,31 @@ function BuildList({
 
   const handleBuild = (buildingId: string, canAfford: boolean) => {
     if (!canAfford) return;
+    // R-31 (audit): раньше boolean-результат engine игнорировался — при отказе
+    // (нет атмосферы для газового экстрактора, неподходящая местность и т.п.)
+    // диалог молча закрывался и ничего не строилось. Теперь — видимый тост
+    // и диалог остаётся открытым.
+    let ok = false;
     if (target.kind === 'hex') {
-      buildOnHex(planet.id, target.hexIndex, buildingId);
+      ok = buildOnHex(planet.id, target.hexIndex, buildingId);
     } else if (target.kind === 'atmosphere') {
-      buildOnAtmosphereSlot(planet.id, target.slotIndex, buildingId);
+      ok = buildOnAtmosphereSlot(planet.id, target.slotIndex, buildingId);
     } else if (target.kind === 'orbit') {
-      buildOnOrbitSlot(planet.id, target.slotIndex, buildingId);
+      ok = buildOnOrbitSlot(planet.id, target.slotIndex, buildingId);
+    }
+    if (!ok) {
+      const def = BUILDING_MAP.get(buildingId);
+      const reason = def?.requiresAtmosphere && planet.atmosphere.type === 'none'
+        ? ' — требуется атмосфера'
+        : def?.terrainTypes?.length
+          ? ' — неподходящая местность'
+          : '';
+      toast({
+        title: 'Не удалось построить здание',
+        description: `${def?.name ?? buildingId}${reason}`,
+        variant: 'destructive',
+      });
+      return;
     }
     onClose();
   };
@@ -653,17 +672,28 @@ function BuildList({
           const canAfford = canAffordBuilding(planet, building);
           const terrain = target.kind === 'hex' ? planet.hexes[target.hexIndex].terrain : null;
           const terrainBonus = terrain && building.terrainBonus[terrain];
+          // R-31 (audit): честное затемнение карточек, которые engine отвергнет —
+          // раньше gas_extractor на безатмосферной планете выглядел доступным.
+          const needsAtmosphere = building.requiresAtmosphere && planet.atmosphere.type === 'none';
+          const wrongTerrain = !!(terrain && building.terrainTypes?.length
+            && !building.terrainTypes.includes(terrain));
+          const siteBlocked = needsAtmosphere || wrongTerrain;
 
           return (
             <div
               key={building.id}
               className={`rounded-lg border p-3 transition-colors ${
-                canAfford
+                canAfford && !siteBlocked
                   ? 'border-white/10 hover:border-white/20 hover:bg-white/5 cursor-pointer'
                   : 'border-white/5 opacity-50'
               }`}
-              onClick={() => handleBuild(building.id, canAfford)}
+              onClick={() => handleBuild(building.id, canAfford && !siteBlocked)}
             >
+              {(needsAtmosphere || wrongTerrain) && (
+                <div className="text-[10px] text-red-400 mb-1 flex items-center gap-1">
+                  {needsAtmosphere ? 'Требуется атмосфера' : 'Неподходящая местность'}
+                </div>
+              )}
               <div className="flex items-start justify-between mb-1">
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-medium">{building.name}</span>
@@ -1090,7 +1120,6 @@ interface ProcessorSpecializationPanelProps {
   isLimitSpecializedForm: boolean;     // refinery/synthesizer (предельная форма)
   isUniversalInstance: boolean;
   isSpecializedInstance: boolean;
-  specialization: import('@/core/types').ProcessorRecipeCategory | undefined;
   specializationLevel: number;
   categoryDefName?: string;
   yieldMult: number;
@@ -1110,7 +1139,6 @@ function ProcessorSpecializationPanel({
   isLimitSpecializedForm,
   isUniversalInstance,
   isSpecializedInstance,
-  specialization,
   specializationLevel,
   categoryDefName,
   yieldMult,

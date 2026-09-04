@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Plus, RotateCw, Search } from 'lucide-react';
+import { toast } from '@/hooks/use-toast';
 import type { EntityId, RecipeDef } from '@/core/types';
 
 /**
@@ -94,7 +95,17 @@ export function ProductionQueuePanel({ planetId, buildingId }: ProductionQueuePa
               recipe={recipe}
               canAfford={canAfford}
               onEnqueue={(repeat) => {
-                enqueueProduction(planetId, recipe.id, repeat);
+                // R-31 (audit): результат engine не игнорируем — при отказе
+                // (например, здание снесено между открытием панели и кликом)
+                // игрок видит тост, а не «тихое ничего».
+                const ok = enqueueProduction(planetId, recipe.id, repeat);
+                if (!ok) {
+                  toast({
+                    title: 'Не удалось добавить задачу',
+                    description: 'Проверьте, что здание-исполнитель ещё стоит на планете',
+                    variant: 'destructive',
+                  });
+                }
               }}
             />
           );
