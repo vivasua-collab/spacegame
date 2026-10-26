@@ -2,8 +2,9 @@ import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { SaveUpdateSchema } from '@/lib/schemas/save-schema';
 import { checkRateLimit } from '@/lib/rate-limit';
-import { decodeStatePayload, encodeStatePayload, STATE_ENCODING_THRESHOLD } from '@/lib/save-codec-server';
+import { decodeStatePayload, encodeStatePayload, STATE_ENCODING_THRESHOLD, StateTooLargeDuringDecodingError } from '@/lib/save-codec-server';
 import { MAX_STATE_BYTES } from '@/lib/schemas/save-schema';
+import type { Prisma } from '@prisma/client';
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -94,20 +95,42 @@ export async function PUT(request: Request, context: RouteContext) {
     const { name, state, stateEncoding, tick, settings } = parsed.data;
 
     // ─── R-26: декодирование транспорта (gzip-base64 → plain JSON) ────
+    // Аудит 2026-10-26 (этап 0–1): потоковая распаковка с РАННИМ лимитом
+    // байтов — как в POST (gzip-бомба отклоняется в процессе декодирования).
     let stateJson: string;
     try {
-      stateJson = decodeStatePayload(state, stateEncoding);
-    } catch {
+      stateJson = await decodeStatePayload(state, stateEncoding, MAX_STATE_BYTES);
+    } catch (e) {
+      if (e instanceof StateTooLargeDuringDecodingError) {
+        return NextResponse.json(
+          { error: `State too large during decoding (max ${MAX_STATE_BYTES} bytes)` },
+          { status: 400 },
+        );
+      }
       return NextResponse.json(
         { error: 'Invalid state payload: malformed gzip/base64' },
         { status: 400 },
       );
     }
     // R-31: считаем байты UTF-8, а не символы (как в POST /api/save).
+    // (gzip-путь уже ограничен потоком; эта проверка — для plain-JSON пути)
     const stateBytes = Buffer.byteLength(stateJson, 'utf8');
     if (stateBytes > MAX_STATE_BYTES) {
       return NextResponse.json(
         { error: `State too large after decoding: ${stateBytes} bytes (max ${MAX_STATE_BYTES})` },
+        { status: 400 },
+      );
+    }
+
+    // ─── Аудит 2026-10-26: state обязан быть валидным JSON-объектом ───
+    try {
+      const parsedState: unknown = JSON.parse(stateJson);
+      if (typeof parsedState !== 'object' || parsedState === null || Array.isArray(parsedState)) {
+        throw new Error('not an object');
+      }
+    } catch {
+      return NextResponse.json(
+        { error: 'Invalid state payload: state must be a valid JSON object' },
         { status: 400 },
       );
     }
@@ -121,8 +144,20 @@ export async function PUT(request: Request, context: RouteContext) {
     if (name !== undefined) data.name = name;
     if (settings !== undefined) data.settings = settings;
 
-    const save = await db.gameSave.update({ where: { id }, data });
-    return NextResponse.json(save);
+    // Аудит 2026-10-26: несуществующий id → 404 (раньше Prisma P2025
+    // падал в общий catch → 500, маскируя причину).
+    let save;
+    try {
+      save = await db.gameSave.update({ where: { id }, data });
+    } catch (e) {
+      if ((e as Prisma.PrismaClientKnownRequestError)?.code === 'P2025') {
+        return NextResponse.json({ error: 'Save not found' }, { status: 404 });
+      }
+      throw e;
+    }
+    // Аудит 2026-10-26: минимальный ответ — клиент проверяет только res.ok
+    // (раньше возвращалась полная запись с несжатым state — 3.29 МБ).
+    return NextResponse.json({ success: true, id: save.id, updatedAt: save.updatedAt });
   } catch (e) {
     console.error('Failed to update save:', e);
     return NextResponse.json({ error: 'Failed to update save' }, { status: 500 });
@@ -138,7 +173,15 @@ export async function PUT(request: Request, context: RouteContext) {
 export async function DELETE(_request: Request, context: RouteContext) {
   try {
     const { id } = await context.params;
-    await db.gameSave.delete({ where: { id } });
+    // Аудит 2026-10-26: несуществующий id → 404 (раньше P2025 → 500).
+    try {
+      await db.gameSave.delete({ where: { id } });
+    } catch (e) {
+      if ((e as Prisma.PrismaClientKnownRequestError)?.code === 'P2025') {
+        return NextResponse.json({ error: 'Save not found' }, { status: 404 });
+      }
+      throw e;
+    }
     return NextResponse.json({ success: true });
   } catch (e) {
     console.error('Failed to delete save:', e);

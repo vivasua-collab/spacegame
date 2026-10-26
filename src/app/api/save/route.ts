@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { SaveCreateSchema } from '@/lib/schemas/save-schema';
 import { checkRateLimit } from '@/lib/rate-limit';
-import { decodeStatePayload } from '@/lib/save-codec-server';
+import { decodeStatePayload, StateTooLargeDuringDecodingError } from '@/lib/save-codec-server';
 import { MAX_STATE_BYTES } from '@/lib/schemas/save-schema';
 
 /**
@@ -93,10 +93,19 @@ export async function POST(request: Request) {
     const { name, seed, state, stateEncoding, settings, tick } = parsed.data;
 
     // ─── R-26: декодирование транспорта (gzip-base64 → plain JSON) ────
+    // Аудит 2026-10-26 (этап 0–1): потоковая распаковка с РАННИМ лимитом
+    // байтов — gzip-бомба отклоняется в процессе декодирования (расход
+    // памяти ≤ MAX_STATE_BYTES), а не после полного разворачивания.
     let stateJson: string;
     try {
-      stateJson = decodeStatePayload(state ?? '{}', stateEncoding);
-    } catch {
+      stateJson = await decodeStatePayload(state ?? '{}', stateEncoding, MAX_STATE_BYTES);
+    } catch (e) {
+      if (e instanceof StateTooLargeDuringDecodingError) {
+        return NextResponse.json(
+          { error: `State too large during decoding (max ${MAX_STATE_BYTES} bytes)` },
+          { status: 400 },
+        );
+      }
       return NextResponse.json(
         { error: 'Invalid state payload: malformed gzip/base64' },
         { status: 400 },
@@ -105,10 +114,26 @@ export async function POST(request: Request) {
     // Реальный лимит — на raw JSON (после декодирования), Block 08 gap-8.
     // R-31: считаем байты UTF-8, а не символы (многобайтовые юникод-строки
     // раздули бы фактический размер до 4× без этой проверки).
+    // (gzip-путь уже ограничен потоком; эта проверка — для plain-JSON пути)
     const stateBytes = Buffer.byteLength(stateJson, 'utf8');
     if (stateBytes > MAX_STATE_BYTES) {
       return NextResponse.json(
         { error: `State too large after decoding: ${stateBytes} bytes (max ${MAX_STATE_BYTES})` },
+        { status: 400 },
+      );
+    }
+
+    // ─── Аудит 2026-10-26: state обязан быть валидным JSON-объектом ───
+    // Раньше сервер сохранял любой декодируемый мусор («this is not json» — 200 OK),
+    // и ошибка обнаруживалась только при загрузке (молчаливая порча сейва).
+    try {
+      const parsedState: unknown = JSON.parse(stateJson);
+      if (typeof parsedState !== 'object' || parsedState === null || Array.isArray(parsedState)) {
+        throw new Error('not an object');
+      }
+    } catch {
+      return NextResponse.json(
+        { error: 'Invalid state payload: state must be a valid JSON object' },
         { status: 400 },
       );
     }
@@ -125,7 +150,11 @@ export async function POST(request: Request) {
       },
     });
 
-    return NextResponse.json(save);
+    // Аудит 2026-10-26: минимально необходимый ответ. Раньше возвращалась
+    // ПОЛНАЯ запись (включая несжатый state — замер: 3.29 МБ ответа на
+    // каждое сохранение 200-системной галактики при 871 КБ запроса),
+    // хотя клиенту для нового сохранения нужен только id.
+    return NextResponse.json({ id: save.id }, { status: 201 });
   } catch (e) {
     console.error('Failed to create save:', e);
     return NextResponse.json({ error: 'Failed to create save' }, { status: 500 });

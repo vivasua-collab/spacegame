@@ -22,10 +22,10 @@
 import { test, expect, describe, beforeEach, afterEach } from 'bun:test';
 import { gzipSync } from 'node:zlib';
 import { POST } from '@/app/api/save/route';
-import { GET as GET_BY_ID, PUT } from '@/app/api/save/[id]/route';
+import { GET as GET_BY_ID, PUT, DELETE } from '@/app/api/save/[id]/route';
 import { __resetRateLimitBucketsForTesting } from '@/lib/rate-limit';
 import { MAX_STATE_BYTES } from '@/lib/schemas/save-schema';
-import { decodeStatePayload, encodeStatePayload, STATE_ENCODING_THRESHOLD } from '@/lib/save-codec-server';
+import { decodeStatePayload, encodeStatePayload, STATE_ENCODING_THRESHOLD, gunzipBounded, StateTooLargeDuringDecodingError } from '@/lib/save-codec-server';
 import { gzipBase64, gunzipBase64, isBrowserCodecAvailable } from '@/lib/save-codec-browser';
 import { db } from '@/lib/db';
 
@@ -59,15 +59,34 @@ describe('R-26: Кодеки (браузер ↔ сервер, один форм
     const sample = 'R-26 cross-codec: браузер сжимает, сервер читает';
     const browserEncoded = await gzipBase64(sample);
     // Серверный декодер (node:zlib) понимает выход CompressionStream
-    expect(decodeStatePayload(browserEncoded, 'gzip-base64')).toBe(sample);
+    expect(await decodeStatePayload(browserEncoded, 'gzip-base64', MAX_STATE_BYTES)).toBe(sample);
     // Серверный кодировщик понимается браузерным декодером
     const serverEncoded = encodeStatePayload(sample);
     expect(await gunzipBase64(serverEncoded.state)).toBe(sample);
     expect(serverEncoded.stateEncoding).toBe('gzip-base64');
   });
 
-  test('3. decodeStatePayload: plain без кодировки — как есть', () => {
-    expect(decodeStatePayload('{"a":1}', undefined)).toBe('{"a":1}');
+  test('3. decodeStatePayload: plain без кодировки — как есть', async () => {
+    expect(await decodeStatePayload('{"a":1}', undefined, MAX_STATE_BYTES)).toBe('{"a":1}');
+  });
+
+  test('3b. Аудит 2026-10-26: gunzipBounded — ранний отказ при превышении лимита', async () => {
+    // 1 МБ нулей, лимит 100 КБ → отказ ДО полного разворачивания
+    const bomb = gzipSync(Buffer.alloc(1024 * 1024));
+    const t0 = performance.now();
+    let rejected = false;
+    try {
+      await gunzipBounded(bomb, 100 * 1024);
+    } catch (e) {
+      rejected = true;
+      expect(e).toBeInstanceOf(StateTooLargeDuringDecodingError);
+    }
+    expect(rejected).toBe(true);
+    expect(performance.now() - t0).toBeLessThan(500);
+    // А валидный payload до лимита проходит целиком
+    const ok = gzipSync(Buffer.alloc(50 * 1024));
+    const out = await gunzipBounded(ok, 100 * 1024);
+    expect(out.length).toBe(50 * 1024);
   });
 });
 
@@ -99,7 +118,8 @@ describe('R-26: API transport — POST/PUT/GET', () => {
       tick: 5,
     });
     const res = await POST(req);
-    expect(res.status).toBe(200);
+    // Аудит 2026-10-26: 201 Created + минимальный ответ { id }
+    expect(res.status).toBe(201);
     const data = await res.json();
     createdIds.push(data.id);
     // В БД — plain JSON (version 1, совместимость/инспекция)
@@ -169,7 +189,7 @@ describe('R-26: API transport — POST/PUT/GET', () => {
     expect(resBig.status).toBe(200);
     const dataBig = await resBig.json();
     expect(dataBig.stateEncoding).toBe('gzip-base64');
-    expect(decodeStatePayload(dataBig.state, dataBig.stateEncoding)).toBe(bigState);
+    expect(await decodeStatePayload(dataBig.state, dataBig.stateEncoding, MAX_STATE_BYTES)).toBe(bigState);
     // И браузерный декодер его понимает
     if (isBrowserCodecAvailable()) {
       expect(await gunzipBase64(dataBig.state)).toBe(bigState);
@@ -190,5 +210,61 @@ describe('R-26: API transport — POST/PUT/GET', () => {
 
   test('9. Порог согласован: STATE_ENCODING_THRESHOLD = 512 КБ', () => {
     expect(STATE_ENCODING_THRESHOLD).toBe(512 * 1024);
+  });
+
+  // ─── Аудит 2026-10-26 (этап 0–1): контракт PUT/DELETE ──────────────
+
+  test('10. Аудит: PUT несуществующего id → 404 (раньше P2025 → 500)', async () => {
+    const req = new Request('http://localhost/api/save/nonexistent-cuid', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ state: b64('{"v":3}'), stateEncoding: 'gzip-base64', tick: 1 }),
+    });
+    const res = await PUT(req, { params: Promise.resolve({ id: 'nonexistent-cuid' }) });
+    expect(res.status).toBe(404);
+    const body = await res.json();
+    expect(body.error).toBe('Save not found');
+  });
+
+  test('11. Аудит: PUT мусорного state (не JSON) → 400, запись не тронута', async () => {
+    const row = await db.gameSave.create({
+      data: { name: 'AuditPutGarbage', seed: 77, state: '{"v":1}', tick: 0, version: 1 },
+    });
+    createdIds.push(row.id);
+    const req = new Request(`http://localhost/api/save/${row.id}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ state: b64('plain garbage not json'), stateEncoding: 'gzip-base64', tick: 5 }),
+    });
+    const res = await PUT(req, { params: Promise.resolve({ id: row.id }) });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toContain('valid JSON object');
+    // Запись не изменена
+    const after = await db.gameSave.findUnique({ where: { id: row.id } });
+    expect(after?.state).toBe('{"v":1}');
+    expect(after?.tick).toBe(0);
+  });
+
+  test('12. Аудит: PUT возвращает минимальный ответ { success, id, updatedAt }', async () => {
+    const row = await db.gameSave.create({
+      data: { name: 'AuditPutMinimal', seed: 78, state: '{"v":1}', tick: 0, version: 1 },
+    });
+    createdIds.push(row.id);
+    const req = new Request(`http://localhost/api/save/${row.id}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ state: b64('{"v":2}'), stateEncoding: 'gzip-base64', tick: 2 }),
+    });
+    const res = await PUT(req, { params: Promise.resolve({ id: row.id }) });
+    expect(res.status).toBe(200);
+    const body = await res.json() as { success?: boolean; id?: string; state?: unknown };
+    expect(body.success).toBe(true);
+    expect(body.id).toBe(row.id);
+    expect(body.state).toBeUndefined(); // никаких тяжёлых полей в ответе
+  });
+
+  test('13. Аудит: DELETE несуществующего id → 404 (раньше P2025 → 500)', async () => {
+    const res = await DELETE(new Request('http://localhost/api/save/nonexistent-cuid'), { params: Promise.resolve({ id: 'nonexistent-cuid' }) });
+    expect(res.status).toBe(404);
   });
 });

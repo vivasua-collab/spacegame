@@ -22,9 +22,17 @@
  *
  * Формат gzip одинаков у node:zlib (сервер) и Web CompressionStream
  * (браузер, см. save-codec-browser.ts) — RFC 1952.
+ *
+ * Аудит 2026-10-26 (внешний, этап 0–1): распаковка была СИНХРОННОЙ и
+ * ПОЛНОЙ до проверки лимита — gzip-бомба (≤100 МБ base64 по лимиту схемы)
+ * разворачивалась в память целиком (замер: 200 МБ нулей → +533 МБ RSS
+ * сервера при контейнере 4 ГБ; 1 ГБ бомба ≈ +2.5 ГБ → OOM). Теперь
+ * распаковка потоковая с жёстким лимитом байтов ВЫХОДА: при превышении
+ * поток уничтожается на первом же чанке за лимитом (расход памяти
+ * ограничен лимитом, а не размером бомбы).
  */
 
-import { gunzipSync, gzipSync } from 'node:zlib';
+import { createGunzip, gzipSync } from 'node:zlib';
 
 export type StateEncoding = 'json' | 'gzip-base64';
 
@@ -34,10 +42,69 @@ export const STATE_ENCODING_THRESHOLD = 512 * 1024;
 /** Максимальный размер base64-строки в запросе (защита до декодирования). */
 export const MAX_ENCODED_STATE_CHARS = 100_000_000;
 
-/** Декодировать поле state из тела запроса в plain JSON. */
-export function decodeStatePayload(state: string, encoding: StateEncoding | undefined): string {
+/**
+ * Ошибка раннего отказа: распакованные данные превысили лимит ещё В
+ * ПРОЦЕССЕ декодирования (не после полного разворачивания в память).
+ */
+export class StateTooLargeDuringDecodingError extends Error {
+  constructor(public readonly maxBytes: number) {
+    super(`Decoded state exceeds ${maxBytes} bytes during decoding`);
+    this.name = 'StateTooLargeDuringDecodingError';
+  }
+}
+
+/**
+ * Потоковая распаковка gzip с жёстким лимитом байтов на выходе.
+ *
+ * Память ограничена maxBytes (+ чанки), независимо от того, во сколько
+ * раз злоумышленный payload пытается развернуться (gzip-бомба).
+ */
+export function gunzipBounded(buf: Buffer, maxBytes: number): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let total = 0;
+    let settled = false;
+    const fail = (err: unknown): void => {
+      if (!settled) {
+        settled = true;
+        reject(err);
+      }
+    };
+    const stream = createGunzip();
+    stream.on('data', (chunk: Buffer) => {
+      total += chunk.length;
+      if (total > maxBytes) {
+        stream.destroy();
+        fail(new StateTooLargeDuringDecodingError(maxBytes));
+        return;
+      }
+      chunks.push(chunk);
+    });
+    stream.on('error', fail);
+    stream.on('end', () => {
+      if (!settled) {
+        settled = true;
+        resolve(Buffer.concat(chunks));
+      }
+    });
+    stream.end(buf);
+  });
+}
+
+/**
+ * Декодировать поле state из тела запроса в plain JSON.
+ *
+ * Аудит 2026-10-26: асинхронная (потоковая) для gzip-пути; maxBytes —
+ * обязательный лимит распакованных данных (ранний отказ при превышении).
+ */
+export async function decodeStatePayload(
+  state: string,
+  encoding: StateEncoding | undefined,
+  maxBytes: number,
+): Promise<string> {
   if (encoding === 'gzip-base64') {
-    return gunzipSync(Buffer.from(state, 'base64')).toString('utf-8');
+    const raw = await gunzipBounded(Buffer.from(state, 'base64'), maxBytes);
+    return raw.toString('utf-8');
   }
   return state;
 }

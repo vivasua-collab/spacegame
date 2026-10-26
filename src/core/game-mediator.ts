@@ -275,22 +275,17 @@ export class GameMediator {
   tick(): void {
     if (!this.gameState || this.gameState.phase !== 'playing') return;
 
-    // Audit Pass 1 P1-4: use immer.produce() to create a new state reference
-    // when mutating time. In-place mutation of this.gameState.time did not
-    // create a new reference, so zustand-immer middleware's Object.is check
-    // saw the same ref and did not notify subscribers — UI time display
-    // lagged behind on fast speeds.
-    const newState = produce(this.gameState, (draft) => {
-      draft.time.tick += draft.speed;
-      draft.time.dayInYear = draft.time.tick % 365;
-      draft.time.year = Math.floor(draft.time.tick / 365) + 1;
-    });
-    this.gameState = newState;
-
-    // Тик через реестр модулей (EconomyModule.tick, GalaxyModule.tick, ...)
-    this.registry.tickAll(newState.time);
-
-    this.emitStateChanged();
+    // Аудит 2026-10-26 (этап 0–1): раньше время инкрементировалось здесь
+    // вручную (`draft.time.tick += draft.speed` — умножение на скорость в
+    // обход контракта «1 ручной шаг = 1 тик») и РАСХОДИЛОСЬ с внутренним
+    // временем GameLoop: последующие тики интервала до догоняющего
+    // значения молча проглатывались guard'ом подписки core:tick, при этом
+    // registry.tickAll продолжал обрабатывать экономику.
+    // Теперь ручной шаг идёт по каноническому пути loop.step() →
+    // processTick(): время инкрементирует ТОЛЬКО GameLoop (единый источник
+    // истины), подписка core:tick синхронизирует gameState.time, модули
+    // получают тик через registry.tickAll — точно как при интервальном тике.
+    this.loop.step();
   }
 
   // ─── Запросы к данным ─────────────────────────────────

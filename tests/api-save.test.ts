@@ -2,12 +2,17 @@
 /**
  * Block 08 — API save route tests (zod validation + rate limiting).
  *
- * Tests (matches Block 08 spec from `08_27_block_08_security_data.md` §3.6):
+ * Tests (matches Block 08 spec from `08_27_block_08_security_data.md` §3.6
+ * + аудит 2026-10-26, этап 0–1):
  *   1. Invalid payload (missing `name`) → 400 + structured zod issues.
- *   2. Valid payload → 200 + creates a record in the DB.
+ *   2. Valid payload → 201 + minimal `{ id }` response + creates record in the DB
+ *      (аудит 2026-10-26: раньше возвращалась полная запись с несжатым state).
  *   3. Rate limit: 11th request from the same IP → 429 + `Retry-After: 60` header.
  *   4. Invalid JSON body → 400 + `Invalid JSON body` error.
  *   5. State size over the 50 MB limit → 400.
+ *   6. Аудит 2026-10-26: state не являющийся JSON-объектом → 400 (не сохранять мусор).
+ *   7. Аудит 2026-10-26: gzip-бомба → быстрый 400 В ПРОЦЕССЕ декодирования.
+ *   8. Аудит 2026-10-26: ответ минимален — только id.
  *
  * Strategy:
  *   - Directly import `POST` handler from `src/app/api/save/route.ts` and
@@ -81,23 +86,29 @@ describe('Block 08: API save POST', () => {
     expect(nameIssue).toBeDefined();
   });
 
-  // ─── Test 2: valid payload → 200 + creates record ───────────────────
+  // ─── Test 2: valid payload → 201 + minimal { id } + creates record ──
 
-  test('2. Valid payload → 200 + creates record', async () => {
+  test('2. Valid payload → 201 + минимальный ответ { id } + создаёт запись в БД', async () => {
     const req = makePostRequest(validPayload(), '5.6.7.8');
     const res = await POST(req);
 
-    expect(res.status).toBe(200);
-    const data = await res.json() as { id: string; name: string; seed: number; tick: number; version: number };
+    // Аудит 2026-10-26: 201 Created + минимальный ответ (клиенту нужен только id)
+    expect(res.status).toBe(201);
+    const data = await res.json() as { id?: string; state?: unknown; [k: string]: unknown };
     expect(data.id).toBeDefined();
     expect(typeof data.id).toBe('string');
-    expect(data.name).toBe('Block08TestSave');
-    expect(data.seed).toBe(42);
-    expect(data.tick).toBe(0);
-    expect(data.version).toBe(1);
+    // Минимальность: в ответе НЕ должно быть тяжёлых полей записи
+    expect(data.state).toBeUndefined();
+
+    // Полнота данных — проверяем в самой БД, а не в ответе
+    const row = await db.gameSave.findUnique({ where: { id: data.id! } });
+    expect(row?.name).toBe('Block08TestSave');
+    expect(row?.seed).toBe(42);
+    expect(row?.tick).toBe(0);
+    expect(row?.version).toBe(1);
 
     // Track for cleanup.
-    createdIds.push(data.id);
+    createdIds.push(data.id!);
   });
 
   // ─── Test 3: rate limit → 429 + Retry-After ─────────────────────────
@@ -114,7 +125,7 @@ describe('Block 08: API save POST', () => {
         ip,
       );
       const res = await POST(req);
-      expect(res.status).toBe(200);
+      expect(res.status).toBe(201);
       const data = await res.json() as { id: string };
       expect(data.id).toBeDefined();
       createdIds.push(data.id);
@@ -164,5 +175,51 @@ describe('Block 08: API save POST', () => {
     expect(res.status).toBe(400);
     const body = await res.json() as { error: string };
     expect(body.error).toContain('too large');
+  });
+
+  // ─── Test 6 (аудит 2026-10-26): мусорный state → 400, не сохраняется ──
+
+  test('6. Аудит: state не-JSON → 400 «must be a valid JSON object»', async () => {
+    const req = makePostRequest(
+      validPayload({ state: 'this is not json at all, just garbage' }),
+      '21.22.23.24',
+    );
+    const res = await POST(req);
+    expect(res.status).toBe(400);
+    const body = await res.json() as { error: string };
+    expect(body.error).toContain('valid JSON object');
+
+    // JSON-массив — тоже не объект-состояние
+    const reqArr = makePostRequest(validPayload({ state: '[1,2,3]' }), '21.22.23.25');
+    const resArr = await POST(reqArr);
+    expect(resArr.status).toBe(400);
+  });
+
+  // ─── Test 7 (аудит 2026-10-26): gzip-бомба → ранний отказ ─────────────
+
+  test('7. Аудит: gzip-бомба 60 МБ → быстрый 400 В ПРОЦЕССЕ декодирования', async () => {
+    // До фикса: gunzipSync разворачивал весь payload в память ДО проверки
+    // лимита (замер: 200 МБ бомба → +533 МБ RSS сервера). Теперь: поток
+    // уничтожается при превышении MAX_STATE_BYTES на выходе.
+    const { gzipSync } = await import('node:zlib');
+    // 60 МБ нулей сжимаются в ~60 КБ — но развернуться должны лишь до лимита 50 МБ
+    const bomb = gzipSync(Buffer.alloc(60 * 1024 * 1024)).toString('base64');
+    expect(bomb.length).toBeLessThan(200_000); // действительно «бомба»
+
+    const t0 = performance.now();
+    const req = makePostRequest(
+      validPayload({ state: bomb, stateEncoding: 'gzip-base64' }),
+      '25.26.27.28',
+    );
+    const res = await POST(req);
+    const elapsed = performance.now() - t0;
+
+    expect(res.status).toBe(400);
+    const body = await res.json() as { error: string };
+    expect(body.error).toContain('too large');
+    expect(body.error).toContain('during decoding');
+    // Ранний отказ: не тратим время на разворачивание всех 60 МБ — но и не
+    // требуем мгновенности (стрим всё же прочитает чуть больше лимита)
+    expect(elapsed).toBeLessThan(2000);
   });
 });
