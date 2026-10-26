@@ -153,9 +153,9 @@ describe('Аудит 2026-10-26: полный HTTP-раундтрип сохра
       queue: (state.productionQueues.get(planet.id)?.items ?? []).map((q) => ({
         recipe: q.recipeId,
         repeat: q.repeat,
-        remaining: q.remainingTicks,
+        remaining: q.progress,
       })),
-      researchPoints: state.researchState.totalPoints,
+      researchPoints: state.researchState.totalRpGenerated,
     };
 
     // ─── 3. Сериализация + POST (gzip-base64 транспорт) ──────────────
@@ -191,7 +191,8 @@ describe('Аудит 2026-10-26: полный HTTP-раундтрип сохра
     expect(getRes.status).toBe(200);
     const getData = await getRes.json() as { state: string; stateEncoding?: string };
     // state < 512 КБ → plain (порог STATE_ENCODING_THRESHOLD)
-    const loadedJson = await decodeStatePayload(getData.state, getData.stateEncoding, MAX_STATE_BYTES);
+    const encodingPlain = getData.stateEncoding === 'gzip-base64' ? 'gzip-base64' : undefined;
+    const loadedJson = await decodeStatePayload(getData.state, encodingPlain, MAX_STATE_BYTES);
     expect(loadedJson).toBe(stateJson); // бит-в-бит
 
     const loaded = deserializeGameState(loadedJson);
@@ -216,10 +217,10 @@ describe('Аудит 2026-10-26: полный HTTP-раундтрип сохра
     const queueAfter = (loaded.productionQueues.get(planet.id)?.items ?? []).map((q) => ({
       recipe: q.recipeId,
       repeat: q.repeat,
-      remaining: q.remainingTicks,
+      remaining: q.progress,
     }));
     expect(queueAfter).toEqual(snapshotBefore.queue);
-    expect(loaded.researchState.totalPoints).toBe(snapshotBefore.researchPoints);
+    expect(loaded.researchState.totalRpGenerated).toBe(snapshotBefore.researchPoints);
 
     // ─── 6. Продолжение игры с ожидаемого тика ──────────────────────
     // loadGame в store делает: mediator.setLoadedState(loaded) — время
@@ -274,7 +275,8 @@ describe('Аудит 2026-10-26: полный HTTP-раундтрип сохра
     expect(getRes.status).toBe(200);
     const getData = await getRes.json() as { state: string; stateEncoding: string };
     expect(getData.stateEncoding).toBe('gzip-base64'); // > порога → сжат
-    const loadedJson = await decodeStatePayload(getData.state, getData.stateEncoding, MAX_STATE_BYTES);
+    const encodingGzip = getData.stateEncoding === 'gzip-base64' ? 'gzip-base64' : undefined;
+    const loadedJson = await decodeStatePayload(getData.state, encodingGzip, MAX_STATE_BYTES);
     expect(loadedJson).toBe(stateJson); // бит-в-бит через сжатый путь
 
     // И deserialize успешен

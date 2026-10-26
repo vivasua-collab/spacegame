@@ -11,6 +11,7 @@ import { PROCESSOR_CATEGORIES } from '@/data/processor-categories';
 import { ELEMENT_MAP } from '@/data/elements';
 import { canStoreResource, calculateWarehouseCapacities, getOrbitBufferCapacity, ensureReservesForResources, getWarehouseType } from '@/data/warehouse';
 import { DIRECT_GAS_MAP, getAtmosphericGasesForType } from '@/data/atmosphere-gases';
+import { getCurrentLookups, hasCurrentLookups } from '@/data/baked-lookups';
 import {
   BASE_CONSTRUCTION_RECIPE_IDS,
   AUTO_PROCESSING_BATCH_SIZE,
@@ -19,7 +20,7 @@ import {
   AUTO_SPECIALIZATIONS,
 } from '@/data/auto-processing';
 import { resolveProcessorCategory } from '@/data/processor-recipe-categories';
-import { materializePlanetDeposits } from '@/galaxy/generate-resources'; // R-29: ленивые залежи
+import { materializePlanetDeposits, WATER_DEPOSIT_ID } from '@/galaxy/generate-resources'; // R-29: ленивые залежи
 import { gameBus } from '@/core/typed-event-bus';
 import { getEnergyConsumptionMultiplier, getEnergyGenerationMultiplier, getMiningSpeedMultiplier, getProcessingSpeedMultiplier } from '@/economy/adjacency';
 
@@ -97,6 +98,20 @@ export function processEconomyTick(planets: Planet[], queues: Map<EntityId, Prod
  * P1-27: Газовый экстрактор требует атмосферу.
  * Руды и соединения кладутся на склад как сырьё —
  * переработка происходит через рецептурную систему (recipes.ts).
+ *
+ * Task 37 / G-01 (fix): роли добывающих зданий по контракту
+ * (docs/40-buildings.md §2 + каталог surface.json + docs/34-ores.md §3):
+ *   - mine (шахта) — МЕТАЛЛИЧЕСКИЕ руды (BakedOre.sourceBuildingId='mine');
+ *   - quarry (карьер) — НЕМЕТАЛЛИЧЕСКИЕ ресурсы (sourceBuildingId='quarry');
+ *   - gas_extractor (газовый экстрактор) — АТМОСФЕРНЫЕ ГАЗЫ (на поверхности
+ *     и в атмосферном слоте — из атмосферы планеты, НЕ из залежей гекса);
+ *   - глубинные руды (sourceBuildingId='drilling_rig') — post-MVP, базовым
+ *     добытчикам недоступны (docs/31-resources.md §5.2, docs/40 §2.4);
+ *   - вода H2O-ice — добывается и шахтой, и карьером (R-27: единственная
+ *     залежь-источник H/O, ice_harvester post-MVP — recipes.ts process_H2O).
+ * До фикса поверхностная ветка обрабатывала ЛЮБОЕ здание категории extraction
+ * со ВСЕМИ залежами гекса: шахта добывала неметаллы, карьер — металлы,
+ * поверхностный газовый экстрактор — руды вместо газов.
  */
 function processExtraction(planet: Planet): void {
   // Surface buildings
@@ -121,35 +136,49 @@ function processExtraction(planet: Planet): void {
       // ×0.5^(n−1)) — добывающие здания дают бонус СКОРОСТИ ДОБЫЧИ.
       const miningMult = getMiningSpeedMultiplier(planet, i);
 
-      for (const deposit of hex.deposits) {
-        if (deposit.quantity <= 0) continue;
+      if (buildingDef.id === 'gas_extractor') {
+        // G-01 (fix): газовый экстрактор на ПОВЕРХНОСТИ добывает атмосферу
+        // (та же логика, что и в атмосферном слоте газового гиганта), а не
+        // залежи гекса. Формула docs/40 §2.3: уровень × эффективность
+        // атмосферы (бонус местности не применяется — у экстрактора его нет).
+        extractAtmosphericGases(planet, hex.buildingLevel, miningMult);
+      } else {
+        for (const deposit of hex.deposits) {
+          if (deposit.quantity <= 0) continue;
+          // G-01 (fix): только залежи, принадлежащие роли этого здания
+          if (!canMineDeposit(buildingDef.id, deposit.elementId)) continue;
 
-        // 1 тик = 1 день. Базовая скорость: ~1 единица/день при availability=0.5
-        const baseRate = 1.0 * deposit.availability;
-        const amount = baseRate * levelMult * terrainMult * miningMult;
-        const requested = Math.min(amount, deposit.quantity);
+          // 1 тик = 1 день. Базовая скорость: ~1 единица/день при availability=0.5
+          const baseRate = 1.0 * deposit.availability;
+          const amount = baseRate * levelMult * terrainMult * miningMult;
+          const requested = Math.min(amount, deposit.quantity);
 
-        // Audit Pass 2 P1-1 (fix): only debit the deposit for the portion
-        // we can actually store. Previously we debited `requested` (full
-        // amount) BEFORE the canStoreResource check — if the warehouse was
-        // full the extracted units silently evaporated (deposit decremented,
-        // nothing added to planet.resources). Now the leftover stays in the
-        // deposit for the next tick.
-        const canStore = canStoreResource(planet, deposit.elementId, requested);
-        const actual = Math.min(requested, canStore);
-        if (actual > 0) {
-          deposit.quantity -= actual;
-          // Кладём руду на склад как сырьё (переработка через рецепты)
-          planet.resources[deposit.elementId] = (planet.resources[deposit.elementId] ?? 0) + actual;
+          // Audit Pass 2 P1-1 (fix): only debit the deposit for the portion
+          // we can actually store. Previously we debited `requested` (full
+          // amount) BEFORE the canStoreResource check — if the warehouse was
+          // full the extracted units silently evaporated (deposit decremented,
+          // nothing added to planet.resources). Now the leftover stays in the
+          // deposit for the next tick.
+          const canStore = canStoreResource(planet, deposit.elementId, requested);
+          const actual = Math.min(requested, canStore);
+          if (actual > 0) {
+            deposit.quantity -= actual;
+            // Кладём руду на склад как сырьё (переработка через рецепты)
+            planet.resources[deposit.elementId] = (planet.resources[deposit.elementId] ?? 0) + actual;
+          }
         }
       }
     }
 
-    // Colony hub: добыча всех залежей на гексе со скоростью 50% от шахты
+    // Colony hub: базовая добыча поверхностных залежей (mine ∪ quarry, вкл.
+    // воду) со скоростью 50% от шахты. G-01 (fix): глубинные руды
+    // (drilling_rig) и атмосферные соединения хаб не добывает — это
+    // специализированная добыча, а не «базовые ресурсы колонии».
     if (buildingDef.id === 'colony_hub') {
       const levelMult = 1 + hex.buildingLevel * 0.1;
       for (const deposit of hex.deposits) {
         if (deposit.quantity <= 0) continue;
+        if (!isSurfaceMinable(deposit.elementId)) continue;
 
         // 50% от скорости шахты (1 тик = 1 день)
         const baseRate = 0.5 * deposit.availability;
@@ -180,18 +209,8 @@ function processExtraction(planet: Planet): void {
     }
 
     if (buildingDef.category === 'extraction') {
-      const levelMult = 1 + slot.buildingLevel * 0.15;
-      const atmosphereMult = planet.type === 'gas_giant' ? 1.0 : getAtmosphereEfficiency(planet.atmosphere.type);
-
-      // Получаем список доступных газов для данного типа атмосферы
-      const availableGases = getAtmosphericGasesForType(planet.atmosphere.type);
-      for (const gasId of availableGases) {
-        const baseRate = 2.0 * levelMult * atmosphereMult;
-        const canStore = canStoreResource(planet, gasId, baseRate);
-        if (canStore > 0) {
-          planet.resources[gasId] = (planet.resources[gasId] ?? 0) + canStore;
-        }
-      }
+      // Слоты не имеют смежности — синергия mining_cluster не применяется
+      extractAtmosphericGases(planet, slot.buildingLevel);
     }
   }
 
@@ -200,9 +219,75 @@ function processExtraction(planet: Planet): void {
   convertDirectAtmosphericElements(planet);
 }
 
+/**
+ * G-01 (Task 37): может ли поверхностное добывающее здание buildingId
+ * (mine/quarry/…) добыть залежь resourceId? Роль залежи берётся из
+ * запечённой хим.модели (BakedOre.sourceBuildingId — единый источник
+ * истины, автогенерация docs/33-chemistry.md).
+ */
+function canMineDeposit(buildingId: string, resourceId: string): boolean {
+  if (!hasCurrentLookups()) return true; // нет baked-модели — легаси-поведение
+  const lookups = getCurrentLookups();
+
+  // Руда с известной ролью: добытчик должен совпадать (mine/quarry/drilling_rig)
+  const ore = lookups.oreMap.get(resourceId);
+  if (ore) return ore.sourceBuildingId === buildingId;
+
+  // R-27: вода (H2O-ice) — единственная залежь-источник H и O; добывается
+  // и шахтой, и карьером (ice_harvester — post-MVP, docs/40-buildings §2.5).
+  if (resourceId === WATER_DEPOSIT_ID) return buildingId === 'mine' || buildingId === 'quarry';
+
+  // Прочие льды (CO2-ice, N2-ice, CH4-ice, NH3-ice) — ice_harvester (post-MVP):
+  // в залежах не генерируются; добывать их поверхностные добытчики не могут.
+  if (lookups.iceMap.has(resourceId)) return false;
+
+  // Атмосферные соединения — источник газового экстрактора (атмосфера), не рудник.
+  if (lookups.atmosphericMap.has(resourceId)) return false;
+
+  // Неизвестный ID (fallback «<элемент>-ore» для трансурановых без руды в
+  // хим.модели) — считаем обычной породой: доступен базовым добытчикам.
+  return true;
+}
+
+/**
+ * G-01 (Task 37): залежь доступна БАЗОВОЙ поверхностной добыче
+ * (шахта ∪ карьер)? Используется колониальным хабом («базовая добыча
+ * ресурсов»): металл + неметалл + вода; без глубинных руд и газов.
+ */
+function isSurfaceMinable(resourceId: string): boolean {
+  return canMineDeposit('mine', resourceId) || canMineDeposit('quarry', resourceId);
+}
+
+/**
+ * G-01 (Task 37): добыча атмосферных газов газовым экстрактором — единая
+ * логика для поверхностной установки (обычные планеты) и атмосферного
+ * слота (газовые гиганты, P1-01). Газы — по ATMOSPHERE_GAS_MAP
+ * (docs/30-planets §2.4 / docs/31-resources §9.1), эффективность — по
+ * типу атмосферы (газовый гигант = 1.0).
+ */
+function extractAtmosphericGases(planet: Planet, buildingLevel: number, speedMult = 1): void {
+  const levelMult = 1 + buildingLevel * 0.15;
+  const atmosphereMult = planet.type === 'gas_giant' ? 1.0 : getAtmosphereEfficiency(planet.atmosphere.type);
+
+  // Получаем список доступных газов для данного типа атмосферы
+  const availableGases = getAtmosphericGasesForType(planet.atmosphere.type);
+  for (const gasId of availableGases) {
+    const baseRate = 2.0 * levelMult * atmosphereMult * speedMult;
+    const canStore = canStoreResource(planet, gasId, baseRate);
+    if (canStore > 0) {
+      planet.resources[gasId] = (planet.resources[gasId] ?? 0) + canStore;
+    }
+  }
+}
+
 /** Конвертация чистых атмосферных газов в элементы (1:1, переработка не нужна) */
 function convertDirectAtmosphericElements(planet: Planet): void {
   for (const [gasId, elementId] of Object.entries(DIRECT_GAS_MAP)) {
+    // Task 37 (fix): тождественные маппинги (He→He, Ne→Ne, Ar→Ar) — газ УЖЕ
+    // является элементом, конвертировать нечего. Раньше ветка добавляла
+    // actual к resources[elementId], а затем перезаписывала resources[gasId]
+    // = gasAmount − actual (тот же ключ!) — весь добытый He/Ne/Ar аннигилировал.
+    if (gasId === elementId) continue;
     const gasAmount = planet.resources[gasId] ?? 0;
     if (gasAmount > 0) {
       const canStore = canStoreResource(planet, elementId, gasAmount);

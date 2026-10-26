@@ -38,8 +38,10 @@ export interface GalaxyGenConfig {
   arms: number;
   /** Разброс от спиральной линии (0-1) */
   spread: number;
-  /** Плотность ядра */
+  /** Плотность ядра — множитель к доле ядра (docs §1.3: 1.5 → ~15%) */
   bulgeDensity: number;
+  /** σ ядра в парсеках (docs §5.1 #9 bulge_radius: 1.0–5.0 кпк, умолчание 3000) */
+  bulgeRadius: number;
   /** Ширина рукава */
   armWidth: number;
   /** Закрутка рукава */
@@ -69,6 +71,7 @@ export const DEFAULT_CONFIG: GalaxyGenConfig = {
   arms: 4,
   spread: 0.4,
   bulgeDensity: 1.5,
+  bulgeRadius: 3000,
   armWidth: 0.5,
   armTwist: 0.6,
   diskFraction: 0.2,

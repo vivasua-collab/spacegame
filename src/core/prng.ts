@@ -10,16 +10,45 @@ export class Xoshiro256 {
     this.state = this.splitMix64(seed);
   }
 
+  /**
+   * Task 35 (аудит B1): точная uint64-эмуляция splitMix64 (BigInt).
+   *
+   * ПРЕЖНЯЯ реализация считала в float64: `z + 0x9e3779b97f4a7c15` при
+   * magnitude ~2^63 имеет ulp = 2048 → младшие биты seed терялись при
+   * каждом сложении. Эмпирические следствия (воспроизведено до фикса):
+   *   - seed 0..1024 → ИДЕНТИЧНОЕ состояние (блоки коллизий до 4096 seed);
+   *   - seed ∈ [0, 1e6) → всего 64 уникальных состояния;
+   *   - seed 7 и seed 42 порождали побайтно одну и ту же галактику.
+   * Множители 0xbf58476d1ce4e5b9 / 0x94d049bb133111eb (> 2^53) также
+   * искажались через ToInt32(float64) (→ 0x1ce4e800 / 0x13311000).
+   *
+   * BigInt-вариант математически точен; вызывается только при конструировании
+   * генератора (1 раз на generateGalaxy — см. grep `new Xoshiro256`),
+   * стоимость пренебрежима. Слова состояния — младшие 32 бита четырёх
+   * последовательных выходов splitMix64-аккумулятора (форма прежнего порта).
+   */
   private splitMix64(seed: number): [number, number, number, number] {
+    // BigInt через конструктор из строки: литералы `0x…n` недоступны при
+    // target ES2017 (tsconfig) — TS2737. Арифметика та же, что и с литералами.
+    const MASK = BigInt('0xffffffffffffffff'); // (1n << 64n) - 1n
+    const GAMMA = BigInt('0x9e3779b97f4a7c15');
+    const M1 = BigInt('0xbf58476d1ce4e5b9');
+    const M2 = BigInt('0x94d049bb133111eb');
+    const SHIFT30 = BigInt(30);
+    const SHIFT27 = BigInt(27);
+    const SHIFT31 = BigInt(31);
+    const MASK32 = BigInt('0xffffffff');
+    // Числовые seed любой величины (±2^53) детерминированно нормализуются;
+    // NaN/Infinity → 0 (как раньше `seed | 0`).
+    let z = Number.isFinite(seed) ? BigInt(Math.trunc(seed)) & MASK : BigInt(0);
     const result: number[] = [];
-    let z = seed | 0;
     for (let i = 0; i < 4; i++) {
-      z = (z + 0x9e3779b97f4a7c15) | 0;
+      z = (z + GAMMA) & MASK;
       let x = z;
-      x = Math.imul(x ^ (x >>> 30), 0xbf58476d1ce4e5b9);
-      x = Math.imul(x ^ (x >>> 27), 0x94d049bb133111eb);
-      x = x ^ (x >>> 31);
-      result.push(x);
+      x = ((x ^ (x >> SHIFT30)) * M1) & MASK;
+      x = ((x ^ (x >> SHIFT27)) * M2) & MASK;
+      const w = (x ^ (x >> SHIFT31)) & MASK;
+      result.push(Number(w & MASK32) | 0);
     }
     return result as [number, number, number, number];
   }
@@ -206,7 +235,11 @@ export class Xoshiro256 {
 
   /** Gauss distribution (Box-Muller) */
   nextGaussian(mean = 0, stddev = 1): number {
-    const u1 = this.nextFloat();
+    // Task 35 (аудит B1): nextFloat() может вернуть ровно 0 (nextU32() === 0
+    // возможен) → log(0) = -Infinity → z = ±Infinity или NaN. Ресэмплим u1:
+    // в обычном случае (u1 > 0) цикл не выполняется и поток не меняется.
+    let u1 = this.nextFloat();
+    while (u1 === 0) u1 = this.nextFloat();
     const u2 = this.nextFloat();
     const z = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
     return mean + z * stddev;

@@ -167,7 +167,7 @@ spacegame/
 ├── plans/                      # Планы работ по задачам (протокол: plans/README.md)
 │   ├── README.md               # Правила планов: Task ID, чеклисты, статусы
 │   └── YYYY-MM-DD-task*-*.md   # План каждой задачи с чекбоксами [x]
-├── checkpoints/                # Чекпоинты разработки (49 файлов; именование — RULES.md)
+├── checkpoints/                # Чекпоинты разработки (53 файла; именование — RULES.md)
 │   ├── RULES.md                # ⚠️ ПРАВИЛА чекпоинтов (имя ММ_ДД_цель.md + формат)
 │   ├── ROADMAP.md              # Глобальная дорожная карта этапов
 │   ├── 08_27_audit_0{1..4}_*.md  # Аудиты Pass 1-4 (2026-08-27)
@@ -234,7 +234,7 @@ spacegame/
 | Справочники | Data-driven JSON + тонкие TS-loader'ы (см. `docs/data-driven-architecture.md`) |
 | Архитектура | GameMediator + ModuleRegistry + TypedEventBus |
 
-## Метрики реализации (на 2026-08-31)
+## Метрики реализации (на 2026-10-26)
 
 > Числа отражают текущее состояние КОДА. Спецификации в `docs/` могут описывать больше.
 > Полный аудит-чейн: `checkpoints/08_27_audit_0{1..4}_*.md` → `08_28_audit_0{5..9}_*.md` → `08_31_audit_1{0,1}_*.md` (Pass 1-11).
@@ -252,9 +252,9 @@ spacegame/
 | Типов планет | 7 ✅ + сетки планет/лун из `grids.json` |
 | Компонентов UI (game/) | 17 |
 | Документов в docs/ | 29 |
-| Чекпоинтов в checkpoints/ | 49 |
-| Lint-ошибок | 0 ✅ (40 warnings) |
-| Тестов | 567/567 ✅ (0 failing) |
+| Чекпоинтов в checkpoints/ | 53 |
+| Lint-ошибок | 0 ✅ (38 warnings) |
+| Тестов | 680/680 ✅ (0 failing) |
 | Валидаторов каталогов | 4 ✅ (buildings+synergy / recipes / ships / stars) |
 
 Полный отчёт о расхождениях кода со спецификацией — в [`docs/STATUS.md`](./docs/STATUS.md).

@@ -11,6 +11,12 @@
  * - Равновесная температура: T_eq = 278.5K × (L/L☉)^(1/4) × (1AU/r)^(1/2)
  * - Парниковый эффект зависит от РЕАЛЬНОГО типа атмосферы
  * - Орбитальный период: P = 365.25 × sqrt(r³ / M) дней (3-й закон Кеплера)
+ * - Орбиты (Audit Task 36): строгая монотонность радиусов по номеру орбиты
+ *   + минимальный зазор между соседними орбитами (2dp-уникальность радиусов
+ *   и периодов); clamp'ы двойных систем (≥1 AU / ≤30 AU) сохранены, но не
+ *   склеивают орбиты (см. комментарий в generatePlanet).
+ * - Имена лун (Audit Task 36): «<система> <римский № орбиты>-<буква>» —
+ *   римский номер орбиты планеты не дублируется.
  */
 
 import type { Xoshiro256 } from '@/core/prng';
@@ -160,7 +166,7 @@ function calculatePlanetTemperature(
   let baseGreenhouseK = 0;
   switch (atmosphere.type) {
     case 'none': baseGreenhouseK = 0; break;
-    case 'thin': baseGreenhouseK = 8 + rng.nextFloat() * 12; break;           // Mars-like: 5-20K
+    case 'thin': baseGreenhouseK = 5 + rng.nextFloat() * 15; break;           // Mars-like: 5-20K (docs §2.3)
     case 'standard': baseGreenhouseK = 25 + rng.nextFloat() * 15; break;      // Earth-like: 25-40K
     case 'dense': baseGreenhouseK = 50 + rng.nextFloat() * 80; break;         // Archean Earth: 50-130K
     case 'co2': baseGreenhouseK = 80 + rng.nextFloat() * 200; break;          // Venus-like: 80-280K
@@ -303,15 +309,17 @@ function selectAtmosphereType(planetType: string, rng: Xoshiro256): AtmosphereTy
 }
 
 function getAtmospherePressure(type: AtmosphereType, rng: Xoshiro256): number {
+  // Audit Task 36 (C2): диапазоны — строго docs/30-planets.md §2.4
+  // (min + nextFloat()×(max−min); прежние thin/inert давали max+0.001/+0.01).
   switch (type) {
     case 'none': return 0;
-    case 'thin': return 0.001 + rng.nextFloat() * 0.5;
-    case 'standard': return 0.5 + rng.nextFloat() * 1.0;
-    case 'dense': return 1.5 + rng.nextFloat() * 3.5;
-    case 'toxic': return 0.1 + rng.nextFloat() * 4.9;
-    case 'inert': return 0.01 + rng.nextFloat() * 2.0;
-    case 'methane': return 0.5 + rng.nextFloat() * 2.5;
-    case 'co2': return 0.5 + rng.nextFloat() * 9.5;
+    case 'thin': return 0.001 + rng.nextFloat() * 0.499;   // 0.001–0.5
+    case 'standard': return 0.5 + rng.nextFloat() * 1.0;   // 0.5–1.5
+    case 'dense': return 1.5 + rng.nextFloat() * 3.5;      // 1.5–5.0
+    case 'toxic': return 0.1 + rng.nextFloat() * 4.9;      // 0.1–5.0
+    case 'inert': return 0.01 + rng.nextFloat() * 1.99;    // 0.01–2.0
+    case 'methane': return 0.5 + rng.nextFloat() * 2.5;    // 0.5–3.0
+    case 'co2': return 0.5 + rng.nextFloat() * 9.5;        // 0.5–10.0
   }
 }
 
@@ -448,7 +456,7 @@ export function generatePlanet(
   // что приводило к P[orbit+1] < P[orbit] (нарушение 3-го закона Кеплера):
   // например, «Epsilon Tauri IV» имел больший период, чем «Epsilon Tauri V».
   //
-  // Новая формула: детерминированный шаг 0.5 AU × (orbit-1) + малый случайный
+  // Формула: детерминированный шаг 0.5 AU × (orbit-1) + малый случайный
   // jitter (0..0.25), который СТРОГО МЕНЬШЕ шага → гарантирует
   // r[orbit+1] - r[orbit] = 0.5 + (j2 - j1) ∈ [0.25, 0.75] > 0.
   // Это соответствует эмпирическому расположению планет Солнечной системы
@@ -457,12 +465,54 @@ export function generatePlanet(
   const BASE_STEP_AU = 0.5;
   const MAX_JITTER_AU = 0.25; // строго меньше BASE_STEP_AU
   const jitter = rng.nextFloat() * MAX_JITTER_AU;
-  let orbitalRadius = orbitalScale * (0.3 + (orbit - 1) * BASE_STEP_AU + jitter);
+  // Audit Task 36 (C1): МИН. ЗАЗОР ДЛЯ ТУСКЛЫХ ЗВЁЗД. Базовый шаг
+  // 0.5·scale при L < 0.00512 L☉ (тусклые WD, BH) даёт зазор соседних
+  // орбит < 0.02 AU → после округления 2dp соседние планеты получали
+  // ОДИНАКОВЫЙ orbitalRadius (и одинаковый период) даже в одиночных
+  // системах. Эффективный шаг не меньше MIN_ORBIT_GAP_AU + jitter-запаса;
+  // порог подобран так, что при scale ≥ 0.08 (L ≥ 0.00512) формула
+  // НЕ МЕНЯЕТСЯ (0.5·scale ≥ 0.02 + 0.25·scale), т.е. все звёзды ГП
+  // (включая M-карлики, L ≥ 0.017) генерируются бит-в-бит как раньше.
+  const MIN_ORBIT_GAP_AU = 0.02;
+  const baseStepAU = BASE_STEP_AU * orbitalScale;
+  const widenedStepAU = MIN_ORBIT_GAP_AU + MAX_JITTER_AU * orbitalScale;
+  let orbitalRadius = baseStepAU >= widenedStepAU
+    ? orbitalScale * (0.3 + (orbit - 1) * BASE_STEP_AU + jitter)
+    : orbitalScale * 0.3 + (orbit - 1) * widenedStepAU + jitter * orbitalScale;
 
+  // Audit Task 36 (C1): CLAMP'Ы ДВОЙНЫХ СИСТЕМ БЕЗ СКЛЕЙКИ ОРБИТ.
+  // Прежние clamp'ы (G-13: BINARY_CLOSE → max(1.0, r), BINARY_WIDE →
+  // min(30, r)) сплющивали «зажатые» орбиты в одну точку: у M-карлика в
+  // близкой двойной ВСЕ планеты получали r = 1.00 (до 3 планет на одной
+  // орбите — совпадающие радиусы, периоды и выработка солнечных станций),
+  // у ярких звёзд (B/RG/O) в широкой двойной внешние планеты склеивались
+  // на 30.00. Ограничения стабильности СОХРАНЕНЫ (G-13), но теперь с
+  // гарантированным минимальным зазором между соседними орбитами:
+  //
+  // BINARY_CLOSE (циркумбинарные, все планеты снаружи пары ≥ 1 AU):
+  //   r[i] = max(1, r_raw[i]) + (i-1)·GAP. max(1, r_raw) не убывает по
+  //   орбите (r_raw строго растёт), сдвиг (i-1)·GAP строго растёт ⇒
+  //   сумма строго растёт и r[i+1] - r[i] ≥ GAP ВСЕГДА.
+  // BINARY_WIDE (S-type, потолок 30 AU): «лестница»
+  //   ramp[i] = 30 - (MAX_ORBITS - i)·GAP строго растёт по i и ≤ 30;
+  //   r[i] = min(ramp[i], r_raw[i]) — min двух строго возрастающих
+  //   последовательностей строго возрастает; все значения ≤ 30; орбиты,
+  //   прилипшие к лестнице, различаются ровно на GAP. Случай «r_raw чуть
+  //   ниже ступени» (зазор < GAP) требует raw-зазор < GAP = 0.1 AU, но
+  //   потолок достигают только звёзды с L ≳ 100 L☉ (B/RG/O), у которых
+  //   raw-зазор ≥ 0.25·scale ≥ 5.75 AU — противоречие, значит невозможно.
+  //   MAX_ORBITS = 12 — запас над максимумом floor(maxPlanets × 0.9) = 9
+  //   (каталог stars/types.json, G max = 10); Math.max(0,…) защищает
+  //   потолок, если каталог когда-нибудь вырастет.
+  const BINARY_CLOSE_MIN_AU = 1.0; // G-13: стабильность циркумбинарной орбиты
+  const BINARY_WIDE_MAX_AU = 30.0; // G-13: S-type предел (игровое упрощение 0.3×d)
+  const BINARY_ORBIT_GAP_AU = 0.1; // Task 36: мин. зазор соседних орбит после clamp
+  const BINARY_WIDE_MAX_ORBITS = 12; // запас над floor(maxPlanets×0.9)=9
   if (binaryType === 'BINARY_CLOSE') {
-    orbitalRadius = Math.max(1.0, orbitalRadius);
+    orbitalRadius = Math.max(BINARY_CLOSE_MIN_AU, orbitalRadius) + (orbit - 1) * BINARY_ORBIT_GAP_AU;
   } else if (binaryType === 'BINARY_WIDE') {
-    orbitalRadius = Math.min(30, orbitalRadius);
+    const ceiling = BINARY_WIDE_MAX_AU - Math.max(0, BINARY_WIDE_MAX_ORBITS - orbit) * BINARY_ORBIT_GAP_AU;
+    orbitalRadius = Math.min(ceiling, orbitalRadius);
   }
 
   // Тип планеты зависит от орбитального радиуса и светимости звезды
@@ -578,7 +628,7 @@ export function generatePlanet(
   // Луны (только для газовых гигантов — Audit 2026-08-28)
   // Юпитер=95, Сатурн=146, Уран=28, Нептун=16. Для MVP — 2-7 лун.
   const moons = planetDef.type === 'gas_giant'
-    ? generateMoons(systemId, planetId, planetName, orbit, rng.derive('moons'))
+    ? generateMoons(systemId, planetId, planetName, rng.derive('moons'))
     : [];
 
   return {
@@ -627,15 +677,15 @@ export function generatePlanet(
  *
  * @param systemId — ID системы-владельца
  * @param planetId — ID планеты-владельца
- * @param planetName — имя планеты (для имени луны: «Epsilon Tauri IV-a»)
- * @param orbit — номер орбиты планеты (для суффикса)
+ * @param planetName — имя планеты (для имени луны: «Epsilon Tauri IV-a»;
+ *   типовой суффикс « — <тип>» отбрасывается, римский номер орбиты уже
+ *   входит в имя планеты и не дублируется — Task 36/C3)
  * @param rng — детерминированный ГПСЧ
  */
 function generateMoons(
   systemId: string,
   planetId: string,
   planetName: string,
-  orbit: number,
   rng: Xoshiro256,
 ): Moon[] {
   const count = rng.nextInt(GAS_GIANT_MOON_COUNT.min, GAS_GIANT_MOON_COUNT.max);
@@ -721,8 +771,13 @@ function generateMoons(
     for (const hex of hexes) hex.deposits = [];
 
     // Имя: «Epsilon Tauri IV-a», «Epsilon Tauri IV-b», ...
+    // Audit Task 36 (C3): конвенция именования — «<имя системы> <римский
+    // номер орбиты планеты>-<буква луны>». Римский номер уже входит в имя
+    // планеты («Epsilon Tauri IV — Газовый гигант»), поэтому берём имя
+    // планеты БЕЗ типового суффикса « — <тип>» и добавляем только букву.
+    // Прежняя формула добавляла номер ПОВТОРНО → «Epsilon Tauri IV IV-a».
     const suffix = String.fromCharCode(97 + i); // a, b, c, ...
-    const moonName = `${planetName.replace(/ — .*$/, '')} ${toRoman(orbit)}-${suffix}`;
+    const moonName = `${planetName.replace(/ — .*$/, '')}-${suffix}`;
 
     moons.push({
       id: genId('moon'),

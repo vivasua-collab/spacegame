@@ -23,6 +23,7 @@ export function generateJumpPoints(systems: StarSystem[], rng: Xoshiro256, cfg: 
 
   for (let i = 0; i < systems.length; i++) {
     const system = systems[i];
+    if (!system) continue;
     if (system.jumpPoints.length >= maxJP) continue;
 
     const distances = systems.map((s, j) => ({
@@ -38,7 +39,8 @@ export function generateJumpPoints(systems: StarSystem[], rng: Xoshiro256, cfg: 
     for (let j = 0; j < targetCount; j++) {
       if (system.jumpPoints.length >= maxJP) break;
 
-      const target = systems[distances[j].index];
+      const target = systems[distances[j]?.index ?? -1];
+      if (!target) continue;
 
       const exists = system.jumpPoints.some(jp => jp.toSystemId === target.id) ||
                      target.jumpPoints.some(jp => jp.toSystemId === system.id);
@@ -66,64 +68,114 @@ export function generateJumpPoints(systems: StarSystem[], rng: Xoshiro256, cfg: 
 }
 
 /**
- * P1-23: Проверка связности графа систем.
- * Если есть изолированные компоненты, добавляем JP для обеспечения связности.
+ * P1-23 + Task 35 (находка G-02): проверка связности графа систем.
+ *
+ * Контракт docs/10-galaxy.md §4.2 «Обеспечение связности»: найти компоненты
+ * связности, для каждой пары соседних компонент найти ближайшие системы,
+ * создать JP между ними, повторять до полной связности.
+ *
+ * Правило мостов (зафиксировано аудитом Task 35, см. docs §4.2):
+ * 1. Мост — КРАТЧАЙШЕЕ ребро между компонентой и уже-связанной частью
+ *    графа; каждая компонента получает ровно один мост (мост остаётся
+ *    мостом графа: его удаление разъединяет компоненты).
+ * 2. Превышение maxJumpDistance допустимо ТОЛЬКО для мостов связности —
+ *    без него связность недостижима в разреженных конфигурациях
+ *    (глобулярные скопления ореола, малый jumpRadius). Проверяется
+ *    тестами: каждое сверхдистанционное ребро обязано быть мостом графа.
+ * 3. Лимит степени maxJumpPointsPerSystem соблюдается и для мостов, когда
+ *    существует хоть одна пара кандидатов со свободной ёмкостью (мост идёт
+ *    по кратчайшей такой паре). Если ёмкости нет ни у одного кандидата,
+ *    приоритет отдаётся связности (docs §5.3, шаг 6: «все системы
+ *    доступны»), а нарушение лимита минимально: мост вешается между
+ *    наименее загруженными системами (min по max(deg a, deg b),
+ *    тай-брейк — дистанция). Без этого несколько компонент могли бы
+ *    «навалиться» на геометрически ближайшую систему (замер ДО:
+ *    maxDegree 6 при maxJP 1 на 200 систем).
+ *
+ * ДО фикса (аудит Task 35): мосты вешались на каждую изолированную систему
+ * по-отдельности (без поиска компонент), без проверки дублей (10600 дублей
+ * A→B на 100 seed × 200 систем), без лимита степени (maxDegree 10 при
+ * maxJP 6) и без правила для дистанции (JP до 15104 пк при maxDist 5000).
  */
-export function ensureConnectivity(systems: StarSystem[], rng: Xoshiro256, cfg: JumpPointsConfig): void {
+export function ensureConnectivity(systems: StarSystem[], _rng: Xoshiro256, cfg: JumpPointsConfig): void {
   if (systems.length < 2) return;
 
-  const visited = new Set<EntityId>();
-  const queue: EntityId[] = [systems[0].id];
-  visited.add(systems[0].id);
+  const maxJP = cfg.maxJumpPointsPerSystem;
+  const byId = new Map<EntityId, StarSystem>(systems.map(s => [s.id, s]));
 
-  while (queue.length > 0) {
-    const currentId = queue.shift()!;
-    const system = systems.find(s => s.id === currentId);
-    if (!system) continue;
-
-    for (const jp of system.jumpPoints) {
-      if (!visited.has(jp.toSystemId)) {
-        visited.add(jp.toSystemId);
-        queue.push(jp.toSystemId);
+  // ─── 1. Компоненты связности (BFS, в порядке первого появления) ───
+  const compOf = new Map<EntityId, number>();
+  const components: StarSystem[][] = [];
+  for (const start of systems) {
+    if (compOf.has(start.id)) continue;
+    const compIndex = components.length;
+    const comp: StarSystem[] = [start];
+    compOf.set(start.id, compIndex);
+    const queue: StarSystem[] = [start];
+    while (queue.length > 0) {
+      const cur = queue.shift()!;
+      for (const jp of cur.jumpPoints) {
+        if (compOf.has(jp.toSystemId)) continue;
+        const next = byId.get(jp.toSystemId);
+        if (!next) continue; // dangling JP — не расширяет компоненту
+        compOf.set(next.id, compIndex);
+        comp.push(next);
+        queue.push(next);
       }
     }
+    components.push(comp);
   }
+  if (components.length <= 1) return;
 
-  const unvisited = systems.filter(s => !visited.has(s.id));
-  for (const isolated of unvisited) {
-    let minDist = Infinity;
-    let nearestVisited: StarSystem | null = null;
+  // ─── 2. Главная (наибольшая) компонента — ядро связности ───
+  // Сортировка JS стабильна: при равном размере сохраняется порядок
+  // первого появления (индекс первой системы) — детерминированно.
+  components.sort((a, b) => b.length - a.length);
+  const connectedList: StarSystem[] = [...components[0]!];
 
-    for (const s of systems) {
-      if (!visited.has(s.id)) continue;
-      const dist = Math.sqrt(
-        (s.position.x - isolated.position.x) ** 2 +
-        (s.position.y - isolated.position.y) ** 2,
-      );
-      if (dist < minDist) {
-        minDist = dist;
-        nearestVisited = s;
+  // ─── 3. Каждая прочая компонента — один кратчайший мост ───
+  for (let ci = 1; ci < components.length; ci++) {
+    const comp = components[ci]!;
+    let bestCap: { a: StarSystem; b: StarSystem; d: number } | null = null; // кратчайшее с ёмкостью
+    let bestLoad: { a: StarSystem; b: StarSystem; d: number; load: number } | null = null; // наименее загруженное
+    for (const a of comp) {
+      for (const b of connectedList) {
+        const d = Math.hypot(a.position.x - b.position.x, a.position.y - b.position.y);
+        if ((!bestCap || d < bestCap.d) &&
+            a.jumpPoints.length < maxJP && b.jumpPoints.length < maxJP) {
+          bestCap = { a, b, d };
+        }
+        // Запасной вариант (ёмкости нет ни у одной пары): минимальное
+        // нарушение лимита — наименее загруженная пара, тай-брейк дистанцией.
+        const load = Math.max(a.jumpPoints.length, b.jumpPoints.length);
+        if (!bestLoad || load < bestLoad.load || (load === bestLoad.load && d < bestLoad.d)) {
+          bestLoad = { a, b, d, load };
+        }
       }
     }
+    // Ёмкость предпочтительнее; без ёмкости — связность важнее лимита
+    // степени, но нарушение минимально (наименее загруженная пара).
+    const chosen = bestCap ?? bestLoad;
+    if (!chosen) continue;
 
-    if (nearestVisited) {
+    // Guard от дублей: компоненты по определению не связаны, но проверка
+    // дешёвая и делает инвариант «нет A→B дважды» безусловным.
+    if (!chosen.a.jumpPoints.some(jp => jp.toSystemId === chosen.b.id)) {
       const jp: JumpPoint = {
         id: genId('jp'),
-        fromSystemId: isolated.id,
-        toSystemId: nearestVisited.id,
+        fromSystemId: chosen.a.id,
+        toSystemId: chosen.b.id,
         stabilized: false,
       };
-      isolated.jumpPoints.push(jp);
-
+      chosen.a.jumpPoints.push(jp);
       const reverseJp: JumpPoint = {
         id: genId('jp'),
-        fromSystemId: nearestVisited.id,
-        toSystemId: isolated.id,
+        fromSystemId: chosen.b.id,
+        toSystemId: chosen.a.id,
         stabilized: false,
       };
-      nearestVisited.jumpPoints.push(reverseJp);
-
-      visited.add(isolated.id);
+      chosen.b.jumpPoints.push(reverseJp);
     }
+    for (const s of comp) connectedList.push(s);
   }
 }

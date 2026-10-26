@@ -51,6 +51,14 @@ export function materializePlanetDeposits(body: LazyDepositBody): boolean {
   if (body.depositsMaterialized) return false;
   if (!body.depositRngState || body.hexes.length === 0) return false;
 
+  // Task 37 (D2, hardening): очистка гексов перед replay — защита от дублей.
+  // В нормальном потоке гексы уже пусты (генерация стирает залежи после расчёта
+  // свода, сейв v3 не пишет залежи не-материализованных тел), но если тело
+  // попало в смешанное состояние (флаг сброшен при непустых залежах), replay
+  // дописал бы кортежи ПОВЕРХ существующих. Стирание делает материализацию
+  // идемпотентной независимо от флага.
+  for (const hex of body.hexes) hex.deposits = [];
+
   const rng = Xoshiro256.fromState(body.depositRngState);
   assignResourceDeposits(body.hexes, rng, body.type);
   body.depositsMaterialized = true;
@@ -97,8 +105,44 @@ const WATER_ABUNDANCE: Record<string, number> = {
   dwarf: 0.3,
 };
 
-/** ID водной залежи (лёд) — добывается шахтой/карьером, электролиз даёт H + O. */
-const WATER_DEPOSIT_ID = 'H2O-ice';
+/**
+ * ID водной залежи (лёд) — добывается шахтой/карьером, электролиз даёт H + O.
+ * Экспортируется для engine.ts (G-01/Task 37: фильтр залежей по роли здания).
+ */
+export const WATER_DEPOSIT_ID = 'H2O-ice';
+
+/**
+ * G-05 (Task 37, fix): детерминированное перемешивание Fisher–Yates.
+ *
+ * Прежний подход `.sort(() => rng.nextFloat() - 0.5)` использовал
+ * НЕПОСЛЕДОВАТЕЛЬНЫЙ компаратор (для одной и той же пары элементов может
+ * вернуть противоположные знаки → нарушена транзитивность порядка):
+ *   - распределение перестановок СМЕЩЕНО: элемент из начала массива
+ *     оставался в начале до 3.2× чаще равномерного (замер Task 37: N=61,
+ *     20000 прогонов, chi²=4637 при df=60, порог p<0.01 ≈ 92) → залежи
+ *     концентрировались на «ранних» гексах спирали (географический перекос);
+ *   - число вызовов RNG зависело от внутреннего алгоритма sort движка
+ *     (замер в JSC/bun: 212–287 вызовов на массив из 61) → в браузере (V8)
+ *     тот же seed давал ДРУГИЕ перестановки — кросс-окруженческая
+ *     невоспроизводимость генерации.
+ *
+ * Fisher–Yates равномерен по перестановкам и потребляет ровно n−1 вызовов
+ * nextFloat — поведение одинаково на всех движках.
+ *
+ * ВНИМАНИЕ (сдвиг RNG-потока): старый shuffle съедал ~275 вызовов на 61 гекс,
+ * новый — ровно 60 → все последующие значения потока depositRng сдвинулись,
+ * вывод генерации залежей изменился для ВСЕХ seed (ожидаемо и задокументировано).
+ */
+export function shuffledWithRng<T>(items: readonly T[], rng: Xoshiro256): T[] {
+  const arr = items.slice();
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(rng.nextFloat() * (i + 1));
+    const a = arr[j] as T;
+    arr[j] = arr[i] as T;
+    arr[i] = a;
+  }
+  return arr;
+}
 
 /**
  * Назначить ресурсные залежи на гексах.
@@ -115,7 +159,10 @@ export function assignResourceDeposits(hexes: HexCell[], rng: Xoshiro256, planet
 
   const profileSet = new Set(PROFILE_ELEMENTS[planetType as keyof typeof PROFILE_ELEMENTS] ?? []);
   const rareSet = new Set(RARE_ELEMENTS);
+  // Task 37 (базовая гигиена tsc): явная проверка фолбэка — раньше тип был
+  // `Record | undefined` из-за noUncheckedIndexedAccess (3 pre-existing ошибки)
   const catMult = CATEGORY_MULTIPLIERS[planetType] ?? CATEGORY_MULTIPLIERS.rocky;
+  if (!catMult) return;
 
   // Для КАЖДОГО элемента из таблицы — создаём залежи его руды.
   // R-27: атмосферные элементы пропускаем — залежей газа в породе нет.
@@ -153,10 +200,13 @@ export function assignResourceDeposits(hexes: HexCell[], rng: Xoshiro256, planet
     // Используем реальный ID руды из ORE_FOR_ELEMENT_MAP
     const oreId = getOreIdForElement(element.id);
 
-    const shuffled = [...nonOceanHexes].sort(() => rng.nextFloat() - 0.5);
+    // G-05 (fix): равномерное перемешивание Fisher–Yates (см. shuffledWithRng)
+    const shuffled = shuffledWithRng(nonOceanHexes, rng);
     for (let h = 0; h < hexCount && h < shuffled.length; h++) {
+      const targetHex = shuffled[h];
+      if (!targetHex) continue; // noUncheckedIndexedAccess
       const quantityVariance = 0.5 + rng.nextFloat();
-      shuffled[h].deposits.push({
+      targetHex.deposits.push({
         elementId: oreId,
         availability: Math.min(1, baseAvailability * (0.7 + rng.nextFloat() * 0.6)),
         quantity: Math.max(1, Math.round(baseQuantity * quantityVariance)),
@@ -180,7 +230,8 @@ export function assignResourceDeposits(hexes: HexCell[], rng: Xoshiro256, planet
       Math.ceil(hexFraction * nonOceanHexes.length),
     ));
 
-    const shuffledWater = [...nonOceanHexes].sort(() => rng.nextFloat() - 0.5);
+    // G-05 (fix): равномерное перемешивание Fisher–Yates (см. shuffledWithRng)
+    const shuffledWater = shuffledWithRng(nonOceanHexes, rng);
     for (let h = 0; h < hexCount && h < shuffledWater.length; h++) {
       const waterHex = shuffledWater[h];
       if (!waterHex) continue;
@@ -308,19 +359,34 @@ export function aggregateResourceDeposits(
     }
   }
 
-  // Ультраредкие элементы (1-2 уникальных для планеты)
+  // Ультраредкие элементы (1-2 уникальных для планеты) — G-06 (Task 37, fix).
+  // Прежний код имел три дефекта (замер на 1080 синтетических планетах):
+  //   1) rng.nextChoice вызывался до 2 раз С ПОВТОРЕНИЕМ — ~11% «двойных»
+  //      планет получали 1 уникальный элемент вместо 2;
+  //   2) кандидат с уже богатыми залежами (totalQuantity ≥ 10) молча
+  //      пропускался — 6.9% планет не получали НИ ОДНОГО ультраредкого;
+  //   3) выбранный элемент из пересечения RARE∩ULTRA_RARE получал tier
+  //      'rare' (87% выборов) вместо 'ultra_rare' — переопределение
+  //      намерения ultra_rare классификацией rare.
+  // Теперь: выбор БЕЗ ПОВТОРЕНИЙ из «элективных» кандидатов (ещё не имеющих
+  // богатых залежей — их можно понизить до следового количества), а выбранные
+  // элементы явно классифицируются как ultra_rare.
   const ultraCount = rng.nextInt(1, 2);
   const availableUltra = ULTRA_RARE_ELEMENTS.filter(e => !profileSet.has(e));
-  for (let i = 0; i < ultraCount && i < availableUltra.length; i++) {
-    const elId = rng.nextChoice(availableUltra);
-    if (!deposits.has(elId) || (deposits.get(elId)?.totalQuantity ?? 0) < 10) {
-      deposits.set(elId, {
-        totalQuantity: Math.max(1, Math.round(1 + rng.nextFloat() * 5)),
-        totalAvailability: 0.01 + rng.nextFloat() * 0.04,
-        hexCount: 1,
-        maxAvailability: 0.05,
-      });
-    }
+  const eligibleUltra = availableUltra.filter(e =>
+    !deposits.has(e) || (deposits.get(e)?.totalQuantity ?? 0) < 10);
+  const ultraChosen = new Set<string>();
+  for (let i = 0; i < ultraCount && eligibleUltra.length > 0; i++) {
+    const elId = rng.nextChoice(eligibleUltra);
+    // выбор без повторений: убрать выбранного из пула кандидатов
+    eligibleUltra.splice(eligibleUltra.indexOf(elId), 1);
+    ultraChosen.add(elId);
+    deposits.set(elId, {
+      totalQuantity: Math.max(1, Math.round(1 + rng.nextFloat() * 5)),
+      totalAvailability: 0.01 + rng.nextFloat() * 0.04,
+      hexCount: 1,
+      maxAvailability: 0.05,
+    });
   }
 
   // Собираем результат
@@ -328,7 +394,13 @@ export function aggregateResourceDeposits(
   for (const [elementId, data] of deposits) {
     const isProfile = profileSet.has(elementId);
     const isRare = rareSet.has(elementId);
-    const isUltra = !isProfile && !isRare && (data.totalQuantity < 20 || data.maxAvailability < 0.05);
+    // G-06 (fix): явно выбранные ультраредкие — tier 'ultra_rare', даже если
+    // элемент входит и в RARE_ELEMENTS (пересечение множеств в
+    // planet-types.ts — осознанное допущение, «уникальный ресурс планеты» —
+    // более сильная классификация, чем «редкий везде»; profileSet исключён
+    // из кандидатов выше). Прежняя эвристика !isRare затирала намерение.
+    const isUltra = ultraChosen.has(elementId)
+      || (!isProfile && !isRare && (data.totalQuantity < 20 || data.maxAvailability < 0.05));
 
     let tier: 'profile' | 'rare' | 'ultra_rare';
     if (isProfile) tier = 'profile';

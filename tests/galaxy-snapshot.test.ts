@@ -34,26 +34,31 @@ import type { Galaxy, StarSystem, EntityId } from '@/core/types';
  * Snapshot: sorted unique star types observed for seed=42, DEFAULT_CONFIG
  * (systemCount=500). Re-recorded 2026-08-27 against the corrected
  * xoshiro256** port (Block 07 fix); see file-header NOTE for breakage
- * policy. The set now includes STAR_BH (black hole) — the corrected PRNG
- * state-update sequence shifts the seed=42 galaxy just enough that one
- * star lands on the BH branch of the star-type table.
+ * policy. The set then included STAR_B and STAR_PULSAR.
  *
  * RE-RECORDED 2026-08-31 (R-STARS-DATA / Etap 4.1): star catalog extracted
  * to src/data/stars/types.json and special-star weights raised from a
  * combined 0.8% to ~4.0% (owner requirement: a few percent, max 5%).
- * The seed=42 galaxy now also produces RG/NS/PULSAR stars (and more WD/BH).
+ * The seed=42 galaxy then also produced RG/NS/PULSAR stars (and more WD/BH).
  * STAR_O remains absent at this seed (weight 0.003 — ultra-rare).
+ *
+ * RE-RECORDED 2026-10-26 (Task 35, аудит B1): splitMix64-инициализация
+ * Xoshiro256 переведена на точную uint64-эмуляцию (BigInt). Прежний
+ * float64-вариант терял младшие биты seed'а (ulp=2048 при |z|≈2^63):
+ * seed 7 и seed 42 давали побайтно одну и ту же галактику. Точный
+ * port меняет весь поток (все derive-под-seed'ы) → сид=42-галактика
+ * сдвинулась: STAR_B и STAR_PULSAR пропали из набора (суммарный вес
+ * ~0.45% на 500 систем — на грани). Обновление по политике ломки
+ * из шапки файла: снапшот обновляется вместе с изменением PRNG.
  */
 const EXPECTED_STAR_TYPES = [
   'STAR_A',
-  'STAR_B',
   'STAR_BH',
   'STAR_F',
   'STAR_G',
   'STAR_K',
   'STAR_M',
   'STAR_NS',
-  'STAR_PULSAR',
   'STAR_RG',
   'STAR_WD',
 ];
