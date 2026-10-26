@@ -1,14 +1,14 @@
 /**
- * PRNG Quality Test — Verify Xoshiro256 derive() produces independent, well-distributed seeds.
+ * PRNG Quality Test — Verify Xoshiro128StarStar derive() produces independent, well-distributed seeds.
  * Run: cd /home/z/my-project && bun run scripts/prng-test.ts
  */
 
-import { Xoshiro256 } from '@/core/prng';
+import { Xoshiro128StarStar } from '@/core/prng';
 
 const N = 1000;
 
 console.log('╔══════════════════════════════════════════════════════════════════╗');
-console.log('║            PRNG QUALITY TEST — Xoshiro256 derive()             ║');
+console.log('║            PRNG QUALITY TEST — Xoshiro128StarStar derive()             ║');
 console.log('╚══════════════════════════════════════════════════════════════════╝');
 console.log();
 
@@ -17,7 +17,7 @@ console.log('══════════════════════�
 console.log('  TEST 1: Uniformity — First nextFloat() of 1000 derived PRNGs');
 console.log('═══════════════════════════════════════════════════════════════');
 
-const mainRng = new Xoshiro256(42);
+const mainRng = new Xoshiro128StarStar(42);
 const firstFloats: number[] = [];
 
 for (let i = 0; i < N; i++) {
@@ -87,7 +87,7 @@ console.log('\n═════════════════════�
 console.log('  TEST 3: Seed Distance — Do nearby names produce similar seeds?');
 console.log('═══════════════════════════════════════════════════════════════');
 
-const mainRng2 = new Xoshiro256(42);
+const mainRng2 = new Xoshiro128StarStar(42);
 const seeds: number[] = [];
 for (let i = 0; i < N; i++) {
   const derived = mainRng2.derive(`system_${i}`);
@@ -130,7 +130,7 @@ console.log('\n═════════════════════�
 console.log('  TEST 5: Name Pattern Independence — Similar names = independent?');
 console.log('═══════════════════════════════════════════════════════════════');
 
-const mainRng3 = new Xoshiro256(42);
+const mainRng3 = new Xoshiro128StarStar(42);
 const nameOutputs = new Map<string, number>();
 const names = ['planet_0', 'planet_1', 'planet_00', 'planet_01', 'planet_10',
                'system_0', 'system_1', 'star_0', 'hex_0', 'deposits_0'];
@@ -166,7 +166,7 @@ console.log('  TEST 6: K-S Test — Uniformity of derived PRNG outputs');
 console.log('═══════════════════════════════════════════════════════════════');
 
 // Collect more samples: first 10 floats from each of 100 derived PRNGs
-const mainRng4 = new Xoshiro256(42);
+const mainRng4 = new Xoshiro128StarStar(42);
 const allFloats: number[] = [];
 for (let i = 0; i < 100; i++) {
   const derived = mainRng4.derive(`system_${i}`);

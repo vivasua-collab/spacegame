@@ -18,7 +18,7 @@
  * (рецепт process_H2O) даёт водород + кислород.
  */
 
-import { Xoshiro256 } from '@/core/prng';
+import { Xoshiro128StarStar } from '@/core/prng';
 import type { HexCell, PlanetResourceDeposit } from '@/core/types';
 import { PROFILE_ELEMENTS, RARE_ELEMENTS, ULTRA_RARE_ELEMENTS } from '@/data/planet-types';
 import { ELEMENTS, ELEMENT_MAP } from '@/data/elements';
@@ -59,7 +59,7 @@ export function materializePlanetDeposits(body: LazyDepositBody): boolean {
   // идемпотентной независимо от флага.
   for (const hex of body.hexes) hex.deposits = [];
 
-  const rng = Xoshiro256.fromState(body.depositRngState);
+  const rng = Xoshiro128StarStar.fromState(body.depositRngState);
   assignResourceDeposits(body.hexes, rng, body.type);
   body.depositsMaterialized = true;
   return true;
@@ -133,7 +133,7 @@ export const WATER_DEPOSIT_ID = 'H2O-ice';
  * новый — ровно 60 → все последующие значения потока depositRng сдвинулись,
  * вывод генерации залежей изменился для ВСЕХ seed (ожидаемо и задокументировано).
  */
-export function shuffledWithRng<T>(items: readonly T[], rng: Xoshiro256): T[] {
+export function shuffledWithRng<T>(items: readonly T[], rng: Xoshiro128StarStar): T[] {
   const arr = items.slice();
   for (let i = arr.length - 1; i > 0; i--) {
     const j = Math.floor(rng.nextFloat() * (i + 1));
@@ -151,7 +151,7 @@ export function shuffledWithRng<T>(items: readonly T[], rng: Xoshiro256): T[] {
  * вместо этого генерируется Вода (H2O-ice), из которой электролизом
  * получаются водород и кислород.
  */
-export function assignResourceDeposits(hexes: HexCell[], rng: Xoshiro256, planetType: string): void {
+export function assignResourceDeposits(hexes: HexCell[], rng: Xoshiro128StarStar, planetType: string): void {
   if (hexes.length === 0) return;
 
   const nonOceanHexes = hexes.filter(h => h.terrain !== 'ocean');
@@ -276,7 +276,7 @@ export function assignResourceDeposits(hexes: HexCell[], rng: Xoshiro256, planet
 export function aggregateResourceDeposits(
   hexes: HexCell[],
   planetType: string,
-  rng: Xoshiro256,
+  rng: Xoshiro128StarStar,
 ): PlanetResourceDeposit[] {
   const profileSet = new Set(PROFILE_ELEMENTS[planetType as keyof typeof PROFILE_ELEMENTS] ?? []);
   const rareSet = new Set(RARE_ELEMENTS);

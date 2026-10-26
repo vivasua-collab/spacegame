@@ -31,7 +31,7 @@ import { serializeGameState, deserializeGameState } from '@/stores/game-store';
 import { isSaveFormatV3, SAVE_FORMAT_V3_VERSION } from '@/lib/save-format-v3';
 import { materializePlanetDeposits } from '@/galaxy/generate-resources';
 import { assignResourceDeposits } from '@/galaxy/generate-resources';
-import { Xoshiro256 } from '@/core/prng';
+import { Xoshiro128StarStar } from '@/core/prng';
 import { colonizePlanet } from '@/economy/engine';
 import { createDefaultResearchState } from '@/research/engine';
 import type { GameState, Planet, Moon, ResourceDeposit } from '@/core/types';
@@ -124,7 +124,7 @@ describe('R-29: ленивые залежи + формат v3', () => {
 
     // Эталон: независимый прогон assignResourceDeposits из сохранённого снимка
     const reference: ResourceDeposit[][] = planet.hexes.map((h) => h.deposits.slice());
-    const refRng = Xoshiro256.fromState(planet.depositRngState);
+    const refRng = Xoshiro128StarStar.fromState(planet.depositRngState);
     assignResourceDeposits(planet.hexes, refRng, planet.type);
     const expected = planet.hexes.map((h) => h.deposits.slice());
     // вернуть гексы в ленивое состояние (эталон прогоняли на живых гексах)
@@ -363,5 +363,53 @@ describe('R-29: ленивые залежи + формат v3', () => {
     // gzip-транспорт (R-26) — порядок величины
     const gz = Bun.gzipSync(new TextEncoder().encode(json)).length / (1024 * 1024);
     expect(gz).toBeLessThan(1.2);
+  });
+
+  test('13. R-35 (P1 аудита): Save → Load → materialize — полный цикл бит-в-бит', () => {
+    // Требование аудитора: смена ядра PRNG (R-35: мешап → канонический
+    // xoshiro128**) НЕ должна молча ломать ленивую материализацию. Цепочка:
+    // свежее состояние → СЕЙВ → ЗАГРУЗКА → колонизация (materialize из ds)
+    // даёт РОВНО те же залежи, что прямая колонизация без сейва.
+    const direct = buildFreshState(20);          // эталон: без сейва
+    const saved = buildFreshState(20);           // тот же seed → та же генерация
+    const planetDirect = firstColonizable(direct);
+
+    // Прямая материализация (ground truth)
+    expect(colonizePlanet(planetDirect)).toBe(true);
+    const truth = planetDirect.hexes.map((h) => h.deposits.map((d) => ({ ...d })));
+
+    // Полный цикл: serialize → deserialize → materialize
+    const json = serializeGameState(saved);
+    expect(isSaveFormatV3(json)).toBe(true);
+    const restored = deserializeGameState(json);
+    const rPlanet = restored.galaxy.systems
+      .flatMap((s) => s.planets).find((p) => p.id === planetDirect.id)!;
+    expect(rPlanet.depositsMaterialized).toBe(false);
+    expect(rPlanet.depositRngState).toEqual(planetDirect.depositRngState); // ds прошёл кодек
+    expect(colonizePlanet(rPlanet)).toBe(true);
+
+    // Бит-в-бит: каждая залежь каждого гекса совпадает с эталоном
+    expect(rPlanet.hexes.length).toBe(truth.length);
+    let tuples = 0;
+    for (let i = 0; i < truth.length; i++) {
+      const got = rPlanet.hexes[i]!.deposits;
+      const want = truth[i]!;
+      expect(got.length).toBe(want.length);
+      for (let d = 0; d < got.length; d++) {
+        expect(got[d]).toEqual(want[d]);
+        tuples++;
+      }
+    }
+    expect(tuples).toBeGreaterThan(50);
+
+    // Повторный цикл сейв→загрузка уже материализованной планеты: без дублей
+    const json2 = serializeGameState(restored);
+    const restored2 = deserializeGameState(json2);
+    const r2Planet = restored2.galaxy.systems
+      .flatMap((s) => s.planets).find((p) => p.id === planetDirect.id)!;
+    expect(r2Planet.depositsMaterialized).toBe(true);
+    expect(materializePlanetDeposits(r2Planet)).toBe(false);
+    expect(r2Planet.hexes.map((h) => h.deposits.length))
+      .toEqual(truth.map((h) => h.length));
   });
 });

@@ -1863,7 +1863,7 @@ export class MyModule implements IGameModule {
 src/
 ├── core/                           # Ядро (без зависимостей от модулей)
 │   ├── types.ts                    # Общие типы данных
-│   ├── prng.ts                     # PRNG (xoshiro256**)
+│   ├── prng.ts                     # PRNG (xoshiro128** канонический, R-35)
 │   ├── events.ts                   # EventMap — карта типизированных событий
 │   ├── query-types.ts              # QueryMap — карта типизированных запросов
 │   ├── typed-event-bus.ts          # Типизированная шина событий

@@ -22,7 +22,7 @@ import { toast } from '@/hooks/use-toast';
 /**
  * Deterministic pseudo-random number generator (simple LCG).
  * Used only for the decorative star field on the main menu — NOT for galaxy
- * generation. Galaxy generation uses Xoshiro256 from the seed (see
+ * generation. Galaxy generation uses Xoshiro128StarStar from the seed (see
  * src/galaxy/generator.ts); the seed itself lives in the Zustand store
  * (`galaxySeed`) so it does not change on every page re-mount.
  */

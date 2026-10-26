@@ -20,7 +20,7 @@
  */
 
 import { test, expect, describe } from 'bun:test';
-import { Xoshiro256 } from '@/core/prng';
+import { Xoshiro128StarStar } from '@/core/prng';
 import { generateSpiralPositions, computeComponentCounts } from '@/galaxy/generate-positions';
 import { DEFAULT_CONFIG } from '@/galaxy';
 import type { GalaxyGenConfig } from '@/galaxy';
@@ -29,7 +29,7 @@ import type { Vec2 } from '@/core/types';
 /** Позиции для seed+оверрайда (зеркало цепочки generator.ts). */
 function positionsFor(seed: number, over: Partial<GalaxyGenConfig> = {}): Vec2[] {
   const cfg = { ...DEFAULT_CONFIG, ...over };
-  const main = new Xoshiro256(seed);
+  const main = new Xoshiro128StarStar(seed);
   return generateSpiralPositions(
     cfg,
     main.derive('arms'),
@@ -225,5 +225,90 @@ describe('Task 35 B2: форма распределений (docs §1.1)', () =>
     for (const p of [...bulgeSlice, ...diskSlice]) {
       expect(Math.hypot(p.x, p.y)).toBeLessThanOrEqual(R);
     }
+  });
+});
+
+describe('R-35 (P2 аудита этапа 2): нормализация некорректного radius/arms', () => {
+  // Замечание аудитора: нормализованный в начале generateSpiralPositions
+  // radius НЕ применялся в расчёте разброса рукавов (cfg.spread * cfg.radius *
+  // cfg.armWidth) и радиального шума (cfg.radius * 0.05) — при NaN/Infinity
+  // в cfg.radius координаты становились NaN/Infinity. R-35: все параметры
+  // нормализуются один раз, дальше используются только нормализованные.
+
+  /** Все координаты конечны (и не NaN). */
+  function allFinite(pos: Vec2[]): boolean {
+    return pos.every((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
+  }
+
+  test('1. Отрицательный radius → нормализация в 0, все координаты конечны', () => {
+    for (const radius of [-1, -25000, -1e12]) {
+      const pos = positionsFor(42, { systemCount: 200, radius });
+      expect(pos).toHaveLength(200);
+      expect(allFinite(pos), `radius=${radius}`).toBe(true);
+    }
+  });
+
+  test('2. NaN radius → нормализация в 0, все координаты конечны', () => {
+    const pos = positionsFor(42, { systemCount: 200, radius: Number.NaN });
+    expect(pos).toHaveLength(200);
+    // ДО R-35: spread = gauss(0, NaN·…) → NaN-углы у всех рукавных точек.
+    expect(allFinite(pos)).toBe(true);
+  });
+
+  test('3. ±Infinity radius → нормализация в 0, все координаты конечны', () => {
+    for (const radius of [Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      const pos = positionsFor(42, { systemCount: 200, radius });
+      expect(pos).toHaveLength(200);
+      // ДО R-35: gauss(0, Infinity) → ±Infinity → cos/sin(Infinity) → NaN.
+      expect(allFinite(pos), `radius=${radius}`).toBe(true);
+    }
+  });
+
+  test('4. radius = 0 → вырожденная, но конечная генерация', () => {
+    const pos = positionsFor(42, { systemCount: 200, radius: 0 });
+    expect(pos).toHaveLength(200);
+    expect(allFinite(pos)).toBe(true);
+    // Рукава/диск при radius=0 стягиваются в начало координат
+    // (dist = 0, r = 0); ядро независимо (σ = bulgeRadius).
+    // Math.abs: cos(π)·0 = −0, а Object.is(−0, 0) === false.
+    const counts = computeComponentCounts({ ...DEFAULT_CONFIG, systemCount: 200, radius: 0 });
+    const armSlice = pos.slice(counts.bulgeCount + counts.diskCount, pos.length - counts.haloCount);
+    for (const p of armSlice) {
+      expect(Math.abs(p.x)).toBe(0);
+      expect(Math.abs(p.y)).toBe(0);
+    }
+  });
+
+  test('5. arms = 0 / NaN / дробное / отрицательное → guard ≥ 1, конечные координаты', () => {
+    for (const arms of [0, Number.NaN, -3, 2.7]) {
+      const pos = positionsFor(42, { systemCount: 200, arms });
+      expect(pos).toHaveLength(200);
+      expect(allFinite(pos), `arms=${arms}`).toBe(true);
+    }
+  });
+
+  test('6. NaN в производных параметрах рукава (spread/armWidth/armTwist) → конечные координаты', () => {
+    // R-35: нормализуются не только radius — spread/armWidth/armTwist тоже
+    // (NaN → 0; armTwist — любое конечное, в т.ч. отрицательное).
+    const combos: Array<Partial<GalaxyGenConfig>> = [
+      { spread: Number.NaN },
+      { armWidth: Number.NaN },
+      { armTwist: Number.NaN },
+      { spread: Number.POSITIVE_INFINITY, armWidth: Number.POSITIVE_INFINITY },
+      { armTwist: -0.6 }, // отрицательная закрутка — легитимна (зеркальная спираль)
+    ];
+    for (const over of combos) {
+      const pos = positionsFor(42, { systemCount: 200, ...over });
+      expect(pos).toHaveLength(200);
+      expect(allFinite(pos), JSON.stringify(over)).toBe(true);
+    }
+  });
+
+  test('7. Нормализация используется: NaN radius ≡ radius 0 (та же карта, а не NaN)', () => {
+    // Если бы защита не применялась, NaN-радиус дал бы NaN-координаты, а не
+    // карту, совпадающую с radius=0. Сравниваем полные массивы позиций.
+    const nanPos = positionsFor(77, { systemCount: 150, radius: Number.NaN });
+    const zeroPos = positionsFor(77, { systemCount: 150, radius: 0 });
+    expect(nanPos).toEqual(zeroPos);
   });
 });

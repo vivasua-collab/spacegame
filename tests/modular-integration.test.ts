@@ -37,7 +37,7 @@ import type { EntityId, GameState, Planet } from '@/core/types';
  * produce()-based mutations wouldn't be committed back to the mediator.
  *
  * Block 07 PRNG port fix note: systemCount=1 with seed=42 now produces a
- * system with no planets (the corrected xoshiro256** state-update shifts
+ * system with no planets (the corrected xoshiro128** state-update (R-35) shifts
  * the per-system planet count roll below 1). systemCount=5 yields ≥1
  * suitable planet on the seed-42 galaxy — verified by `findFirstPlanet`.
  */

@@ -3,7 +3,7 @@
  * Создаёт звёзды (одиночные/двойные/тройные), назначает имена.
  */
 
-import type { Xoshiro256 } from '@/core/prng';
+import type { Xoshiro128StarStar } from '@/core/prng';
 import type { StarSystem, Star, Planet, EntityId, BinaryType } from '@/core/types';
 // R-STARS-DATA (2026-08-31): каталог звёзд — data-driven из src/data/stars/types.json
 import {
@@ -28,7 +28,7 @@ const GREEK = ['Alpha', 'Beta', 'Gamma', 'Delta', 'Epsilon', 'Zeta', 'Eta', 'The
 const CONSTELLATIONS = ['Centauri', 'Cygni', 'Draconis', 'Eridani', 'Hydrae', 'Leonis', 'Lyrae', 'Orionis', 'Pegasi', 'Phoenicis', 'Serpentis', 'Tauri', 'Ursae', 'Velorum', 'Virginis'];
 
 /** Генерация имени системы (L-02 fix: расширены пулы + числовой суффикс для уникальности) */
-function generateSystemName(rng: Xoshiro256, index: number): string {
+function generateSystemName(rng: Xoshiro128StarStar, index: number): string {
   for (let attempt = 0; attempt < 100; attempt++) {
     const greek = rng.nextChoice(GREEK);
     const constellation = rng.nextChoice(CONSTELLATIONS);
@@ -43,7 +43,7 @@ function generateSystemName(rng: Xoshiro256, index: number): string {
 }
 
 /** P1-07: Выбор типа звёздной системы */
-function selectBinaryType(rng: Xoshiro256): BinaryType {
+function selectBinaryType(rng: Xoshiro128StarStar): BinaryType {
   const roll = rng.nextFloat() * 100;
   if (roll < 60) return 'BINARY_NONE';
   if (roll < 80) return 'BINARY_CLOSE';
@@ -56,7 +56,7 @@ function selectBinaryType(rng: Xoshiro256): BinaryType {
  * «Тот же класс или на 1 ниже» — только среди главной последовательности (indices 0-6).
  * Специальные типы (WD, RG, NS, PULSAR, BH) не используются для компаньонов.
  */
-function selectCompanionStar(primaryDef: typeof STAR_TYPES[0], rng: Xoshiro256): typeof STAR_TYPES[0] {
+function selectCompanionStar(primaryDef: typeof STAR_TYPES[0], rng: Xoshiro128StarStar): typeof STAR_TYPES[0] {
   if (rng.nextBool(0.7)) {
     const currentIdx = MAIN_SEQUENCE_STAR_TYPES.indexOf(primaryDef);
     if (currentIdx === -1) {
@@ -110,7 +110,7 @@ function stefanBoltzmannTemperature(luminosityLs: number, radiusRs: number): num
   return T_SUN * Math.pow(luminosityLs / (radiusRs * radiusRs), 0.25);
 }
 
-function createStar(systemId: EntityId, systemName: string, starDef: typeof STAR_TYPES[0], rng: Xoshiro256): Star {
+function createStar(systemId: EntityId, systemName: string, starDef: typeof STAR_TYPES[0], rng: Xoshiro128StarStar): Star {
   const isMainSequence = MAIN_SEQUENCE_TYPES.has(starDef.type);
 
   let mass: number;
@@ -194,7 +194,7 @@ function createStar(systemId: EntityId, systemName: string, starDef: typeof STAR
 export function generateSystem(
   position: { x: number; y: number },
   index: number,
-  rng: Xoshiro256,
+  rng: Xoshiro128StarStar,
   cfg: { maxJumpPointsPerSystem: number },
 ): StarSystem {
   const systemId = genId('sys');

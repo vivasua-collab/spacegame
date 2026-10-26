@@ -31,7 +31,7 @@ import {
   shuffledWithRng,
   WATER_DEPOSIT_ID,
 } from '@/galaxy/generate-resources';
-import { Xoshiro256 } from '@/core/prng';
+import { Xoshiro128StarStar } from '@/core/prng';
 import { setCurrentLookups, getCurrentLookups, findContainedElements } from '@/data/baked-lookups';
 import { bakeGalaxyModel } from '@/data/chemistry-generator';
 import { ELEMENTS, ELEMENT_MAP } from '@/data/elements';
@@ -63,8 +63,8 @@ describe('D2: assignResourceDeposits — детерминизм и валидн�
     for (const seed of [1, 42, 777, 123456]) {
       const a = mkHexes(37);
       const b = mkHexes(37);
-      assignResourceDeposits(a, new Xoshiro256(seed).derive('deposits'), 'rocky');
-      assignResourceDeposits(b, new Xoshiro256(seed).derive('deposits'), 'rocky');
+      assignResourceDeposits(a, new Xoshiro128StarStar(seed).derive('deposits'), 'rocky');
+      assignResourceDeposits(b, new Xoshiro128StarStar(seed).derive('deposits'), 'rocky');
       expect(a).toEqual(b);
     }
   });
@@ -74,7 +74,7 @@ describe('D2: assignResourceDeposits — детерминизм и валидн�
       for (const type of PLANET_TYPES) {
         for (const n of GRID_SIZES) {
           const hexes = mkHexes(n);
-          assignResourceDeposits(hexes, new Xoshiro256(seed * 1000 + n).derive('d'), type);
+          assignResourceDeposits(hexes, new Xoshiro128StarStar(seed * 1000 + n).derive('d'), type);
           for (const hex of hexes) {
             for (const d of hex.deposits) {
               expect(Number.isFinite(d.quantity), `${type} qty`).toBe(true);
@@ -96,7 +96,7 @@ describe('D2: assignResourceDeposits — детерминизм и валидн�
     for (let seed = 1; seed <= 3; seed++) {
       for (const type of PLANET_TYPES) {
         const hexes = mkHexes(37);
-        assignResourceDeposits(hexes, new Xoshiro256(seed).derive('d'), type);
+        assignResourceDeposits(hexes, new Xoshiro128StarStar(seed).derive('d'), type);
         for (const hex of hexes) {
           for (const d of hex.deposits) {
             const knownOre = lookups.oreMap.has(d.elementId);
@@ -134,12 +134,12 @@ describe('D2: assignResourceDeposits — детерминизм и валидн�
   test('5. Вода (H2O-ice): есть на каждом типе кроме газового гиганта (R-27)', () => {
     for (const type of PLANET_TYPES) {
       const hexes = mkHexes(37);
-      assignResourceDeposits(hexes, new Xoshiro256(11).derive('d'), type);
+      assignResourceDeposits(hexes, new Xoshiro128StarStar(11).derive('d'), type);
       expect(sumDepositQty(hexes, WATER_DEPOSIT_ID), type).toBeGreaterThan(0);
     }
     // газовый гигант: сетка пуста — ранний return
     const gg: HexCell[] = [];
-    assignResourceDeposits(gg, new Xoshiro256(11).derive('d'), 'gas_giant');
+    assignResourceDeposits(gg, new Xoshiro128StarStar(11).derive('d'), 'gas_giant');
     expect(gg.length).toBe(0);
   });
 
@@ -151,7 +151,7 @@ describe('D2: assignResourceDeposits — детерминизм и валидн�
       buildingLevel: 0,
       deposits: [],
     }));
-    assignResourceDeposits(hexes, new Xoshiro256(5).derive('d'), 'oceanic');
+    assignResourceDeposits(hexes, new Xoshiro128StarStar(5).derive('d'), 'oceanic');
     for (const [i, hex] of hexes.entries()) {
       if (hex.terrain === 'ocean') {
         expect(hex.deposits.length, `гекс ${i} (ocean)`).toBe(0);
@@ -161,11 +161,11 @@ describe('D2: assignResourceDeposits — детерминизм и валидн�
 
     // полностью океанская планета: ранний return, без краша
     const allOcean = mkHexes(19, 'ocean');
-    assignResourceDeposits(allOcean, new Xoshiro256(5).derive('d'), 'oceanic');
+    assignResourceDeposits(allOcean, new Xoshiro128StarStar(5).derive('d'), 'oceanic');
     expect(allOcean.every(h => h.deposits.length === 0)).toBe(true);
     // свод при этом полон (гарантия всех элементов); hexCount=0 у всех, кроме
     // 1-2 выбранных ультраредких (им явка проставляется как 1)
-    const pool = aggregateResourceDeposits(allOcean, 'oceanic', new Xoshiro256(5).derive('u'));
+    const pool = aggregateResourceDeposits(allOcean, 'oceanic', new Xoshiro128StarStar(5).derive('u'));
     expect(pool.length).toBe(ELEMENTS.length);
     const withHexes = pool.filter(d => d.hexCount > 0);
     expect(withHexes.length).toBeLessThanOrEqual(2);
@@ -184,9 +184,9 @@ describe('D2: свод-пул согласован с залежами (aggregat
     const lookups = getCurrentLookups();
     for (const type of PLANET_TYPES) {
       const hexes = mkHexes(37);
-      const rng = new Xoshiro256(21).derive('d');
+      const rng = new Xoshiro128StarStar(21).derive('d');
       assignResourceDeposits(hexes, rng, type);
-      const pool = aggregateResourceDeposits(hexes, type, new Xoshiro256(21).derive('u'));
+      const pool = aggregateResourceDeposits(hexes, type, new Xoshiro128StarStar(21).derive('u'));
 
       // ожидание по модели: для каждой руды — её содержимые элементы × доля
       const expected = new Map<string, number>();
@@ -222,8 +222,8 @@ describe('D2: свод-пул согласован с залежами (aggregat
     const lookups = getCurrentLookups();
     for (const type of PLANET_TYPES) {
       const hexes = mkHexes(19);
-      assignResourceDeposits(hexes, new Xoshiro256(31).derive('d'), type);
-      const pool = aggregateResourceDeposits(hexes, type, new Xoshiro256(31).derive('u'));
+      assignResourceDeposits(hexes, new Xoshiro128StarStar(31).derive('d'), type);
+      const pool = aggregateResourceDeposits(hexes, type, new Xoshiro128StarStar(31).derive('u'));
       const poolIds = new Set(pool.map(d => d.elementId));
       // каждый элемент, содержащийся в реально сгенерированных рудах, есть в пуле
       for (const hex of hexes) {
@@ -241,7 +241,7 @@ describe('D2: свод-пул согласован с залежами (aggregat
 describe('D2: materializePlanetDeposits — ленивые залежи R-29', () => {
   function buildReference(seed: number, type: string, n: number) {
     const reference = mkHexes(n);
-    const rng = new Xoshiro256(seed).derive('deposits');
+    const rng = new Xoshiro128StarStar(seed).derive('deposits');
     const snapshot = rng.snapshotState();
     assignResourceDeposits(reference, rng, type);
     return { reference, snapshot };
@@ -304,9 +304,9 @@ describe('D2: materializePlanetDeposits — ленивые залежи R-29', (
 
 describe('D2/G-05: перемешивание Fisher–Yates (регрессия sort-компаратора)', () => {
   /** Замоканный RNG с заданной последовательностью nextFloat (для точных перестановок). */
-  function riggedRng(floats: number[]): Xoshiro256 {
+  function riggedRng(floats: number[]): Xoshiro128StarStar {
     let i = 0;
-    return { nextFloat: () => floats[i++] ?? 0 } as unknown as Xoshiro256;
+    return { nextFloat: () => floats[i++] ?? 0 } as unknown as Xoshiro128StarStar;
   }
 
   test('14. Точная перестановка на замоканном RNG (детерминизм алгоритма)', () => {
@@ -322,8 +322,8 @@ describe('D2/G-05: перемешивание Fisher–Yates (регрессия
   test('15. Ровно n−1 вызовов RNG; результат — перестановка; исходник не мутируется', () => {
     const N = 61;
     let calls = 0;
-    const rng = new Xoshiro256(12345);
-    const counting = { nextFloat: () => { calls++; return rng.nextFloat(); } } as unknown as Xoshiro256;
+    const rng = new Xoshiro128StarStar(12345);
+    const counting = { nextFloat: () => { calls++; return rng.nextFloat(); } } as unknown as Xoshiro128StarStar;
     const src = Array.from({ length: N }, (_, i) => i);
     const arr = shuffledWithRng(src, counting);
     expect(calls).toBe(N - 1);
@@ -340,7 +340,7 @@ describe('D2/G-05: перемешивание Fisher–Yates (регрессия
     const N = 19; // df = 18, критическое значение p=0.01: 34.805
     const TRIALS = 10000;
     const posCount = new Array<number>(N).fill(0);
-    const rng = new Xoshiro256(2026);
+    const rng = new Xoshiro128StarStar(2026);
     for (let t = 0; t < TRIALS; t++) {
       const arr = shuffledWithRng(Array.from({ length: N }, (_, i) => i), rng);
       const idx = arr.indexOf(0);
@@ -352,8 +352,8 @@ describe('D2/G-05: перемешивание Fisher–Yates (регрессия
   });
 
   test('17. Воспроизводимость: один seed → одна перестановка (кросс-вызов)', () => {
-    const a = shuffledWithRng([1, 2, 3, 4, 5, 6, 7, 8], new Xoshiro256(777));
-    const b = shuffledWithRng([1, 2, 3, 4, 5, 6, 7, 8], new Xoshiro256(777));
+    const a = shuffledWithRng([1, 2, 3, 4, 5, 6, 7, 8], new Xoshiro128StarStar(777));
+    const b = shuffledWithRng([1, 2, 3, 4, 5, 6, 7, 8], new Xoshiro128StarStar(777));
     expect(a).toEqual(b);
   });
 });
@@ -377,8 +377,8 @@ describe('D3/G-06: ультраредкие элементы (1-2 уникаль
       for (const type of PLANET_TYPES) {
         for (const n of [19, 61] as const) {
           const hexes = mkHexes(n);
-          assignResourceDeposits(hexes, new Xoshiro256(seed * 100 + n).derive('d'), type);
-          const pool = aggregateResourceDeposits(hexes, type, new Xoshiro256(seed * 100 + n).derive('u'));
+          assignResourceDeposits(hexes, new Xoshiro128StarStar(seed * 100 + n).derive('d'), type);
+          const pool = aggregateResourceDeposits(hexes, type, new Xoshiro128StarStar(seed * 100 + n).derive('u'));
           total++;
           const sig = ultraSignatures(pool, type);
           // ГЛАВНАЯ регрессия G-06: раньше 6.9% планет не получали НИ ОДНОГО
@@ -409,8 +409,8 @@ describe('D3/G-06: ультраредкие элементы (1-2 уникаль
     let foundOverlapCase = false;
     for (let seed = 1; seed <= 40 && !foundOverlapCase; seed++) {
       const hexes = mkHexes(37);
-      assignResourceDeposits(hexes, new Xoshiro256(seed).derive('d'), 'rocky');
-      const pool = aggregateResourceDeposits(hexes, 'rocky', new Xoshiro256(seed).derive('u'));
+      assignResourceDeposits(hexes, new Xoshiro128StarStar(seed).derive('d'), 'rocky');
+      const pool = aggregateResourceDeposits(hexes, 'rocky', new Xoshiro128StarStar(seed).derive('u'));
       for (const d of ultraSignatures(pool, 'rocky')) {
         if (RARE_ELEMENTS.includes(d.elementId)) {
           expect(d.tier).toBe('ultra_rare'); // прежде было 'rare'
@@ -426,8 +426,8 @@ describe('D3/G-06: ультраредкие элементы (1-2 уникаль
     // volcanic: V профильный → не кандидат; проверяем на 30 планетах
     for (let seed = 1; seed <= 30; seed++) {
       const hexes = mkHexes(37);
-      assignResourceDeposits(hexes, new Xoshiro256(seed).derive('d'), 'volcanic');
-      const pool = aggregateResourceDeposits(hexes, 'volcanic', new Xoshiro256(seed).derive('u'));
+      assignResourceDeposits(hexes, new Xoshiro128StarStar(seed).derive('d'), 'volcanic');
+      const pool = aggregateResourceDeposits(hexes, 'volcanic', new Xoshiro128StarStar(seed).derive('u'));
       const sig = ultraSignatures(pool, 'volcanic');
       expect(sig.every(s => s.elementId !== 'V')).toBe(true);
       expect(sig.every(s => s.tier !== 'profile')).toBe(true);

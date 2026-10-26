@@ -21,7 +21,7 @@
  */
 
 import type { Vec2 } from '@/core/types';
-import type { Xoshiro256 } from '@/core/prng';
+import type { Xoshiro128StarStar } from '@/core/prng';
 
 export interface PositionsConfig {
   systemCount: number;
@@ -104,13 +104,24 @@ export function computeComponentCounts(cfg: PositionsConfig): {
  */
 export function generateSpiralPositions(
   cfg: PositionsConfig,
-  armRng: Xoshiro256,
-  bulgeRng: Xoshiro256,
-  diskRng: Xoshiro256,
-  haloRng: Xoshiro256,
+  armRng: Xoshiro128StarStar,
+  bulgeRng: Xoshiro128StarStar,
+  diskRng: Xoshiro128StarStar,
+  haloRng: Xoshiro128StarStar,
 ): Vec2[] {
   const positions: Vec2[] = [];
+
+  // R-35 (P2 аудита): ВСЕ числовые параметры нормализуются ОДИН раз здесь,
+  // и дальше используется ТОЛЬКО нормализованные значения. ДО фикса разброс
+  // рукавов и радиальный шум считались от сырого `cfg.radius` — при
+  // NaN/Infinity в конфиге защитная проверка radius не гарантировала
+  // конечные координаты (spread = gauss(0, NaN·…) → NaN-углы).
   const radius = Number.isFinite(cfg.radius) ? Math.max(0, cfg.radius) : 0;
+  const spread = Number.isFinite(cfg.spread) ? Math.max(0, cfg.spread) : 0;
+  const armWidth = Number.isFinite(cfg.armWidth) ? Math.max(0, cfg.armWidth) : 0;
+  const armTwist = Number.isFinite(cfg.armTwist) ? cfg.armTwist : 0;
+  const arms = Math.max(1, Math.floor(cfg.arms) || 1);
+
   const { bulgeCount, diskCount, armCount, haloCount } = computeComponentCounts(cfg);
 
   // Ядро (bulge) — 2D-гауссиана σ = bulgeRadius (docs §1.1 п.4).
@@ -135,19 +146,20 @@ export function generateSpiralPositions(
 
   // Спиральные рукава — прежняя параметризация (осознанное отклонение G-20,
   // docs/galaxy-generation-audit.md §11.2): радиус → угол + гауссово
-  // смещение. Guard: arms ≥ 1 (arms = 0 давал armAngleStep = 2π/0 = Infinity
-  // и NaN-координаты); radius = 0 → t = 0.
-  const armAngleStep = (2 * Math.PI) / Math.max(1, Math.floor(cfg.arms) || 1);
+  // смещение. Guards: arms ≥ 1 (arms = 0 давал armAngleStep = 2π/0 = Infinity
+  // и NaN-координаты); radius = 0 → t = 0. R-35: разброс и шум — от
+  // НОРМАЛИЗОВАННОГО radius (не cfg.radius), см. блок нормализации выше.
+  const armAngleStep = (2 * Math.PI) / arms;
   for (let i = 0; i < armCount; i++) {
-    const arm = armRng.nextInt(0, Math.max(1, Math.floor(cfg.arms) || 1) - 1);
+    const arm = armRng.nextInt(0, arms - 1);
     const armAngle = arm * armAngleStep;
     const dist = armRng.nextFloat() * radius;
     const t = radius > 0 ? dist / radius : 0;
-    const spiralAngle = armAngle + t * Math.PI * cfg.armTwist * 2;
-    const spread = armRng.nextGaussian(0, cfg.spread * cfg.radius * cfg.armWidth * 0.3);
+    const spiralAngle = armAngle + t * Math.PI * armTwist * 2;
+    const armSpread = armRng.nextGaussian(0, spread * radius * armWidth * 0.3);
 
-    const angle = spiralAngle + (spread / (radius > 0 ? radius : 1));
-    const r = dist + armRng.nextGaussian(0, cfg.radius * 0.05);
+    const angle = spiralAngle + (armSpread / (radius > 0 ? radius : 1));
+    const r = dist + armRng.nextGaussian(0, radius * 0.05);
 
     positions.push({
       x: Math.cos(angle) * Math.max(0, r),

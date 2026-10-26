@@ -41,7 +41,7 @@ import { PLANET_GRIDS, MOON_GRIDS } from '@/data/planets/grids';
 import { SIZE_HEX_COUNT, MOON_SIZE_HEX_COUNT, ALL_TERRAINS } from '@/data/planet-types';
 import { generateHexGrid } from '@/galaxy/hex-grid';
 import { generateGalaxy } from '@/galaxy';
-import { Xoshiro256 } from '@/core/prng';
+import { Xoshiro128StarStar } from '@/core/prng';
 
 /** Центрированное гекс-число: 1 + 3k(k+1) для целого k ≥ 1. */
 function isCenteredHex(n: number): boolean {
@@ -186,18 +186,18 @@ describe('R-STARS-DATA: размерности гекс-сеток (grids.json)'
   });
 
   test('15. generateHexGrid: лунные сетки дают 7/19 гексов', () => {
-    const rng1 = new Xoshiro256(1001);
+    const rng1 = new Xoshiro128StarStar(1001);
     const tiny = generateHexGrid('tiny', terrainWeights, rng1, MOON_GRIDS);
     expect(tiny.length).toBe(7);
-    const rng2 = new Xoshiro256(1002);
+    const rng2 = new Xoshiro128StarStar(1002);
     const small = generateHexGrid('small', terrainWeights, rng2, MOON_GRIDS);
     expect(small.length).toBe(19);
   });
 
   test('16. generateHexGrid: по умолчанию — планетарные сетки (fallback)', () => {
-    const rng = new Xoshiro256(1003);
+    const rng = new Xoshiro128StarStar(1003);
     expect(generateHexGrid('medium', terrainWeights, rng).length).toBe(61);
-    const rng2 = new Xoshiro256(1004);
+    const rng2 = new Xoshiro128StarStar(1004);
     expect(generateHexGrid('tiny', terrainWeights, rng2).length).toBe(19);
   });
 });

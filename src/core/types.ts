@@ -701,7 +701,7 @@ export interface Planet {
    */
   depositsMaterialized?: boolean;
   /**
-   * Снимок состояния Xoshiro256 (4×uint32) ДО прогона генерации залежей.
+   * Снимок состояния Xoshiro128StarStar (4×uint32) ДО прогона генерации залежей.
    * materializePlanetDeposits() воспроизводит залежи бит-в-бит.
    * null/undefined — материализация невозможна (ГГ без гексов, старые сейвы).
    */

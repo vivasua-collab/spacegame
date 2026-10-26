@@ -16,7 +16,7 @@
  *      the test verifies the actual post-generation graph, not the function).
  *
  * NOTE on snapshot sensitivity: the inline `EXPECTED_STAR_TYPES` snapshot
- * encodes the *current* xoshiro256** port + galaxy algorithm output. If a
+ * encodes the *current* xoshiro128** port (R-35) + galaxy algorithm output. If a
  * future block (e.g. Block 07 PRNG port fix per T7) changes the PRNG output,
  * this snapshot will break — that's expected and documents that the
  * galaxy-generator output has shifted (the test should be updated alongside
@@ -33,7 +33,7 @@ import type { Galaxy, StarSystem, EntityId } from '@/core/types';
 /**
  * Snapshot: sorted unique star types observed for seed=42, DEFAULT_CONFIG
  * (systemCount=500). Re-recorded 2026-08-27 against the corrected
- * xoshiro256** port (Block 07 fix); see file-header NOTE for breakage
+ * xoshiro128** port (R-35; до этого — Block 07 fix); see file-header NOTE for breakage
  * policy. The set then included STAR_B and STAR_PULSAR.
  *
  * RE-RECORDED 2026-08-31 (R-STARS-DATA / Etap 4.1): star catalog extracted
@@ -43,7 +43,7 @@ import type { Galaxy, StarSystem, EntityId } from '@/core/types';
  * STAR_O remains absent at this seed (weight 0.003 — ultra-rare).
  *
  * RE-RECORDED 2026-10-26 (Task 35, аудит B1): splitMix64-инициализация
- * Xoshiro256 переведена на точную uint64-эмуляцию (BigInt). Прежний
+ * Xoshiro128StarStar переведена на точную uint64-эмуляцию (BigInt). Прежний
  * float64-вариант терял младшие биты seed'а (ulp=2048 при |z|≈2^63):
  * seed 7 и seed 42 давали побайтно одну и ту же галактику. Точный
  * port меняет весь поток (все derive-под-seed'ы) → сид=42-галактика

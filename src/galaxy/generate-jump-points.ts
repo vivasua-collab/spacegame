@@ -3,7 +3,7 @@
  * P1-23: max 6 JP, distance limit, BFS connectivity.
  */
 
-import type { Xoshiro256 } from '@/core/prng';
+import type { Xoshiro128StarStar } from '@/core/prng';
 import type { StarSystem, JumpPoint, EntityId } from '@/core/types';
 import { genId } from './gen-context';
 
@@ -15,7 +15,7 @@ export interface JumpPointsConfig {
 /**
  * Генерация Jump Points (P1-23: max 6, distance limit).
  */
-export function generateJumpPoints(systems: StarSystem[], rng: Xoshiro256, cfg: JumpPointsConfig): void {
+export function generateJumpPoints(systems: StarSystem[], rng: Xoshiro128StarStar, cfg: JumpPointsConfig): void {
   if (systems.length < 2) return;
 
   const maxJP = cfg.maxJumpPointsPerSystem;
@@ -97,7 +97,7 @@ export function generateJumpPoints(systems: StarSystem[], rng: Xoshiro256, cfg: 
  * A→B на 100 seed × 200 систем), без лимита степени (maxDegree 10 при
  * maxJP 6) и без правила для дистанции (JP до 15104 пк при maxDist 5000).
  */
-export function ensureConnectivity(systems: StarSystem[], _rng: Xoshiro256, cfg: JumpPointsConfig): void {
+export function ensureConnectivity(systems: StarSystem[], _rng: Xoshiro128StarStar, cfg: JumpPointsConfig): void {
   if (systems.length < 2) return;
 
   const maxJP = cfg.maxJumpPointsPerSystem;

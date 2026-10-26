@@ -60,7 +60,7 @@ export { GameMediator, getGameMediator, resetGameMediator } from './game-mediato
 // Legacy (deprecated)
 
 // PRNG
-export { Xoshiro256 } from './prng';
+export { Xoshiro128StarStar } from './prng';
 
 // Audit Pass 2 P3-3: shared find-planet helper (replaces 3 duplicated
 // copies in economy-module.ts, ships-module.ts, game-store.ts).

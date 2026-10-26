@@ -34,7 +34,7 @@ import { test, expect, describe } from 'bun:test';
 import '@/core/immer-setup';
 import { generateGalaxy, DEFAULT_CONFIG } from '@/galaxy';
 import { generatePlanet } from '@/galaxy/generate-planets';
-import { Xoshiro256 } from '@/core/prng';
+import { Xoshiro128StarStar } from '@/core/prng';
 import { getBuildingEnergyOutput } from '@/economy/engine';
 import { setCurrentLookups } from '@/data/baked-lookups';
 import { bakeGalaxyModel } from '@/data/chemistry-generator';
@@ -59,7 +59,7 @@ function makeStar(mass: number, luminosity: number, type: Star['type'] = 'STAR_G
 function makeSystemPlanets(
   star: Star, binaryType: BinaryType, planetCount: number, seed: number,
 ): Planet[] {
-  const base = new Xoshiro256(seed);
+  const base = new Xoshiro128StarStar(seed);
   const planets: Planet[] = [];
   for (let i = 0; i < planetCount; i++) {
     planets.push(generatePlanet('sys-test', i + 1, 'Test System', star, binaryType, base.derive(`planet_${i}`)));

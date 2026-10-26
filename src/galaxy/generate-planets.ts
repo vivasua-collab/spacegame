@@ -19,7 +19,7 @@
  *   римский номер орбиты планеты не дублируется.
  */
 
-import type { Xoshiro256 } from '@/core/prng';
+import type { Xoshiro128StarStar } from '@/core/prng';
 import type { Star, Planet, Moon, PlanetSize, BinaryType, Atmosphere, AtmosphereType, PlanetLife, LifeLevel, AtmosphericSlot, OrbitalSlot } from '@/core/types';
 import { PLANET_TYPES, ORBIT_SLOTS, ORBIT_SLOTS_BY_SIZE, GAS_GIANT_ATMOSPHERE_SLOTS, PLANET_DENSITY, PLANET_TYPE_RADIUS, getSizeFromRadius, getPlanetGravityForRadius, getMoonGravityForRadius, LIFE_LEVEL_WEIGHTS, TYPE_NAMES, GAS_GIANT_MOON_COUNT, MOON_RADIUS, MOON_DENSITY, MOON_ORBIT_RADIUS_KM, MOON_TYPE_WEIGHTS, MOON_SIZE_HEX_COUNT } from '@/data/planet-types';
 import { genId } from './gen-context';
@@ -58,7 +58,7 @@ export function toRoman(num: number): string {
  * 4. Линия снега: R_snow = 2.7 × sqrt(L) AU — за ней лед/газовые гиганты вероятнее
  * 5. Границы ОЗ по Kopparapu et al. 2013: S_eff_inner=1.107, S_eff_outer=0.356
  */
-function selectPlanetType(orbitalRadius: number, star: Star, rng: Xoshiro256): typeof PLANET_TYPES[0] {
+function selectPlanetType(orbitalRadius: number, star: Star, rng: Xoshiro128StarStar): typeof PLANET_TYPES[0] {
   const L = Math.max(0.001, star.luminosity);
   // Kopparapu et al. 2013 conservative HZ boundaries (§2.1):
   //   inner = runaway greenhouse: S_eff = 1.107
@@ -151,7 +151,7 @@ function calculatePlanetTemperature(
   orbitalRadiusAU: number,
   planetDef: typeof PLANET_TYPES[0],
   atmosphere: Atmosphere,
-  rng: Xoshiro256,
+  rng: Xoshiro128StarStar,
 ): number {
   const r = Math.max(0.05, orbitalRadiusAU);
   const L = Math.max(0.001, star.luminosity);
@@ -198,7 +198,7 @@ function calculatePlanetTemperature(
  * Bond albedo по типу планеты и атмосферы.
  * Данные: Kopparapu et al. 2013, Solar System observations.
  */
-function getAlbedo(planetType: string, atmosphereType: string, rng: Xoshiro256): number {
+function getAlbedo(planetType: string, atmosphereType: string, rng: Xoshiro128StarStar): number {
   // Базовое альбедо по типу планеты
   let baseAlbedo: number;
   switch (planetType) {
@@ -226,7 +226,7 @@ function getAlbedo(planetType: string, atmosphereType: string, rng: Xoshiro256):
 // ============ Атмосфера ============
 
 /** P1-16: Генерация атмосферы (C-01: газовые гиганты обрабатываются первым приоритетом) */
-function generateAtmosphere(planetDef: typeof PLANET_TYPES[0], rng: Xoshiro256): Atmosphere {
+function generateAtmosphere(planetDef: typeof PLANET_TYPES[0], rng: Xoshiro128StarStar): Atmosphere {
   if (planetDef.type === 'gas_giant') {
     const type = selectGasGiantAtmosphereType(rng);
     const pressure = getAtmospherePressure(type, rng);
@@ -244,7 +244,7 @@ function generateAtmosphere(planetDef: typeof PLANET_TYPES[0], rng: Xoshiro256):
 }
 
 /** G-08 fix: Газовый гигант — распределение типов атмосферы */
-function selectGasGiantAtmosphereType(rng: Xoshiro256): AtmosphereType {
+function selectGasGiantAtmosphereType(rng: Xoshiro128StarStar): AtmosphereType {
   const roll = rng.nextFloat() * 100;
   if (roll < 36) return 'dense';
   if (roll < 41) return 'standard';
@@ -255,7 +255,7 @@ function selectGasGiantAtmosphereType(rng: Xoshiro256): AtmosphereType {
 }
 
 /** G-07 fix: Условные вероятности типов атмосферы по спецификации §2.4 */
-function selectAtmosphereType(planetType: string, rng: Xoshiro256): AtmosphereType {
+function selectAtmosphereType(planetType: string, rng: Xoshiro128StarStar): AtmosphereType {
   const roll = rng.nextFloat() * 100;
   switch (planetType) {
     case 'rocky':
@@ -308,7 +308,7 @@ function selectAtmosphereType(planetType: string, rng: Xoshiro256): AtmosphereTy
   }
 }
 
-function getAtmospherePressure(type: AtmosphereType, rng: Xoshiro256): number {
+function getAtmospherePressure(type: AtmosphereType, rng: Xoshiro128StarStar): number {
   // Audit Task 36 (C2): диапазоны — строго docs/30-planets.md §2.4
   // (min + nextFloat()×(max−min); прежние thin/inert давали max+0.001/+0.01).
   switch (type) {
@@ -344,7 +344,7 @@ function generateLife(
   planetDef: typeof PLANET_TYPES[0],
   atmosphere: Atmosphere,
   temperature: number,
-  rng: Xoshiro256,
+  rng: Xoshiro128StarStar,
 ): PlanetLife {
   const noLife: PlanetLife = { level: 'none', biodiversity: 0, compatibleWithColonists: false, hazardLevel: 0 };
 
@@ -439,7 +439,7 @@ export function generatePlanet(
   systemName: string,
   primaryStar: Star,
   binaryType: BinaryType,
-  rng: Xoshiro256,
+  rng: Xoshiro128StarStar,
 ): Planet {
   const planetId = genId('planet');
 
@@ -686,7 +686,7 @@ function generateMoons(
   systemId: string,
   planetId: string,
   planetName: string,
-  rng: Xoshiro256,
+  rng: Xoshiro128StarStar,
 ): Moon[] {
   const count = rng.nextInt(GAS_GIANT_MOON_COUNT.min, GAS_GIANT_MOON_COUNT.max);
 

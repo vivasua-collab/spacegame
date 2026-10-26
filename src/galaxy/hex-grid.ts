@@ -8,7 +8,7 @@
  */
 
 import type { AxialCoord, HexCell, HexTerrain, PlanetSize } from '@/core/types';
-import { Xoshiro256 } from '@/core/prng';
+import { Xoshiro128StarStar } from '@/core/prng';
 import { SIZE_HEX_COUNT, ALL_TERRAINS } from '@/data/planet-types';
 
 /**
@@ -25,7 +25,7 @@ import { SIZE_HEX_COUNT, ALL_TERRAINS } from '@/data/planet-types';
 export function generateHexGrid(
   size: PlanetSize,
   terrainWeights: Record<HexTerrain, number>,
-  rng: Xoshiro256,
+  rng: Xoshiro128StarStar,
   gridMap: Partial<Record<PlanetSize, number>> = SIZE_HEX_COUNT,
 ): HexCell[] {
   const hexCount = gridMap[size] ?? SIZE_HEX_COUNT[size];

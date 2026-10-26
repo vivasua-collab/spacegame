@@ -16,7 +16,7 @@
  * 5. Проверка связности
  */
 
-import { Xoshiro256 } from '@/core/prng';
+import { Xoshiro128StarStar } from '@/core/prng';
 import type { Galaxy, StarSystem, EntityId } from '@/core/types';
 import { resetGenContext, genId } from './gen-context';
 import { generateSpiralPositions, type PositionsConfig } from './generate-positions';
@@ -85,7 +85,7 @@ export const DEFAULT_CONFIG: GalaxyGenConfig = {
 /** Генерация галактики — главная точка входа */
 export function generateGalaxy(config: Partial<GalaxyGenConfig> = {}): Galaxy {
   const cfg = { ...DEFAULT_CONFIG, ...config };
-  const mainRng = new Xoshiro256(cfg.seed);
+  const mainRng = new Xoshiro128StarStar(cfg.seed);
 
   // Сброс контекста для воспроизводимости
   resetGenContext();

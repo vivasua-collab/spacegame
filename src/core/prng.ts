@@ -1,9 +1,32 @@
 /**
- * xoshiro256** — высококачественный PRNG для процедурной генерации.
- * Детерминированный: один и тот же seed даёт одинаковый результат.
+ * xoshiro128** 1.1 — канонический 32-битный PRNG (Blackman & Vigna, ACM TOMS
+ * 2018; http://prng.di.unimi.it/xoshiro128starstar.c). 4×uint32 состояние.
+ *
+ * R-35 (корректирующий проход по аудиту этапа 2, замечание P1): ДО этого
+ * ревизия класс назывался `Xoshiro256`, но хранил 4×uint32 и выполнял
+ * 32-битные операции с КОНСТАНТАМИ xoshiro256** (t = s1 << 17,
+ * rotl(s3, 45)) — неканоничный «мешап», не совпадающий ни с одним
+ * эталонным алгоритмом. Исправлено на точный xoshiro128** 1.1:
+ *   t = s[1] << 9;  s[3] = rotl(s[3], 11)   (официальные константы).
+ * Остальное (скрамблер rotl(s1·5,7)·9, порядок XOR-обновления) уже
+ * совпадало с эталоном.
+ *
+ * СОВМЕСТИМОСТЬ СЕЙВОВ (важно, проверено тестом prng-reference):
+ * - Схема сидирования НЕ менялась: splitMix64 (BigInt, точный uint64) →
+ *   state[i] = младшие 32 бита i-го выхода. Слова состояния после
+ *   конструирования бит-в-бит те же, что до R-35.
+ * - Макет снимка `snapshotState()/fromState()` (4×uint32) НЕ менялся —
+ *   поле `ds` сейва v3 структурно совместимо.
+ * - ПОСЛЕДОВАТЕЛЬНОСТЬ ВЫХОДОВ изменилась (другой переход состояния).
+ *   Сейвы, созданные ДО R-35 с нематериализованными залежами (`ds`),
+ *   после обновления материализуют ДРУГИЕ залежи (детерминированные,
+ *   но иные). На момент R-35 в БД 0 сейвов (проверено), влияние нулевое;
+ *   все новые сейвы самосогласованы (тест Save → Load → materialize).
+ *
+ * Эталонные векторы (gcc, официальный C-код) — tests/prng-reference.test.ts.
  */
 
-export class Xoshiro256 {
+export class Xoshiro128StarStar {
   private state: [number, number, number, number];
 
   constructor(seed: number) {
@@ -19,13 +42,13 @@ export class Xoshiro256 {
    *   - seed 0..1024 → ИДЕНТИЧНОЕ состояние (блоки коллизий до 4096 seed);
    *   - seed ∈ [0, 1e6) → всего 64 уникальных состояния;
    *   - seed 7 и seed 42 порождали побайтно одну и ту же галактику.
-   * Множители 0xbf58476d1ce4e5b9 / 0x94d049bb133111eb (> 2^53) также
-   * искажались через ToInt32(float64) (→ 0x1ce4e800 / 0x13311000).
    *
    * BigInt-вариант математически точен; вызывается только при конструировании
-   * генератора (1 раз на generateGalaxy — см. grep `new Xoshiro256`),
-   * стоимость пренебрежима. Слова состояния — младшие 32 бита четырёх
-   * последовательных выходов splitMix64-аккумулятора (форма прежнего порта).
+   * генератора (1 раз на generateGalaxy). Слова состояния — младшие 32 бита
+   * четырёх последовательных выходов splitMix64-аккумулятора: рекомендация
+   * Vigna для xoshiro128** («If you have a 64-bit seed, use splitmix64 to
+   * seed each of the four 32-bit words» — заголовок xoshiro128starstar.c).
+   * Проверено эталоном: тест prng-reference «SEED …» / «SM64 …».
    */
   private splitMix64(seed: number): [number, number, number, number] {
     // BigInt через конструктор из строки: литералы `0x…n` недоступны при
@@ -56,19 +79,21 @@ export class Xoshiro256 {
   nextU32(): number {
     const [s0, s1, s2, s3] = this.state;
 
-    // Output scrambling (Vigna xoshiro256** output function):
-    //   result = rotl(s1 * 5, 7) * 9
+    // Output scrambling (официальный xoshiro128** 1.1):
+    //   result = rotl(s[1] * 5, 7) * 9
     const result = Math.imul(this.rotl(Math.imul(s1, 5), 7), 9);
 
-    // State update (Vigna reference, Blackman & Vigna 2018, ACM TOMS):
-    //   const uint64_t t = s[1] << 17;
+    // State update (официальный xoshiro128** 1.1, verbatim):
+    //   const uint32_t t = s[1] << 9;
     //   s[2] ^= s[0];
     //   s[3] ^= s[1];
     //   s[1] ^= s[2];
     //   s[0] ^= s[3];
     //   s[2] ^= t;
-    //   s[3] = rotl(s[3], 45);
-    const t = s1 << 17;
+    //   s[3] = rotl(s[3], 11);
+    // R-35: константы 9/11 — официальные для xoshiro128**; прежний код
+    // использовал 17/45 (константы 64-битного xoshiro256**) — неэталон.
+    const t = s1 << 9;
 
     // In-place order matters — each step uses the result of the previous.
     const ns2 = (s2 ^ s0) >>> 0;          // s[2] ^= s[0]
@@ -76,13 +101,13 @@ export class Xoshiro256 {
     const ns1 = (s1 ^ ns2) >>> 0;         // s[1] ^= s[2]   (uses new s2)
     const ns0 = (s0 ^ ns3) >>> 0;         // s[0] ^= s[3]   (uses new s3)
     const finalS2 = (ns2 ^ t) >>> 0;     // s[2] ^= t      (uses new s2 ^ t)
-    const finalS3 = this.rotl(ns3, 45);   // s[3] = rotl(s[3], 45)
+    const finalS3 = this.rotl(ns3, 11);   // s[3] = rotl(s[3], 11)
 
     this.state = [ns0, ns1, finalS2, finalS3];
     return result >>> 0;  // unsigned
   }
 
-  /** 32-bit left-rotation: (x << k) | (x >>> (32 - k)) */
+  /** 32-bit left-rotation: (x << k) | (x >>> (32 - k)); k < 32 (контракт). */
   private rotl(x: number, k: number): number {
     return ((x << k) | (x >>> (32 - k))) >>> 0;
   }
@@ -116,15 +141,16 @@ export class Xoshiro256 {
     return this.nextU32();
   }
 
-  child(): Xoshiro256 {
-    return new Xoshiro256(this.childSeed());
+  child(): Xoshiro128StarStar {
+    return new Xoshiro128StarStar(this.childSeed());
   }
 
   /**
    * R-29: снимок внутреннего состояния (4×uint32) — копия, не ссылка.
    * Используется для ленивой материализации залежей: состояние снимается
    * ДО прогона генерации, сохраняется в сейве (depositRngState), и позже
-   * `Xoshiro256.fromState()` воспроизводит тот же поток бит-в-бит.
+   * `Xoshiro128StarStar.fromState()` воспроизводит тот же поток бит-в-бит.
+   * Макет НЕ менялся при миграции R-35 (см. шапку файла).
    */
   snapshotState(): [number, number, number, number] {
     return [this.state[0], this.state[1], this.state[2], this.state[3]];
@@ -132,11 +158,11 @@ export class Xoshiro256 {
 
   /**
    * R-29: восстановление генератора из снимка состояния (мимо SplitMix64).
-   * Единственное требование xoshiro256** — состояние не все нули; вход
+   * Единственное требование xoshiro128** — состояние не все нули; вход
    * валидируется (null/undefined/не-числа → 0), все-нулёвое состояние
    * заменяется на безопасное (как в derive()).
    */
-  static fromState(state: readonly unknown[] | null | undefined): Xoshiro256 {
+  static fromState(state: readonly unknown[] | null | undefined): Xoshiro128StarStar {
     const words = [0, 1, 2, 3].map((i) => {
       const w = state?.[i];
       return typeof w === 'number' && Number.isFinite(w) ? w | 0 : 0;
@@ -144,7 +170,7 @@ export class Xoshiro256 {
     if (words[0] === 0 && words[1] === 0 && words[2] === 0 && words[3] === 0) {
       words[0] = 1;
     }
-    const rng = Object.create(Xoshiro256.prototype) as Xoshiro256;
+    const rng = Object.create(Xoshiro128StarStar.prototype) as Xoshiro128StarStar;
     (rng as unknown as { state: [number, number, number, number] }).state = words;
     return rng;
   }
@@ -157,8 +183,8 @@ export class Xoshiro256 {
    *
    * G-24 fix v2: Вычисляем 4 НЕЗАВИСИМЫХ хеша имени (разные offset basis
    * и prime), XOR с 4 словами состояния, и используем РЕЗУЛЬТАТ напрямую
-   * как начальное состояние xoshiro256** (без коллапса через SplitMix64).
-   * xoshiro256** требует только, чтобы состояние не было всеми нулями.
+   * как начальное состояние xoshiro128** (без коллапса через SplitMix64).
+   * xoshiro128** требует только, чтобы состояние не было всеми нулями.
    *
    * 4 хеша:
    *   h0: FNV-1a (offset 0x811c9dc5, prime 0x01000193)
@@ -166,7 +192,7 @@ export class Xoshiro256 {
    *   h2: FNV-1a variant (offset 0xbb67ae85, prime 0xcc9e2d51 — Murmur3 c1)
    *   h3: FNV-1a variant (offset 0x3c6ef372, prime 0x1b873593 — Murmur3 c2)
    */
-  derive(name: string): Xoshiro256 {
+  derive(name: string): Xoshiro128StarStar {
     // 4 независимых хеша имени — разные offset/prime для diversity
     let h0 = 0x811c9dc5 >>> 0; // FNV-1a offset
     let h1 = 0x6a09e667 >>> 0; // SHA-256 init (arbitrary different offset)
@@ -197,7 +223,7 @@ export class Xoshiro256 {
     const s2 = (this.state[2] ^ h2) >>> 0;
     const s3 = (this.state[3] ^ h3) >>> 0;
 
-    // Гарантируем, что состояние не все нули (единственное требование xoshiro256**)
+    // Гарантируем, что состояние не все нули (единственное требование xoshiro128**)
     const state: [number, number, number, number] = [
       s0 === 0 && s1 === 0 && s2 === 0 && s3 === 0 ? 1 : s0,
       s1,
@@ -205,7 +231,7 @@ export class Xoshiro256 {
       s3,
     ];
 
-    const child = Object.create(Xoshiro256.prototype) as Xoshiro256;
+    const child = Object.create(Xoshiro128StarStar.prototype) as Xoshiro128StarStar;
     (child as unknown as { state: [number, number, number, number] }).state = state;
     return child;
   }

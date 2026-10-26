@@ -590,7 +590,7 @@ src/
 │           └── [id]/route.ts     # GET/PUT/DELETE по ID
 ├── core/                         # Ядро симуляции (НЕ зависит от UI)
 │   ├── types.ts                  # Все типы и интерфейсы игры
-│   ├── prng.ts                   # PRNG (xoshiro256**), derive()
+│   ├── prng.ts                   # PRNG (xoshiro128** канонический, R-35), derive()
 │   ├── typed-event-bus.ts        # Типизированная шина событий (приоритеты, replay, defer)
 │   ├── events.ts                 # Каталог 60+ событий
 │   ├── module-types.ts           # IGameModule, ModuleManifest

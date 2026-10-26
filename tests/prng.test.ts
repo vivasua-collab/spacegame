@@ -12,7 +12,7 @@
  *   4. Uniformity: 10 000 nextFloat() values in [0, 1) — mean ∈ [0.48, 0.52]
  *      and std ≈ 1/√12 ≈ 0.2887 (theoretical uniform[0,1) std).
  *
- * API NOTE: The codebase's PRNG class is `Xoshiro256` (exported from
+ * API NOTE: The codebase's PRNG class is `Xoshiro128StarStar` (exported from
  * `@/core/prng`). It accepts only number seeds. The task description mentions
  * string seeds ('alpha', 'galaxy-v1') — to keep the test meaningful we hash
  * them via FNV-1a before constructing the PRNG. This mirrors what a real
@@ -24,9 +24,9 @@
  */
 
 import { test, expect, describe } from 'bun:test';
-import { Xoshiro256 } from '@/core/prng';
+import { Xoshiro128StarStar } from '@/core/prng';
 
-/** FNV-1a 32-bit hash — converts a string seed to a number for Xoshiro256. */
+/** FNV-1a 32-bit hash — converts a string seed to a number for Xoshiro128StarStar. */
 function hashSeed(seed: string | number): number {
   if (typeof seed === 'number') return seed >>> 0;
   let h = 0x811c9dc5 >>> 0;
@@ -38,8 +38,8 @@ function hashSeed(seed: string | number): number {
 }
 
 /** Build a fresh PRNG from a string|number seed (hash applied for strings). */
-function makeRng(seed: string | number): Xoshiro256 {
-  return new Xoshiro256(hashSeed(seed));
+function makeRng(seed: string | number): Xoshiro128StarStar {
+  return new Xoshiro128StarStar(hashSeed(seed));
 }
 
 /** Collect N nextU32() values from a fresh PRNG instance. */
@@ -52,7 +52,7 @@ function takeU32(seed: string | number, n: number): number[] {
 
 describe('Block 01 T1: PRNG determinism', () => {
   // The 5 seeds from the T1 spec — 3 numeric, 2 string. For string seeds
-  // we hash via FNV-1a (see `hashSeed` above) since `Xoshiro256` only
+  // we hash via FNV-1a (see `hashSeed` above) since `Xoshiro128StarStar` only
   // accepts numbers.
   const seeds: Array<string | number> = [42, 12345, 9999, 'alpha', 'galaxy-v1'];
 
@@ -123,7 +123,7 @@ describe('Block 01 T1: PRNG determinism', () => {
     // Mean tolerance. Theoretical mean for uniform[0,1) is 0.5; std of the
     // sample mean = 1/sqrt(12N) ≈ 0.0029, so a real production PRNG should
     // land within ±0.01 of 0.5. The spec asks for [0.48, 0.52] (tolerant
-    // floor) — xoshiro256** comfortably clears this.
+    // floor) — xoshiro128** comfortably clears this.
     expect(mean).toBeGreaterThanOrEqual(0.48);
     expect(mean).toBeLessThanOrEqual(0.52);
 

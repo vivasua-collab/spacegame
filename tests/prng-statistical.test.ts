@@ -2,7 +2,7 @@
 /**
  * Block 07 — Statistical PRNG tests (audit §2.3, gap-3).
  *
- * Verifies that the corrected xoshiro256** port produces statistically
+ * Verifies that the canonical xoshiro128** 1.1 port (R-35) produces statistically
  * uniform and independent output.
  *
  * Tests:
@@ -18,18 +18,18 @@
  *      for N=10 000 — non-flaky).
  *   3. Birthday test: 65 536 nextU32() values from a fixed seed — expect
  *      ~1 collision (theoretical mean for 32-bit birthday paradox with
- *      N=65 536 is ≈ 0.5; observed ≈ 1 consistently for xoshiro256**
- *      output sequence). Assert collisions ≤ 5 to catch badly broken
+ *      N=65 536 is ≈ 0.5; R-35 measured: 0 collisions for seed 42 on the
+ *      canonical xoshiro128**). Assert collisions ≤ 5 to catch badly broken
  *      PRNGs without flakiness.
  *
  * NOTE: these tests use fixed seeds and deterministic assertions — no
- * flakiness expected on a correctly-implemented xoshiro256** port.
+ * flakiness expected on a correctly-implemented xoshiro128** port.
  *
  * Run: bun test tests/prng-statistical.test.ts
  */
 
 import { test, expect, describe } from 'bun:test';
-import { Xoshiro256 } from '@/core/prng';
+import { Xoshiro128StarStar } from '@/core/prng';
 
 /**
  * Chi-square statistic for uniformity.
@@ -96,7 +96,7 @@ describe('Block 07: PRNG statistical quality', () => {
     // Arrange: collect 100 000 nextFloat() values from a fixed seed.
     const N = 100_000;
     const buckets = 100;
-    const rng = new Xoshiro256(42);
+    const rng = new Xoshiro128StarStar(42);
     const values: number[] = [];
     for (let i = 0; i < N; i++) {
       const v = rng.nextFloat();
@@ -111,7 +111,7 @@ describe('Block 07: PRNG statistical quality', () => {
 
     // Assert: chi² must be below the α=0.01 critical value for df=99
     // (≈ 134.68). We use α=0.01 per the spec's flakiness escape hatch
-    // (Block 07 checkpoint §3.4) — observed chi² for xoshiro256** is
+    // (Block 07 checkpoint §3.4) — observed chi² for xoshiro128** (R-35) is
     // typically in the 70–110 range, well below the threshold.
     //
     // For reference: α=0.05 critical for df=99 is ≈ 123.23.
@@ -130,7 +130,7 @@ describe('Block 07: PRNG statistical quality', () => {
 
   test('2. derive() independence — 4 streams, pairwise |r| < 0.05 (N=10 000 each)', () => {
     // Arrange: build a parent PRNG and derive 4 named sub-streams.
-    const parent = new Xoshiro256(42);
+    const parent = new Xoshiro128StarStar(42);
     const streamNames = ['arms', 'stars', 'planets', 'chemistry'] as const;
     const N = 10_000;
 
@@ -175,12 +175,12 @@ describe('Block 07: PRNG statistical quality', () => {
   test('3. Birthday test — 65 536 nextU32() values from seed=42, collisions ≤ 5', () => {
     // Theoretical expected collisions for 65 536 random 32-bit integers:
     //   E[pairs] = C(N, 2) / 2^32 = N(N-1) / (2 * 2^32) ≈ 0.500
-    // Empirically observed for xoshiro256**: 0 or 1 collisions per seed
+    // Empirically observed for xoshiro128** (R-35): 0–1 collisions per seed
     // (the spec calls this "~1 collision"). Allow up to 5 to absorb
     // random variation without flakiness; a badly-broken PRNG would
     // produce hundreds of collisions, easily tripping this threshold.
     const N = 65_536;
-    const rng = new Xoshiro256(42);
+    const rng = new Xoshiro128StarStar(42);
 
     const seen = new Set<number>();
     let collisions = 0;

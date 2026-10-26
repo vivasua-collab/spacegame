@@ -21,7 +21,7 @@
 
 import { test, expect, describe } from 'bun:test';
 import '@/core/immer-setup';
-import { Xoshiro256 } from '@/core/prng';
+import { Xoshiro128StarStar } from '@/core/prng';
 import { generateGalaxy, DEFAULT_CONFIG } from '@/galaxy';
 import type { GalaxyGenConfig } from '@/galaxy';
 import { generateSpiralPositions } from '@/galaxy/generate-positions';
@@ -29,7 +29,7 @@ import { generateSpiralPositions } from '@/galaxy/generate-positions';
 /** Конфиг позиции для прямого вызова generateSpiralPositions (зеркало generator.ts). */
 function positionsFor(seed: number, over: Partial<GalaxyGenConfig> = {}) {
   const cfg = { ...DEFAULT_CONFIG, ...over };
-  const main = new Xoshiro256(seed);
+  const main = new Xoshiro128StarStar(seed);
   const pos = generateSpiralPositions(
     cfg,
     main.derive('arms'),
@@ -136,13 +136,13 @@ describe('Task 35 B1: локальность этапов (docs §1.2 «лока
   });
 });
 
-describe('Task 35 B1: PRNG (xoshiro256**)', () => {
+describe('Task 35 B1: PRNG (xoshiro128**, канонический с R-35)', () => {
   test('7. nextGaussian: u1 === 0 → конечный результат (guard Box-Muller log(0))', () => {
     // Состояние [s0, s1, s2, s3] с s1 = 0 → первый nextU32() = rotl(0*5,7)*9 = 0
     // → nextFloat() = 0 → u1 = 0. ДО фикса: log(0) = -Infinity → nextGaussian = ±Infinity.
-    const rng = Xoshiro256.fromState([1, 0, 0, 0]);
+    const rng = Xoshiro128StarStar.fromState([1, 0, 0, 0]);
     expect(rng.nextFloat()).toBe(0); // sanity: действительно попали в грань
-    const rng2 = Xoshiro256.fromState([1, 0, 0, 0]);
+    const rng2 = Xoshiro128StarStar.fromState([1, 0, 0, 0]);
     const g = rng2.nextGaussian();
     expect(Number.isFinite(g)).toBe(true);
   });
@@ -151,11 +151,11 @@ describe('Task 35 B1: PRNG (xoshiro256**)', () => {
     // ДО фикса splitMix64: seed 0..1024 — одно состояние; [0,1e6) → 64 состояния.
     const pairs: Array<[number, number]> = [[1, 2], [41, 42], [999, 1000], [7, 42], [12345, 12346]];
     for (const [a, b] of pairs) {
-      expect(new Xoshiro256(a).nextU32()).not.toBe(new Xoshiro256(b).nextU32());
+      expect(new Xoshiro128StarStar(a).nextU32()).not.toBe(new Xoshiro128StarStar(b).nextU32());
     }
     // Плотная проверка: 2001 подряд идущих seed — все состояния уникальны.
     const seen = new Set<number>();
-    for (let s = 0; s <= 2000; s++) seen.add(new Xoshiro256(s).nextU32());
+    for (let s = 0; s <= 2000; s++) seen.add(new Xoshiro128StarStar(s).nextU32());
     expect(seen.size).toBe(2001);
   });
 

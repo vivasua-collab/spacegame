@@ -23,7 +23,7 @@
  */
 
 import { test, expect, describe } from 'bun:test';
-import { Xoshiro256 } from '@/core/prng';
+import { Xoshiro128StarStar } from '@/core/prng';
 import { generateSpiralPositions } from '@/galaxy/generate-positions';
 import { generateJumpPoints, ensureConnectivity } from '@/galaxy/generate-jump-points';
 import { DEFAULT_CONFIG } from '@/galaxy';
@@ -38,7 +38,7 @@ interface JPCfg {
 /** Скелеты систем на реальных позициях generateSpiralPositions (без планет — изоляция модуля). */
 function makeSystems(seed: number, systemCount: number, over: Partial<GalaxyGenConfig> = {}): StarSystem[] {
   const cfg = { ...DEFAULT_CONFIG, ...over, systemCount };
-  const main = new Xoshiro256(seed);
+  const main = new Xoshiro128StarStar(seed);
   const pos = generateSpiralPositions(
     cfg,
     main.derive('arms'),
@@ -61,7 +61,7 @@ function makeSystems(seed: number, systemCount: number, over: Partial<GalaxyGenC
 }
 
 function runJP(systems: StarSystem[], seed: number, cfg: JPCfg): void {
-  const main = new Xoshiro256(seed);
+  const main = new Xoshiro128StarStar(seed);
   generateJumpPoints(systems, main.derive('jump_points'), cfg);
   ensureConnectivity(systems, main.derive('jump_points'), cfg);
 }
@@ -249,7 +249,7 @@ describe('Task 35 B3: generateJumpPoints — контракт в изоляци�
   test('6. Линия из 4 систем: только рёбра ≤ maxDist, взаимность, без дублей и dangling', () => {
     const systems = lineSystems([0, 1000, 2000, 9000]);
     const cfg: JPCfg = { maxJumpDistance: 5000, maxJumpPointsPerSystem: 6 };
-    generateJumpPoints(systems, new Xoshiro256(1), cfg);
+    generateJumpPoints(systems, new Xoshiro128StarStar(1), cfg);
     const byId = new Map(systems.map(s => [s.id, s]));
     for (const s of systems) {
       expect(s.jumpPoints.length).toBeLessThanOrEqual(6);
@@ -267,18 +267,18 @@ describe('Task 35 B3: generateJumpPoints — контракт в изоляци�
   test('7. < 2 систем — no-op обоих функций', () => {
     const systems = lineSystems([0]);
     const cfg: JPCfg = { maxJumpDistance: 5000, maxJumpPointsPerSystem: 6 };
-    generateJumpPoints(systems, new Xoshiro256(1), cfg);
-    ensureConnectivity(systems, new Xoshiro256(1), cfg);
+    generateJumpPoints(systems, new Xoshiro128StarStar(1), cfg);
+    ensureConnectivity(systems, new Xoshiro128StarStar(1), cfg);
     expect(systems[0]!.jumpPoints).toHaveLength(0);
   });
 
   test('8. Уже связный граф: ensureConnectivity не добавляет ни одного JP', () => {
     const systems = lineSystems([0, 1000, 2000]);
     const cfg: JPCfg = { maxJumpDistance: 5000, maxJumpPointsPerSystem: 6 };
-    generateJumpPoints(systems, new Xoshiro256(1), cfg);
+    generateJumpPoints(systems, new Xoshiro128StarStar(1), cfg);
     const before = systems.reduce((a, s) => a + s.jumpPoints.length, 0);
     expect(before).toBeGreaterThanOrEqual(4); // цепочка связна
-    ensureConnectivity(systems, new Xoshiro256(1), cfg);
+    ensureConnectivity(systems, new Xoshiro128StarStar(1), cfg);
     const after = systems.reduce((a, s) => a + s.jumpPoints.length, 0);
     expect(after).toBe(before);
   });
@@ -288,9 +288,9 @@ describe('Task 35 B3: generateJumpPoints — контракт в изоляци�
     // межгрупповых JP нет (все пары > 5000 кроме (2000, 8000) — ровно 6000 > 5000).
     const systems = lineSystems([0, 1000, 2000, 8000, 9000, 10000]);
     const cfg: JPCfg = { maxJumpDistance: 5000, maxJumpPointsPerSystem: 6 };
-    generateJumpPoints(systems, new Xoshiro256(3), cfg);
+    generateJumpPoints(systems, new Xoshiro128StarStar(3), cfg);
     const before = systems.reduce((a, s) => a + s.jumpPoints.length, 0);
-    ensureConnectivity(systems, new Xoshiro256(3), cfg);
+    ensureConnectivity(systems, new Xoshiro128StarStar(3), cfg);
     const after = systems.reduce((a, s) => a + s.jumpPoints.length, 0);
     // Ровно один мост (пара JP) между компонентами.
     expect(after - before).toBe(2);
