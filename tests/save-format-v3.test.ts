@@ -31,6 +31,7 @@ import { serializeGameState, deserializeGameState } from '@/stores/game-store';
 import { isSaveFormatV3, SAVE_FORMAT_V3_VERSION } from '@/lib/save-format-v3';
 import { materializePlanetDeposits, DEPOSIT_RNG_VERSION } from '@/galaxy/generate-resources';
 import { assignResourceDeposits } from '@/galaxy/generate-resources';
+import { findContainedElements, getCurrentLookups } from '@/data/baked-lookups';
 import { Xoshiro128StarStar } from '@/core/prng';
 import { colonizePlanet } from '@/economy/engine';
 import { createDefaultResearchState } from '@/research/engine';
@@ -442,12 +443,13 @@ describe('R-29: ленивые залежи + формат v3', () => {
     expect(dvCount).toBeGreaterThan(0);
   });
 
-  test('15. R-36: сейв до R-36 (без dv) при загрузке МАТЕРИАЛИЗУЕТСЯ (явная миграция)', () => {
-    // Требование аудитора R-35: сейвы с отложенными залежами вне
-    // пересозданного окружения защищаются версией RNG или явной миграцией.
-    // Имитируем старый сейв: убираем dv из компактной формы (v3-кодек
-    // трактует отсутствие dv как версию 1 ≠ текущей) → deserializeGameState
-    // обязан материализовать такие тела немедленно.
+  test('15. R-37: сейв до R-37 (без dv) — ленивость при загрузке, версионная материализация при колонизации', () => {
+    // Требование аудитора R-35/R-37: сейвы с отложенными залежами вне
+    // пересозданного окружения защищаются версией RNG. R-37 (Б1/Б2): защита —
+    // ВЕРСИОННО-СОВМЕСТИМАЯ МАТЕРИАЛИЗАЦИЯ: загрузка тела НЕ материализует
+    // (краш холодного старта / раздувание сейва исключены), при колонизации
+    // replay идёт текущим кодом, а свод-пул ПЕРЕСЧИТЫВАЕТСЯ из свежей физики
+    // (дрейф поглощается — пул следует за физикой).
     const state = buildFreshState(15);
     const truthBody = firstColonizable(state);
     const truthRef = buildFreshState(15);
@@ -459,7 +461,7 @@ describe('R-29: ленивые залежи + формат v3', () => {
     const raw = JSON.parse(json) as {
       galaxy: { systems: Array<{ planets: Array<Record<string, unknown>> }> };
     };
-    // сейв «до R-36»: поле dv отсутствует У ВСЕХ тел (и у лун тоже)
+    // сейв «до R-37»: поле dv отсутствует У ВСЕХ тел (и у лун тоже)
     for (const sys of raw.galaxy.systems) {
       for (const p of sys.planets) {
         delete p.dv;
@@ -469,35 +471,61 @@ describe('R-29: ленивые залежи + формат v3', () => {
     json = JSON.stringify(raw);
 
     const restored = deserializeGameState(json);
+
+    // Б1/Б2: НИ ОДНО тело не материализовано при загрузке (ленивость и
+    // размер сейва сохранены; пул НЕ тронут)
     const bodies = [...(function* () {
       for (const sys of restored.galaxy.systems) {
         for (const p of sys.planets) { yield p; for (const m of p.moons) yield m; }
       }
     })()];
-    // все тела с гексами материализованы, снимок обнулён
-    let migrated = 0;
-    for (const b of bodies) {
-      if (b.hexes.length > 0 && b.depositsMaterialized) migrated++;
-    }
-    expect(migrated).toBeGreaterThan(0);
     for (const b of bodies) {
       if (b.hexes.length > 0) {
-        expect(b.depositsMaterialized, b.id).toBe(true);
-        expect(b.depositRngState, `${b.id}: ds обнулён`).toBeNull();
+        expect(b.depositsMaterialized, `${b.id} остаётся ленивым`).toBe(false);
+        expect(b.depositRngState, `${b.id}: снимок на месте`).not.toBeNull();
       }
     }
-    // бит-в-бит: миграция дала эталонные залежи (тот же seed/тот же код)
+
+    // Б2: повторный Save/Load НЕтронутого сейва — побайтно идентичен
+    // (перепись ожидающих не мутирует состояние, размер не растёт)
+    const json2 = serializeGameState(restored);
+    expect(json2).toBe(json);
+
+    // КОЛОНИЗАЦИЯ = версионная материализация: залежи бит-в-бит эталону
+    // (тот же seed, тот же код), пул пересчитан из физики
     const rPlanet = restored.galaxy.systems.flatMap(s => s.planets).find(p => p.id === truthBody.id)!;
+    expect(colonizePlanet(rPlanet)).toBe(true);
     expect(rPlanet.hexes.length).toBe(truth.length);
     for (let i = 0; i < truth.length; i++) {
       expect(rPlanet.hexes[i]!.deposits).toEqual(truth[i]!);
     }
+
+    // Б2/Б3: пересчитанный пул согласован с физикой (независимая сумма,
+    // без пропусков — включая выбранный уникальный ресурс)
+    const expected = new Map<string, number>();
+    for (const hex of rPlanet.hexes) {
+      for (const d of hex.deposits) {
+        const contained = findContainedElements(getCurrentLookups(), d.elementId) ?? [];
+        const totalYield = contained.reduce((s, ce) => s + ce.yield, 0);
+        for (const ce of contained) {
+          expected.set(ce.elementId, (expected.get(ce.elementId) ?? 0) + d.quantity * (ce.yield / totalYield));
+        }
+      }
+    }
+    expect(expected.size).toBeGreaterThan(0);
+    for (const [elId, expQty] of expected) {
+      const entry = rPlanet.resourceDeposits.find(d => d.elementId === elId)!;
+      expect(entry, `${elId}: запись пула есть`).toBeDefined();
+      expect(entry.totalQuantity, `${elId}: пул = Σ(физика × доля)`).toBeGreaterThanOrEqual(expQty - 1);
+      expect(entry.totalQuantity, `${elId}: пул = Σ(физика × доля)`).toBeLessThanOrEqual(expQty + 1);
+    }
+
     // повторная загрузка мигрированного сейва — стабильна (без дублей/сдвигов).
     // ВНИМАНИЕ: кодек округляет availability до 3 знаков (round3), поэтому
     // точное toEqual на float-поля недопустим — сверяем форму (кол-во залежей),
     // ID, quantity (int) и depth (int); availability — с допуском 1e-3.
-    const json2 = serializeGameState(restored);
-    const restored2 = deserializeGameState(json2);
+    const json3 = serializeGameState(restored);
+    const restored2 = deserializeGameState(json3);
     const r2 = restored2.galaxy.systems.flatMap(s => s.planets).find(p => p.id === truthBody.id)!;
     expect(r2.hexes.length).toBe(rPlanet.hexes.length);
     for (let i = 0; i < rPlanet.hexes.length; i++) {
@@ -511,6 +539,8 @@ describe('R-29: ленивые залежи + формат v3', () => {
         expect(Math.abs(b[d]!.availability - a[d]!.availability)).toBeLessThanOrEqual(1e-3);
       }
     }
+    // и пул пережил повторный рантрип без изменений
+    expect(r2.resourceDeposits).toEqual(rPlanet.resourceDeposits);
   });
 
   test('16. R-36: сейв с ТЕКУЩЕЙ dv остаётся ленивым (миграция не срабатывает)', () => {
@@ -528,5 +558,36 @@ describe('R-29: ленивые залежи + формат v3', () => {
         expect(b.depositRngVersion, `${b.id}: версия preserved`).toBe(DEPOSIT_RNG_VERSION);
       }
     }
+  });
+
+  test('17. R-37 (Б2): размер — загрузка старого сейва НЕ раздувает состояние; колония добавляет только своё тело', () => {
+    // Аудитор: «Не материализовать всю галактику при загрузке без оценки
+    // влияния на производительность и размер сейва». R-37: загрузка не
+    // материализует вовсе; проверяем размер фактом:
+    //   (а) повторная сериализация загруженного старого сейва — побайтно
+    //       исходная (0 байт накладных расходов);
+    //   (б) после колонизации ОДНОГО тела сейв растёт на его залежи
+    //       (сотни байт — КБ, не мегабайты всей галактики).
+    const state = buildFreshState(200);
+    let json = serializeGameState(state);
+    const raw = JSON.parse(json) as { galaxy: { systems: Array<{ planets: Array<Record<string, unknown>> }> } };
+    for (const sys of raw.galaxy.systems) {
+      for (const p of sys.planets) {
+        delete p.dv;
+        for (const m of (p.moons as Array<Record<string, unknown>> | undefined) ?? []) delete m.dv;
+      }
+    }
+    json = JSON.stringify(raw);
+
+    const restored = deserializeGameState(json);
+    expect(serializeGameState(restored)).toBe(json); // (а) 0 накладных
+
+    const planet = firstColonizable(restored);
+    colonizePlanet(planet);
+    const jsonAfter = serializeGameState(restored);
+    const deltaKb = (jsonAfter.length - json.length) / 1024;
+    // одно тело: залежи гексов + пул; вся галактика (~600 тел) была бы МБ
+    expect(deltaKb, 'рост только на колонизованное тело').toBeGreaterThan(0);
+    expect(deltaKb, 'рост ограничен (< 64 КБ на тело)').toBeLessThan(64);
   });
 });

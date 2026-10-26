@@ -41,6 +41,16 @@ export function setCurrentLookups(model: BakedGalaxyModel): void {
   _currentLookups = buildLookups(model);
 }
 
+/**
+ * R-37: сбросить текущую модель (ТОЛЬКО для тестов — симуляция холодного
+ * старта процесса, когда ни новой игры, ни загрузки ещё не было). Продакшн-
+ * код не вызывает: нормальный поток всегда устанавливает модель в
+ * newGame/loadGame до первой работы с залежами.
+ */
+export function resetCurrentLookups(): void {
+  _currentLookups = null;
+}
+
 /** Получить текущие lookup-структуры */
 export function getCurrentLookups(): BakedLookups {
   if (!_currentLookups) throw new Error('BakedLookups не инициализированы — вызовите setCurrentLookups()');

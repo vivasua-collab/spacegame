@@ -30,6 +30,7 @@ import {
   materializePlanetDeposits,
   shuffledWithRng,
   WATER_DEPOSIT_ID,
+  DEPOSIT_RNG_VERSION,
 } from '@/galaxy/generate-resources';
 import { Xoshiro128StarStar } from '@/core/prng';
 import { setCurrentLookups, getCurrentLookups, findContainedElements } from '@/data/baked-lookups';
@@ -163,13 +164,13 @@ describe('D2: assignResourceDeposits — детерминизм и валидн�
     const allOcean = mkHexes(19, 'ocean');
     assignResourceDeposits(allOcean, new Xoshiro128StarStar(5).derive('d'), 'oceanic');
     expect(allOcean.every(h => h.deposits.length === 0)).toBe(true);
-    // свод при этом полон (гарантия всех элементов); hexCount=0 у всех, кроме
-    // 1-2 выбранных ультраредких (им явка проставляется как 1)
-    const pool = aggregateResourceDeposits(allOcean, 'oceanic', new Xoshiro128StarStar(5).derive('u'));
+    // R-37 (Б3): свод — ЧИСТАЯ геологическая оценка: у ВСЕХ записей hexCount=0
+    // (нет поверхности — нет ни залежей, ни «повышенной концентрации» выбранного
+    // ultra). Пул НЕ сообщает о залежах, отсутствующих в гексах.
+    const pool = aggregateResourceDeposits(allOcean, 'oceanic', new Xoshiro128StarStar(5).derive('d'));
     expect(pool.length).toBe(ELEMENTS.length);
-    const withHexes = pool.filter(d => d.hexCount > 0);
-    expect(withHexes.length).toBeLessThanOrEqual(2);
-    expect(withHexes.every(d => d.tier === 'ultra_rare' && d.totalQuantity <= 6)).toBe(true);
+    expect(pool.filter(d => d.hexCount > 0), 'океанский мир: физических записей нет').toHaveLength(0);
+    expect(pool.every(d => d.hexCount === 0)).toBe(true);
   });
 });
 
@@ -201,9 +202,9 @@ describe('D2: свод-пул согласован с залежами (aggregat
       }
       for (const [elId, expQty] of expected) {
         const entry = pool.find(d => d.elementId === elId)!;
-        // Ultra-переопределение может понизить количество до 1-6 — пропускаем
-        // такие элементы (их инварианты — в D3-блоке)
-        if (ULTRA_RARE_ELEMENTS.includes(elId) && entry.totalQuantity <= 6) continue;
+        // R-37 (Б3): пропусков БОЛЬШЕ НЕТ — пул = агрегация ВСЕЙ физики,
+        // включая усиленную залежь выбранного ultra (прежде ultra-перезапись
+        // в пуле принуждала пропускать проверку суммирования).
         expect(entry.totalQuantity, `${type} ${elId}`).toBeGreaterThanOrEqual(expQty - 1);
         expect(entry.totalQuantity, `${type} ${elId}`).toBeLessThanOrEqual(expQty + 1);
       }
@@ -269,6 +270,8 @@ describe('D2: materializePlanetDeposits — ленивые залежи R-29', (
   test('11. Hardenening: сброшенный флаг при непустых залежах — replay без дублей', () => {
     // Смешанное состояние (флаг сброшен, залежи уже есть): replay должен
     // ВОССТАНОВИТЬ эталон, а не дописать кортежи поверх (защита от дюпа).
+    // R-37: ds НЕ обнуляется при материализации — восстановление по снимку
+    // работает и для старых сейвов (dm=1 + ds писались вместе до R-37).
     const { reference, snapshot } = buildReference(42, 'desert', 19);
     const body = { hexes: mkHexes(19), type: 'desert', depositsMaterialized: false, depositRngState: [...snapshot] };
     materializePlanetDeposits(body);
@@ -277,6 +280,46 @@ describe('D2: materializePlanetDeposits — ленивые залежи R-29', (
     body.depositsMaterialized = false;
     expect(materializePlanetDeposits(body)).toBe(true);
     expect(body.hexes).toEqual(reference);
+  });
+
+  test('11a. R-37: материализация ПЕРЕСЧИТЫВАЕТ свод-пул из физики (Б2/Б3)', () => {
+    // Тело с пулом: после replay пул = агрегация свежих залежей — та же
+    // функция, продолжение того же потока, что и при генерации ⇒ бит-в-бит.
+    // Эталон строится ТОЧНО как при генерации: snapshot → assign → агрегация
+    // продолжением того же rng.
+    const reference = mkHexes(37);
+    const genRng = new Xoshiro128StarStar(42).derive('deposits');
+    const snapshot = genRng.snapshotState();
+    assignResourceDeposits(reference, genRng, 'rocky');
+    const poolAtGen = aggregateResourceDeposits(reference, 'rocky', genRng);
+
+    const body = {
+      hexes: mkHexes(37), type: 'rocky', depositsMaterialized: false,
+      depositRngState: [...snapshot], resourceDeposits: [{ elementId: 'Xx', totalQuantity: 999, avgAvailability: 0.5, tier: 'rare', hexCount: 1, maxAvailability: 0.5 } as never],
+    };
+    expect(materializePlanetDeposits(body)).toBe(true);
+    expect(body.resourceDeposits).toEqual(poolAtGen); // бит-в-бит с генерацией
+    // и согласован с независимой суммой физики (проверка суммы — без пропусков)
+    const lookups = getCurrentLookups();
+    const expected = new Map<string, number>();
+    for (const hex of body.hexes) {
+      for (const d of hex.deposits) {
+        const contained = findContainedElements(lookups, d.elementId) ?? [];
+        const totalYield = contained.reduce((s, ce) => s + ce.yield, 0);
+        for (const ce of contained) {
+          expected.set(ce.elementId, (expected.get(ce.elementId) ?? 0) + d.quantity * (ce.yield / totalYield));
+        }
+      }
+    }
+    for (const [elId, expQty] of expected) {
+      const entry = body.resourceDeposits.find(d => d.elementId === elId)!;
+      expect(entry.totalQuantity, `${elId}`).toBeGreaterThanOrEqual(expQty - 1);
+      expect(entry.totalQuantity, `${elId}`).toBeLessThanOrEqual(expQty + 1);
+    }
+    // заглушка без пула не трогается (поле отсутствует)
+    const stub = { hexes: mkHexes(7), type: 'rocky', depositsMaterialized: false, depositRngState: [...snapshot] };
+    materializePlanetDeposits(stub);
+    expect('resourceDeposits' in stub).toBe(false);
   });
 
   test('12. Снимок в «сейве» (массив чисел) → fromState → тот же replay', () => {
@@ -358,47 +401,75 @@ describe('D2/G-05: перемешивание Fisher–Yates (регрессия
   });
 });
 
-describe('D3/G-06: ультраредкие элементы (1-2 уникальных для планеты)', () => {
+describe('D3/G-06: уникальный ресурс планеты (1-2 из пула ULTRA_RARE, R-37)', () => {
+  const lookups = getCurrentLookups();
+
   /**
-   * Подпись ВЫБРАННОГО ultra (R-36): «повышенная концентрация» qty 4-6,
-   * hexCount=1, maxAvail=0.05. Не-выбранные элементы пула приходят из
-   * следовой гекс-ветки (qty 1-2, maxAvail ≤ 0.13) — подписи не совпадают.
+   * R-37: выбор живёт в assignResourceDeposits — опознаём ВЫБРАННЫЕ элементы
+   * по физической подписи усиленной залежи: руда ultra-пула, qty ∈ [4,6],
+   * availability ∈ [0.03,0.10], depth ∈ {4,5}. Следы — qty ≤ 3; богатая ветка
+   * (15% гексов; fallback для льда может выбрать любой не-атмосферный элемент,
+   * вкл. ultra-пул — pre-existing) — availability ≥ 0.5, qty 200+, depth 1-3.
    */
-  function ultraSignatures(pool: ReturnType<typeof aggregateResourceDeposits>, type: string) {
+  function findChosenUltra(hexes: HexCell[], type: string) {
     const profile = new Set(PROFILE_ELEMENTS[type as keyof typeof PROFILE_ELEMENTS] ?? []);
-    return pool.filter(d =>
-      ULTRA_RARE_ELEMENTS.includes(d.elementId)
-      && !profile.has(d.elementId)
-      && d.hexCount === 1
-      && d.maxAvailability === 0.05
-      && d.totalQuantity >= 4
-      && d.totalQuantity <= 6);
+    const chosen = new Map<string, { hex: HexCell; deposit: { elementId: string; availability: number; quantity: number; depth: number } }>();
+    for (const hex of hexes) {
+      for (const d of hex.deposits) {
+        const m = /^([A-Za-z]+)-ore$/.exec(d.elementId);
+        const el = m?.[1];
+        if (!el || !ULTRA_RARE_ELEMENTS.includes(el)) continue;
+        const boosted = d.quantity >= 4 && d.quantity <= 6
+          && d.availability >= 0.03 - 1e-9 && d.availability <= 0.10 + 1e-9
+          && d.depth >= 4;
+        if (boosted) {
+          expect(chosen.has(el), `${el}: усиленная залежь одна`).toBe(false);
+          chosen.set(el, { hex, deposit: d });
+        }
+      }
+    }
+    return { chosen, profile };
   }
 
-  test('18. Статистика 100 seed × 1200 планет: у КАЖДОЙ 1-2 УНИКАЛЬНЫХ ultra, все tier=ultra_rare', () => {
+  test('18. Статистика 100 seed × 1200 планет: у КАЖДОЙ 1-2 уникальных, физика = своду', () => {
     let withTwo = 0;
     let total = 0;
     for (let seed = 1; seed <= 100; seed++) {
       for (const type of PLANET_TYPES) {
         for (const n of [19, 61] as const) {
           const hexes = mkHexes(n);
-          assignResourceDeposits(hexes, new Xoshiro128StarStar(seed * 100 + n).derive('d'), type);
-          const pool = aggregateResourceDeposits(hexes, type, new Xoshiro128StarStar(seed * 100 + n).derive('u'));
+          const rng = new Xoshiro128StarStar(seed * 100 + n).derive('d');
+          assignResourceDeposits(hexes, rng, type);
+          const pool = aggregateResourceDeposits(hexes, type, rng);
           total++;
-          const sig = ultraSignatures(pool, type);
-          // ГЛАВНАЯ регрессия G-06: раньше 6.9% планет не получали НИ ОДНОГО
-          expect(sig.length, `${type} seed${seed} n${n}: 0 ультраредких`).toBeGreaterThanOrEqual(1);
-          expect(sig.length).toBeLessThanOrEqual(2);
-          if (sig.length === 2) withTwo++;
-          // уникальность (без повторов выбора)
-          const ids = sig.map(s => s.elementId);
-          expect(new Set(ids).size).toBe(ids.length);
-          // R-36: выбор строго из спека-пула docs/31 §2; пулы НЕ пересекаются —
-          // выбранный ultra никогда не «редкий везде» (RARE_ELEMENTS)
-          for (const s of sig) {
-            expect(s.tier, `${s.elementId} tier`).toBe('ultra_rare');
-            expect(ULTRA_RARE_ELEMENTS).toContain(s.elementId);
-            expect(RARE_ELEMENTS.includes(s.elementId), `${s.elementId} не из RARE`).toBe(false);
+          const { chosen, profile } = findChosenUltra(hexes, type);
+          // ГЛАВНАЯ регрессия G-06: у каждой планеты 1-2 уникальных ресурса
+          expect(chosen.size, `${type} seed${seed} n${n}: 0 уникальных`).toBeGreaterThanOrEqual(1);
+          expect(chosen.size).toBeLessThanOrEqual(2);
+          if (chosen.size === 2) withTwo++;
+          for (const [elId, { hex, deposit }] of chosen) {
+            // подпись усиленной залежи (контракт R-37)
+            expect(deposit.quantity).toBeGreaterThanOrEqual(4);
+            expect(deposit.quantity).toBeLessThanOrEqual(6);
+            expect(deposit.depth).toBeGreaterThanOrEqual(4);
+            expect(deposit.depth).toBeLessThanOrEqual(5);
+            expect(deposit.availability).toBeGreaterThanOrEqual(0.03 - 1e-9);
+            expect(deposit.availability).toBeLessThanOrEqual(0.10 + 1e-9);
+            expect(hex.terrain).not.toBe('ocean');
+            // R-36: выбор строго из спека-пула docs/31 §2; пулы НЕ пересекаются
+            expect(ULTRA_RARE_ELEMENTS).toContain(elId);
+            expect(RARE_ELEMENTS.includes(elId), `${elId} не из RARE`).toBe(false);
+            expect(profile.has(elId), `${elId} не профильный`).toBe(false);
+            // РЕГРЕССИЯ Б3 (аудит R-37): отображаемая концентрация = физике
+            const contained = findContainedElements(lookups, deposit.elementId)!;
+            const totalYield = contained.reduce((s, ce) => s + ce.yield, 0);
+            const fraction = contained.find(ce => ce.elementId === elId)!.yield / totalYield;
+            const entry = pool.find(d => d.elementId === elId)!;
+            expect(entry).toBeDefined();
+            expect(entry.totalQuantity, `${elId}: пул = Σ(физика × доля)`).toBeGreaterThanOrEqual(deposit.quantity * fraction - 1);
+            expect(entry.totalQuantity, `${elId}: пул = Σ(физика × доля)`).toBeLessThanOrEqual(deposit.quantity * fraction + 1);
+            expect(entry.hexCount, `${elId}: один гекс`).toBe(1);
+            expect(entry.tier, `${elId} tier`).toBe('ultra_rare');
           }
         }
       }
@@ -410,19 +481,16 @@ describe('D3/G-06: ультраредкие элементы (1-2 уникаль
     expect(twoShare).toBeLessThan(0.7);
   });
 
-  test('19. R-36: пулы НЕ пересекаются, состав = спека docs/31 §2; выбранный ultra извлекаем буровой', () => {
-    // Прежний тест проверял выбор из пересечения RARE∩ULTRA — после
-    // синхронизации со спекой (вариант «а») пулы ДИЗЪЮКТНЫ, и контракт
-    // переносится в D4 (guard-тесты состава). Здесь — инвариант на живой
-    // генерации: каждый выбранный ultra — deep_ore/drilling_rig (добываем).
-    const lookups = getCurrentLookups();
+  test('19. R-36: выбранный ultra извлекаем буровой (deep_ore/drilling_rig, порог ≤ 10)', () => {
     for (let seed = 1; seed <= 20; seed++) {
       const hexes = mkHexes(37);
       assignResourceDeposits(hexes, new Xoshiro128StarStar(seed).derive('d'), 'rocky');
-      const pool = aggregateResourceDeposits(hexes, 'rocky', new Xoshiro128StarStar(seed).derive('u'));
-      for (const s of ultraSignatures(pool, 'rocky')) {
-        const ore = lookups.oreMap.get(`${s.elementId}-ore`);
-        expect(ore?.sourceBuildingId, `${s.elementId}-ore`).toBe('drilling_rig');
+      const { chosen } = findChosenUltra(hexes, 'rocky');
+      expect(chosen.size).toBeGreaterThanOrEqual(1);
+      for (const elId of chosen.keys()) {
+        const ore = lookups.oreMap.get(`${elId}-ore`);
+        expect(ore?.sourceBuildingId, `${elId}-ore`).toBe('drilling_rig');
+        expect(ore?.minSourceLevel ?? 0, `${elId}: порог достижим буровой L10`).toBeLessThanOrEqual(10);
       }
     }
   });
@@ -432,27 +500,40 @@ describe('D3/G-06: ультраредкие элементы (1-2 уникаль
     for (let seed = 1; seed <= 30; seed++) {
       const hexes = mkHexes(37);
       assignResourceDeposits(hexes, new Xoshiro128StarStar(seed).derive('d'), 'volcanic');
-      const pool = aggregateResourceDeposits(hexes, 'volcanic', new Xoshiro128StarStar(seed).derive('u'));
-      const sig = ultraSignatures(pool, 'volcanic');
-      expect(sig.every(s => s.elementId !== 'V')).toBe(true);
-      expect(sig.every(s => s.tier !== 'profile')).toBe(true);
+      const { chosen } = findChosenUltra(hexes, 'volcanic');
+      expect(chosen.has('V'), 'V профильный — не кандидат').toBe(false);
     }
   });
 
-  test('21. R-36 ultra-ветка: следовые глубинные залежи всех 10 руд пула на каждой планете', () => {
-    // Базовое присутствие ultra_rare минимально (docs/31 §1.1/§3.2),
-    // глубина 4-5 (§6.1 — юрисдикция drilling_rig), availability следовая.
-    // ВНИМАНИЕ: помимо ultra-ветки, руды пула могут попадать на гексы веткой
-    // «случайных богатых залежей» (15% гексов, availability 0.5-1.0, depth
-    // 1-3 — pre-existing) — они исключаются фильтром по availability.
-    const lookups = getCurrentLookups();
+  test('21. R-36/R-37: все 10 руд пула присутствуют; у выбранного — единственная усиленная залежь', () => {
+    // Базовое присутствие ultra_rare минимально (docs/31 §1.1/§3.2): следовые
+    // залежи всех 10 руд (depth 4-5, availability ≤ 0.13, qty ≤ 3). ВЫБРАННЫЙ
+    // (1-2 элемента) — исключение: его залежи (следы И богатые) стёрты,
+    // вместо них одна усиленная залежь (qty 4-6, depth 4-5, avail 0.03-0.10).
+    // ВНИМАНИЕ: богатая ветка (15% гексов) для льда падает в fallback «любой
+    // не-атмосферный элемент» и может дать богатую залежь ultra-руды
+    // НЕвыбранного элемента (pre-existing) — у не-выбранных проверяем
+    // следовые залежи, богатые не запрещены.
     for (const type of PLANET_TYPES) {
       const hexes = mkHexes(61);
       assignResourceDeposits(hexes, new Xoshiro128StarStar(77).derive('d'), type);
+      const { chosen } = findChosenUltra(hexes, type);
+      expect(chosen.size, `${type}: уникальные есть`).toBeGreaterThanOrEqual(1);
       for (const el of ULTRA_RARE_ELEMENTS) {
         const oreId = lookups.elementToOre[el] ?? `${el}-ore`;
         const allDeps = hexes.flatMap(h => h.deposits.filter(d => d.elementId === oreId));
-        const traceDeps = allDeps.filter(d => d.availability <= 0.15);
+        if (chosen.has(el)) {
+          // выбранный: ровно одна залежь — усиленная (следы/богатые стёрты)
+          expect(allDeps.length, `${type} ${oreId}: единственная усиленная`).toBe(1);
+          const d = allDeps[0]!;
+          expect(d.quantity).toBeGreaterThanOrEqual(4);
+          expect(d.quantity).toBeLessThanOrEqual(6);
+          expect(d.depth).toBeGreaterThanOrEqual(4);
+          expect(d.depth).toBeLessThanOrEqual(5);
+          expect(d.availability).toBeLessThanOrEqual(0.10 + 1e-9);
+          continue;
+        }
+        const traceDeps = allDeps.filter(d => d.availability <= 0.13 + 1e-9 && d.depth >= 4);
         expect(traceDeps.length, `${type} ${oreId}: следовые залежи есть`).toBeGreaterThan(0);
         for (const d of traceDeps) {
           expect(d.depth, `${type} ${oreId} depth`).toBeGreaterThanOrEqual(4);
@@ -502,21 +583,27 @@ describe('D4/R-36: состав пулов = спека docs/31 §2 (guard-те�
     }
   });
 
-  test('25. Кандидатский пул ultra никогда не пуст: у всех 10 свод < 10 (eligible)', () => {
-    // Инвариант «каждая планета получает 1-2 уникальных» (G-06) держится
-    // только если фильтр eligibleUltra (qty < 10) оставляет кандидатов.
+  test('25. R-37: кандидаты выбора уникального ресурса никогда не пусты (выбор в assign)', () => {
+    // R-37: выбор живёт в assignResourceDeposits (фаза в конце потока);
+    // кандидаты = ULTRA_RARE_ELEMENTS минус профильные (пересечение пусто —
+    // проверено ниже), поэтому «кандидатский пул не пуст» — инвариант данных,
+    // а не фильтра eligibleUltra (удалён вместе с перезаписью пула).
     for (const type of PLANET_TYPES) {
-      for (let seed = 1; seed <= 10; seed++) {
-        const hexes = mkHexes(37);
-        assignResourceDeposits(hexes, new Xoshiro128StarStar(seed).derive('d'), type);
-        const pool = aggregateResourceDeposits(hexes, type, new Xoshiro128StarStar(seed).derive('u'));
-        const poolById = new Map(pool.map(d => [d.elementId, d]));
-        const eligible = ULTRA_RARE_ELEMENTS.filter(e => {
-          const q = poolById.get(e)?.totalQuantity;
-          return q === undefined || q < 10;
-        });
-        expect(eligible.length, `${type} seed${seed}: кандидаты ultra`).toBeGreaterThan(0);
-      }
+      const profile = new Set(PROFILE_ELEMENTS[type as keyof typeof PROFILE_ELEMENTS] ?? []);
+      const candidates = ULTRA_RARE_ELEMENTS.filter(e => !profile.has(e));
+      expect(candidates.length, `${type}: кандидаты ultra`).toBeGreaterThan(0);
+      expect(candidates.length).toBe(ULTRA_RARE_ELEMENTS.length); // пересечение пусто
+    }
+    // и выбор реально происходит: у каждой планеты есть усиленная залежь
+    for (const type of PLANET_TYPES) {
+      const hexes = mkHexes(37);
+      assignResourceDeposits(hexes, new Xoshiro128StarStar(7).derive('d'), type);
+      const chosenCount = hexes.flatMap(h => h.deposits)
+        .filter(d => {
+          const m = /^([A-Za-z]+)-ore$/.exec(d.elementId);
+          return m !== null && ULTRA_RARE_ELEMENTS.includes(m[1]!) && d.quantity >= 4;
+        }).length;
+      expect(chosenCount, `${type}: усиленные залежи`).toBeGreaterThanOrEqual(1);
     }
   });
 });

@@ -584,9 +584,18 @@ export function generatePlanet(
   // хранится в depositRngState — materializePlanetDeposits() при колонизации
   // воспроизводит те же залежи бит-в-бит. Сами залежи из гексов СТИРАЮТСЯ:
   // «мёртвые» (не разведанные) гексы не попадают в сейв.
+  //
+  // R-37 (Б2/Б3): свод-пул считается продолжением ТОГО ЖЕ deposit-потока
+  // (rng ПОСЛЕ assign) — та же точка, из которой materializePlanetDeposits
+  // пересчитывает пул при материализации ⇒ пул при генерации и при replay
+  // бит-в-бит идентичен, согласованность «пул ↔ физика» — по построению.
+  // Для ГГ (гексов нет) assign не вызывается — пул = гарантия элементов
+  // от свежего derive('deposits') (детерминизм тот же). ВАЖНО: derive() НЕ
+  // потребляет родительский поток — замена derive('ultra') на продолжение
+  // deposit-потока не сдвигает нележебную генерацию (типы/орбиты/луны).
+  const depositRng = rng.derive('deposits');
   let depositRngState: number[] | null = null;
   if (hexes.length > 0) {
-    const depositRng = rng.derive('deposits');
     depositRngState = depositRng.snapshotState();
     assignResourceDeposits(hexes, depositRng, planetDef.type);
   }
@@ -621,8 +630,9 @@ export function generatePlanet(
   const planetName = `${systemName} ${toRoman(orbit)} — ${typeName}`;
 
   // Сводная таблица ресурсов (верхнеуровневый пул — вычисляется из прогона,
-  // ДО стирания залежей: «сколько всего» известно и без колонизации)
-  const resourceDeposits = aggregateResourceDeposits(hexes, planetDef.type, rng.derive('ultra'));
+  // ДО стирания залежей: «сколько всего» известно и без колонизации).
+  // R-37: rng — продолжение deposit-потока (см. комментарий выше).
+  const resourceDeposits = aggregateResourceDeposits(hexes, planetDef.type, depositRng);
 
   // R-29: залежи стираются — планета хранит пул + RNG-снимок; гексовые
   // залежи материализуются при колонизации (materializePlanetDeposits).
@@ -765,15 +775,16 @@ function generateMoons(
     // R-29: ленивая материализация (как у планет) — снимок ДО прогона,
     // прогон для свода-пула, затем стирание. Материализация — при будущей
     // колонизации лун (materializePlanetDeposits работает и для лун).
+    // R-37: пул — продолжение deposit-потока (как у планет выше).
+    const moonDepositRng = moonRng.derive('deposits');
     let moonDepositRngState: number[] | null = null;
     if (hexes.length > 0) {
-      const moonDepositRng = moonRng.derive('deposits');
       moonDepositRngState = moonDepositRng.snapshotState();
       assignResourceDeposits(hexes, moonDepositRng, moonType);
     }
     // R-36: версия — только вместе со снимком (как у планет выше).
     const moonDepositRngVersion = moonDepositRngState ? DEPOSIT_RNG_VERSION : undefined;
-    const resourceDeposits = aggregateResourceDeposits(hexes, moonType, moonRng.derive('ultra'));
+    const resourceDeposits = aggregateResourceDeposits(hexes, moonType, moonDepositRng);
     for (const hex of hexes) hex.deposits = [];
 
     // Имя: «Epsilon Tauri IV-a», «Epsilon Tauri IV-b», ...

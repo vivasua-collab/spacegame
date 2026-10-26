@@ -12,8 +12,11 @@
  *      (не разведанные) гексы не попадают в сейв (замысел владельца:
  *      верхнеуровневый пул известен, детализация — при колонизации).
  *      R-36: рядом с `ds` пишется `dv` — версия семантики генерации
- *      (DEPOSIT_RNG_VERSION); при загрузке тела с dv ≠ текущей
- *      материализуются немедленно (migrateDepositsIfNeeded).
+ *      (DEPOSIT_RNG_VERSION). R-37: версионная совместимая материализация —
+ *      загрузка тело НЕ материализует (ленивость/размер сохранены); при
+ *      колонизации replay текущим кодом + пересчёт свод-пула из физики.
+ *      dv пишется только если версия известна — старые сейвы без dv проходят
+ *      рантрип побайтно без инъекции версии (Б2).
  *   3. Истощённые залежи (qty<=0) НЕ пишутся: добыча их пропускает,
  *      пул-агрегат не пересчитывается — «проще на поздних стадиях».
  *
@@ -29,7 +32,6 @@
  */
 
 import { generateHexCoords } from '@/galaxy/hex-grid';
-import { DEPOSIT_RNG_VERSION } from '@/galaxy/generate-resources';
 import type { HexTerrain, PlanetResourceDeposit } from '@/core/types';
 
 /** Версия формата v3 (маркер в корне JSON). */
@@ -151,11 +153,16 @@ function compactBody(body: Plain & PlainBody, idxOf: (id: unknown) => number): P
 
   // ds — снимок RNG (только для тел с гексами и имеющих состояние);
   // dv — версия семантики генерации (R-36: защита сейвов со снятыми
-  // залежами при смене веток/RNG-потока — migrateDepositsIfNeeded при загрузке).
+  // залежами при смене веток/RNG-потока — версионная материализация при
+  // колонизации, R-37). R-37: dv пишется ТОЛЬКО если версия известна —
+  // старые сейвы без dv проходят рантрип без инъекции версии (побайтная
+  // идемпотентность, блокер Б2).
   if (Array.isArray(out.hexes) && out.hexes.length > 0) {
     if (Array.isArray(body.depositRngState)) {
       out.ds = body.depositRngState.slice();
-      out.dv = body.depositRngVersion ?? DEPOSIT_RNG_VERSION;
+      if (typeof body.depositRngVersion === 'number') {
+        out.dv = body.depositRngVersion;
+      }
     }
   } else {
     // ГГ без гексов: пустой свод-пул остаётся, гексы []
@@ -314,14 +321,15 @@ function expandBody(body: Plain, idOf: (i: unknown) => string): void {
   }
 
   // ds/dm/dv → канонические поля (всегда определены — форма состояния единая).
-  // depositRngVersion: dv из сейва; для сейвов до R-36 с ds — 1 (миграция);
-  // при ОТСУТСТВИИ ds — undefined (версия не имеет смысла, как и в живом
-  // состоянии тел без гексов — ГГ; рантрип deep-equal обязан совпадать).
+  // depositRngVersion (R-37): версия сохраняется КАК ЕСТЬ — dv из сейва; при
+  // ОТСУТСТВИИ dv — undefined (версия неизвестна; потребители трактуют
+  // undefined как «до R-36» = 1 — needsDepositMigration в game-store и
+  // materializePlanetDeposits в generate-resources). Прежняя инъекция 1 (R-36)
+  // ломала побайтную идемпотентность рантрипа старых сейвов: decode добавлял
+  // версию, encode писал «dv":1 — рост сейва без пользы (блокер Б2 R-37).
   body.depositsMaterialized = body.dm === 1;
   body.depositRngState = Array.isArray(body.ds) ? (body.ds as number[]).slice() : null;
-  body.depositRngVersion = typeof body.dv === 'number'
-    ? body.dv
-    : (body.depositRngState ? 1 : undefined);
+  body.depositRngVersion = typeof body.dv === 'number' ? body.dv : undefined;
   delete body.dm;
   delete body.ds;
   delete body.dv;

@@ -32,7 +32,7 @@ import { GalaxyModule } from '@/galaxy/galaxy-module';
 import { resetProductionItemCounter, restoreProductionItemCounter } from '@/economy/engine';
 import { SerializedGameStateSchema } from '@/lib/schemas/game-state-schema'; // Block 08 gap-9: state validation on deserialize
 import { compactSaveV3, expandSaveV3 } from '@/lib/save-format-v3'; // R-29: ленивые залежи + словарь; R-30: v3 — единственный формат
-import { migrateDepositsIfNeeded, DEPOSIT_RNG_VERSION, type LazyDepositBody } from '@/galaxy/generate-resources'; // R-36: миграция версии RNG залежей
+import { DEPOSIT_RNG_VERSION, type LazyDepositBody } from '@/galaxy/generate-resources'; // R-37: перепись тел, ожидающих версионную материализацию
 import { gzipBase64, gunzipBase64, isBrowserCodecAvailable } from '@/lib/save-codec-browser'; // R-26: сжатый транспорт сейвов
 import { enqueueShipBuild as enqueueShipBuildFn, cancelShipyardItem as cancelShipyardItemFn } from '@/data/ships/shipyard-queue'; // Block 02 F6
 import { ShipsModule, resetShipCounter } from '@/ships/ships-module'; // Block 02 F5
@@ -386,34 +386,42 @@ export function serializeGameState(state: GameState): string {
  * `createdAt` field before deep-equal comparisons.
  */
 /**
- * R-36: обход тел сейва (планеты + луны) с явной миграцией ленивых залежей.
- * См. migrateDepositsIfNeeded (generate-resources.ts): тела с dm=false и
- * dv ≠ текущей версии генерации материализуются сразу при загрузке.
- * Вызывается ДО zod-валидации (passthrough-схема, но миграция меняет только
- * залежи/флаги, а не форму).
+ * R-37 (Б1/Б2 аудита R-36): перепись тел, ожидающих версионной материализации.
+ *
+ * ЗАГРУЗКА НЕ МАТЕРИАЛИЗУЕТ ТЕЛА (версионная совместимая материализация):
+ * прежде (R-36) deserializeGameState материализовал все тела с dv ≠ текущей
+ * СРАЗУ при загрузке — это (а) вызывало getCurrentLookups() ДО инициализации
+ * (краш холодного старта) или с моделью ПРЕДЫДУЩЕЙ игры (кросс-галактика),
+ * (б) раздувало следующий сейв (все тела dm=true → залежи всех гексов
+ * пишутся) — блокеры Б1/Б2. Теперь материализация — ТОЛЬКО при колонизации
+ * (materializePlanetDeposits: replay + пересчёт сводного пула — дрейф
+ * поглощается, пул следует за физикой), а на загрузке ведётся только
+ * дешёвая перепись (O(тел), без lookups, без мутаций) для явного журнала.
  */
-type PlainBodyRecord = Record<string, unknown>;
+function needsDepositMigration(body: LazyDepositBody): boolean {
+  return !body.depositsMaterialized
+    && Array.isArray(body.depositRngState)
+    && (body.depositRngVersion ?? 1) !== DEPOSIT_RNG_VERSION;
+}
 
-function migrateLegacyDepositRng(systems: Array<PlainBodyRecord> | undefined): void {
-  if (!Array.isArray(systems)) return;
-  let migrated = 0;
+/** Число тел (планеты + луны), дождущихся версионной материализации при колонизации. */
+function countPendingDepositMigrations(systems: Array<Record<string, unknown>> | undefined): number {
+  if (!Array.isArray(systems)) return 0;
+  let pending = 0;
   for (const sys of systems) {
-    const planets = sys.planets as Array<PlainBodyRecord> | undefined;
+    const planets = sys.planets as Array<Record<string, unknown>> | undefined;
     if (!Array.isArray(planets)) continue;
     for (const p of planets) {
-      if (migrateDepositsIfNeeded(p as unknown as LazyDepositBody)) migrated++;
-      const moons = p.moons as Array<PlainBodyRecord> | undefined;
+      if (needsDepositMigration(p as unknown as LazyDepositBody)) pending++;
+      const moons = p.moons as Array<Record<string, unknown>> | undefined;
       if (Array.isArray(moons)) {
         for (const m of moons) {
-          if (migrateDepositsIfNeeded(m as unknown as LazyDepositBody)) migrated++;
+          if (needsDepositMigration(m as unknown as LazyDepositBody)) pending++;
         }
       }
     }
   }
-  if (migrated > 0) {
-    // Явный журнал миграции (требование аудитора: без молчаливой порчи).
-    console.warn(`[save] R-36: миграция ленивых залежей (dv→${DEPOSIT_RNG_VERSION}): материализовано тел: ${migrated}`);
-  }
+  return pending;
 }
 
 export function deserializeGameState(json: string): GameState {
@@ -426,24 +434,43 @@ export function deserializeGameState(json: string): GameState {
   // (декодеры v1/v2 удалены в R-30 — старые сейвы стёрты владельцем).
   expandSaveV3(raw);
 
-  // ─── R-36: явная миграция ленивых залежей при смене версии генерации ──
-  // Тела с dm=false и dv ≠ DEPOSIT_RNG_VERSION (сейвы до R-36) материализуются
-  // СРАЗУ при загрузке: replay старого снимка новым кодом дал бы залежи,
-  // не согласующиеся с свод-пулом сейва. Явная миграция вместо молчаливого
-  // дрейфа (требование аудитора R-35): залежи замораживаются текущей
-  // семантикой, dm=true исключает повтор, ds обнуляется.
-  migrateLegacyDepositRng(raw.galaxy?.systems as Array<PlainBodyRecord> | undefined);
-
   // ─── Block 08 gap-9: top-level schema validation ──────────────────
   // R-26: строгая проверка — невалидный формат сейва бросает ошибку
   // (fallback-ветка на unvalidated parse удалена как мёртвый слой
-  // совместимости).
+  // совместимости). ДО установки lookups: отклонённый сейв не должен
+  // затирать модель активной игры.
   const validationResult = SerializedGameStateSchema.safeParse(raw);
   if (!validationResult.success) {
     const issues = validationResult.error.issues
       .map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`)
       .join('; ');
     throw new Error(`deserializeGameState: невалидный формат сейва — ${issues}`);
+  }
+
+  // ─── R-37 (Б1): baked-model ИМЕННО загружаемой галактики → setCurrentLookups ──
+  // Порядок требует аудитор: ЛЮБАЯ работа с залежами (материализация при
+  // колонизации, добыча, UI) обязана видеть модель ЭТОЙ галактики. Прежде
+  // (R-36) загрузочная миграция залежей шла ДО этой строки: на холодном
+  // старте getCurrentLookups() бросал «не инициализированы», после активной
+  // игры использовалась модель ПРЕДЫДУЩЕЙ галактики. Теперь на загрузке
+  // работы с залежами нет вовсе (версионная совместимая материализация —
+  // при колонизации), а lookups устанавливаются здесь — до возврата состояния.
+  const bakedModel = raw.galaxy.bakedModel ?? bakeGalaxyModel(raw.galaxy.seed ?? 42, ELEMENTS);
+  setCurrentLookups(bakedModel);
+
+  // ─── R-37 (Б2): перепись тел, ожидающих версионной материализации ──
+  // ЗАГРУЗКА НЕ МАТЕРИАЛИЗУЕТ (ленивость R-29 и размер сейва сохранены):
+  // тела с dv ≠ DEPOSIT_RNG_VERSION (сейвы до R-37) остаются ленивыми —
+  // их залежи воспроизводятся ТЕКУЩИМ кодом при колонизации, а свод-пул
+  // пересчитывается из свежей физики (дрейф поглощается — см.
+  // materializePlanetDeposits). Здесь — только явный журнал (без мутаций,
+  // без lookups, O(тел)).
+  const pendingMigrations = countPendingDepositMigrations(raw.galaxy?.systems as Array<Record<string, unknown>> | undefined);
+  if (pendingMigrations > 0) {
+    console.warn(
+      `[save] R-37: тел, ожидающих версионной материализации залежей (dv → ${DEPOSIT_RNG_VERSION}): ${pendingMigrations}`
+      + ' — материализация и пересчёт свод-пула при колонизации',
+    );
   }
 
   const systems: StarSystem[] = raw.galaxy.systems;
@@ -453,9 +480,6 @@ export function deserializeGameState(json: string): GameState {
   }
 
   const productionQueues = new Map<string, ProductionQueue>(raw.productionQueues);
-
-  const bakedModel = raw.galaxy.bakedModel ?? bakeGalaxyModel(raw.galaxy.seed ?? 42, ELEMENTS);
-  setCurrentLookups(bakedModel);
 
   return {
     ...raw,

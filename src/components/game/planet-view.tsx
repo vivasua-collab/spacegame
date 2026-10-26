@@ -459,7 +459,13 @@ function ResourceSection({
                 <div className="text-xs text-slate-200 font-medium">{elDef.name}</div>
                 <div className="text-[9px] text-slate-500">
                   {CATEGORY_NAMES[elDef.category] ?? elDef.category}
-                  {dep.hexCount > 0 && ` • ${dep.hexCount} гексов`}
+                  {/* R-37: hexCount=0 — «геологическая оценка с орбиты»:
+                      физических залежей в разведанных гексах НЕТ (атмосферные
+                      газы, полностью океанские миры, ГГ). Пул не обещает
+                      физику, которой нет (контракт «свод = добыча»). */}
+                  {dep.hexCount > 0
+                    ? ` • ${dep.hexCount} гексов`
+                    : ' • геол. оценка'}
                 </div>
               </div>
               {/* Quantity */}
