@@ -120,7 +120,13 @@ export function generateSpiralPositions(
   const spread = Number.isFinite(cfg.spread) ? Math.max(0, cfg.spread) : 0;
   const armWidth = Number.isFinite(cfg.armWidth) ? Math.max(0, cfg.armWidth) : 0;
   const armTwist = Number.isFinite(cfg.armTwist) ? cfg.armTwist : 0;
-  const arms = Math.max(1, Math.floor(cfg.arms) || 1);
+  // R-36 (аудит R-35): arms = ±Infinity/NaN → 1. Прежняя форма
+  // `Math.max(1, Math.floor(cfg.arms) || 1)` пропускала +Infinity
+  // (floor(+Inf)=+Inf, `+Inf || 1`=+Inf): armAngleStep = 2π/+Inf = 0, а
+  // nextInt(0, +Inf) давал бесконечные индексы рукава → нечисловые углы и
+  // NaN/±Inf-координаты. Нормализация гарантирует конечный armAngleStep и
+  // конечные координаты при любом входе (тест galaxy-positions).
+  const arms = Number.isFinite(cfg.arms) ? Math.max(1, Math.floor(cfg.arms)) : 1;
 
   const { bulgeCount, diskCount, armCount, haloCount } = computeComponentCounts(cfg);
 

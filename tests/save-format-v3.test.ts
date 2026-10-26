@@ -29,7 +29,7 @@ import '@/core/immer-setup';
 import { generateGalaxy } from '@/galaxy';
 import { serializeGameState, deserializeGameState } from '@/stores/game-store';
 import { isSaveFormatV3, SAVE_FORMAT_V3_VERSION } from '@/lib/save-format-v3';
-import { materializePlanetDeposits } from '@/galaxy/generate-resources';
+import { materializePlanetDeposits, DEPOSIT_RNG_VERSION } from '@/galaxy/generate-resources';
 import { assignResourceDeposits } from '@/galaxy/generate-resources';
 import { Xoshiro128StarStar } from '@/core/prng';
 import { colonizePlanet } from '@/economy/engine';
@@ -411,5 +411,122 @@ describe('R-29: ленивые залежи + формат v3', () => {
     expect(materializePlanetDeposits(r2Planet)).toBe(false);
     expect(r2Planet.hexes.map((h) => h.deposits.length))
       .toEqual(truth.map((h) => h.length));
+  });
+
+  // ============ R-36: версия RNG залежей (dv) и явная миграция ============
+
+  test('14. R-36: свежий сейв хранит dv=DEPOSIT_RNG_VERSION у тел с гексами', () => {
+    const state = buildFreshState(15);
+    const bodies = [...allBodies(state)];
+    const withHexes = bodies.filter((b) => b.hexes.length > 0);
+    expect(withHexes.length).toBeGreaterThan(0);
+    // живое состояние: версия совпадает с текущей семантикой генерации
+    for (const b of withHexes) {
+      expect(b.depositRngVersion, b.id).toBe(DEPOSIT_RNG_VERSION);
+    }
+    // компактная форма: поле dv, канонического depositRngVersion нет
+    const json = serializeGameState(state);
+    const raw = JSON.parse(json) as { galaxy: { systems: Array<{ planets: Array<Record<string, unknown>> }> } };
+    let dvCount = 0;
+    for (const sys of raw.galaxy.systems) {
+      for (const p of sys.planets) {
+        expect('depositRngVersion' in p, 'каноническое поле не пишется').toBe(false);
+        if (typeof p.ds !== 'undefined') {
+          expect(p.dv, 'dv accompanies ds').toBe(DEPOSIT_RNG_VERSION);
+          dvCount++;
+        } else {
+          expect('dv' in p, 'dv без ds не пишется').toBe(false);
+        }
+      }
+    }
+    expect(dvCount).toBeGreaterThan(0);
+  });
+
+  test('15. R-36: сейв до R-36 (без dv) при загрузке МАТЕРИАЛИЗУЕТСЯ (явная миграция)', () => {
+    // Требование аудитора R-35: сейвы с отложенными залежами вне
+    // пересозданного окружения защищаются версией RNG или явной миграцией.
+    // Имитируем старый сейв: убираем dv из компактной формы (v3-кодек
+    // трактует отсутствие dv как версию 1 ≠ текущей) → deserializeGameState
+    // обязан материализовать такие тела немедленно.
+    const state = buildFreshState(15);
+    const truthBody = firstColonizable(state);
+    const truthRef = buildFreshState(15);
+    const truthPlanet = truthRef.galaxy.systems.flatMap(s => s.planets).find(p => p.id === truthBody.id)!;
+    expect(colonizePlanet(truthPlanet)).toBe(true);
+    const truth = truthPlanet.hexes.map((h) => h.deposits.map((d) => ({ ...d })));
+
+    let json = serializeGameState(state);
+    const raw = JSON.parse(json) as {
+      galaxy: { systems: Array<{ planets: Array<Record<string, unknown>> }> };
+    };
+    // сейв «до R-36»: поле dv отсутствует У ВСЕХ тел (и у лун тоже)
+    for (const sys of raw.galaxy.systems) {
+      for (const p of sys.planets) {
+        delete p.dv;
+        for (const m of (p.moons as Array<Record<string, unknown>> | undefined) ?? []) delete m.dv;
+      }
+    }
+    json = JSON.stringify(raw);
+
+    const restored = deserializeGameState(json);
+    const bodies = [...(function* () {
+      for (const sys of restored.galaxy.systems) {
+        for (const p of sys.planets) { yield p; for (const m of p.moons) yield m; }
+      }
+    })()];
+    // все тела с гексами материализованы, снимок обнулён
+    let migrated = 0;
+    for (const b of bodies) {
+      if (b.hexes.length > 0 && b.depositsMaterialized) migrated++;
+    }
+    expect(migrated).toBeGreaterThan(0);
+    for (const b of bodies) {
+      if (b.hexes.length > 0) {
+        expect(b.depositsMaterialized, b.id).toBe(true);
+        expect(b.depositRngState, `${b.id}: ds обнулён`).toBeNull();
+      }
+    }
+    // бит-в-бит: миграция дала эталонные залежи (тот же seed/тот же код)
+    const rPlanet = restored.galaxy.systems.flatMap(s => s.planets).find(p => p.id === truthBody.id)!;
+    expect(rPlanet.hexes.length).toBe(truth.length);
+    for (let i = 0; i < truth.length; i++) {
+      expect(rPlanet.hexes[i]!.deposits).toEqual(truth[i]!);
+    }
+    // повторная загрузка мигрированного сейва — стабильна (без дублей/сдвигов).
+    // ВНИМАНИЕ: кодек округляет availability до 3 знаков (round3), поэтому
+    // точное toEqual на float-поля недопустим — сверяем форму (кол-во залежей),
+    // ID, quantity (int) и depth (int); availability — с допуском 1e-3.
+    const json2 = serializeGameState(restored);
+    const restored2 = deserializeGameState(json2);
+    const r2 = restored2.galaxy.systems.flatMap(s => s.planets).find(p => p.id === truthBody.id)!;
+    expect(r2.hexes.length).toBe(rPlanet.hexes.length);
+    for (let i = 0; i < rPlanet.hexes.length; i++) {
+      const a = rPlanet.hexes[i]!.deposits;
+      const b = r2.hexes[i]!.deposits;
+      expect(b.length, `гекс ${i}`).toBe(a.length);
+      for (let d = 0; d < a.length; d++) {
+        expect(b[d]!.elementId).toBe(a[d]!.elementId);
+        expect(b[d]!.quantity).toBe(a[d]!.quantity);
+        expect(b[d]!.depth).toBe(a[d]!.depth);
+        expect(Math.abs(b[d]!.availability - a[d]!.availability)).toBeLessThanOrEqual(1e-3);
+      }
+    }
+  });
+
+  test('16. R-36: сейв с ТЕКУЩЕЙ dv остаётся ленивым (миграция не срабатывает)', () => {
+    const state = buildFreshState(12);
+    const json = serializeGameState(state);
+    const restored = deserializeGameState(json);
+    for (const b of [...(function* () {
+      for (const sys of restored.galaxy.systems) {
+        for (const p of sys.planets) { yield p; for (const m of p.moons) yield m; }
+      }
+    })()]) {
+      if (b.hexes.length > 0) {
+        expect(b.depositsMaterialized, `${b.id} остаётся ленивым`).toBe(false);
+        expect(b.depositRngState, `${b.id}: снимок на месте`).not.toBeNull();
+        expect(b.depositRngVersion, `${b.id}: версия preserved`).toBe(DEPOSIT_RNG_VERSION);
+      }
+    }
   });
 });

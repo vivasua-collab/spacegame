@@ -311,4 +311,29 @@ describe('R-35 (P2 аудита этапа 2): нормализация неко
     const zeroPos = positionsFor(77, { systemCount: 150, radius: 0 });
     expect(nanPos).toEqual(zeroPos);
   });
+
+  test('8. R-36: arms = +Infinity / -Infinity → guard 1, КОНЕЧНЫЕ координаты', () => {
+    // Прямое требование аудитора R-35 (дожим P2): прежняя форма
+    // `Math.max(1, Math.floor(cfg.arms) || 1)` пропускала +Infinity:
+    // floor(+Inf)=+Inf → armAngleStep = 2π/+Inf = 0, а nextInt(0, +Inf)
+    // давал бесконечный индекс рукава → нечисловые координаты у рукавных
+    // систем. Нормализация обязана гарантировать конечность на краях.
+    for (const arms of [Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      const pos = positionsFor(42, { systemCount: 300, arms });
+      expect(pos).toHaveLength(300);
+      expect(allFinite(pos), `arms=${String(arms)}`).toBe(true);
+      // Эквивалентность arms=+Inf и arms=1 (нормализованный guard): та же
+      // карта, а не частично-бесконечная.
+      const onePos = positionsFor(42, { systemCount: 300, arms: 1 });
+      expect(pos).toEqual(onePos);
+    }
+  });
+
+  test('9. R-36: ОГРОМНОЕ конечное arms (1e9) → конечные координаты (нет переполнения nextInt)', () => {
+    // Соседний край: floor(1e9) конечен, но nextInt(0, 1e9−1) легитимен —
+    // координаты всё равно конечны (угол произвольный, но конечный).
+    const pos = positionsFor(42, { systemCount: 200, arms: 1e9 });
+    expect(pos).toHaveLength(200);
+    expect(allFinite(pos)).toBe(true);
+  });
 });

@@ -11,6 +11,9 @@
  *      НЕматериализованных тел не содержат залежей вовсе — «мёртвые»
  *      (не разведанные) гексы не попадают в сейв (замысел владельца:
  *      верхнеуровневый пул известен, детализация — при колонизации).
+ *      R-36: рядом с `ds` пишется `dv` — версия семантики генерации
+ *      (DEPOSIT_RNG_VERSION); при загрузке тела с dv ≠ текущей
+ *      материализуются немедленно (migrateDepositsIfNeeded).
  *   3. Истощённые залежи (qty<=0) НЕ пишутся: добыча их пропускает,
  *      пул-агрегат не пересчитывается — «проще на поздних стадиях».
  *
@@ -26,6 +29,7 @@
  */
 
 import { generateHexCoords } from '@/galaxy/hex-grid';
+import { DEPOSIT_RNG_VERSION } from '@/galaxy/generate-resources';
 import type { HexTerrain, PlanetResourceDeposit } from '@/core/types';
 
 /** Версия формата v3 (маркер в корне JSON). */
@@ -76,6 +80,8 @@ interface PlainBody {
   resourceDeposits?: Array<Plain | unknown[]>;
   depositsMaterialized?: boolean;
   depositRngState?: number[] | null;
+  /** R-36: версия семантики генерации залежей (DEPOSIT_RNG_VERSION). */
+  depositRngVersion?: number;
 }
 
 // ============ Encode: v1-объекты → v3 (компакт + словарь) ============
@@ -143,16 +149,20 @@ function compactStar(star: Plain): Plain {
 function compactBody(body: Plain & PlainBody, idxOf: (id: unknown) => number): Plain {
   const out: Plain = { ...body };
 
-  // ds — снимок RNG (только для тел с гексами и имеющих состояние)
+  // ds — снимок RNG (только для тел с гексами и имеющих состояние);
+  // dv — версия семантики генерации (R-36: защита сейвов со снятыми
+  // залежами при смене веток/RNG-потока — migrateDepositsIfNeeded при загрузке).
   if (Array.isArray(out.hexes) && out.hexes.length > 0) {
     if (Array.isArray(body.depositRngState)) {
       out.ds = body.depositRngState.slice();
+      out.dv = body.depositRngVersion ?? DEPOSIT_RNG_VERSION;
     }
   } else {
     // ГГ без гексов: пустой свод-пул остаётся, гексы []
     out.hexes = [];
   }
   delete out.depositRngState;
+  delete out.depositRngVersion;
   delete out.depositsMaterialized;
   if (body.depositsMaterialized === true) out.dm = 1;
 
@@ -303,11 +313,18 @@ function expandBody(body: Plain, idOf: (i: unknown) => string): void {
     }));
   }
 
-  // ds/dm → канонические поля (всегда определены — форма состояния единая)
+  // ds/dm/dv → канонические поля (всегда определены — форма состояния единая).
+  // depositRngVersion: dv из сейва; для сейвов до R-36 с ds — 1 (миграция);
+  // при ОТСУТСТВИИ ds — undefined (версия не имеет смысла, как и в живом
+  // состоянии тел без гексов — ГГ; рантрип deep-equal обязан совпадать).
   body.depositsMaterialized = body.dm === 1;
   body.depositRngState = Array.isArray(body.ds) ? (body.ds as number[]).slice() : null;
+  body.depositRngVersion = typeof body.dv === 'number'
+    ? body.dv
+    : (body.depositRngState ? 1 : undefined);
   delete body.dm;
   delete body.ds;
+  delete body.dv;
 }
 
 // ============ Хелперы для тестов/инспекции ============

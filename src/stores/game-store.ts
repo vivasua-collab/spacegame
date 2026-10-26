@@ -32,6 +32,7 @@ import { GalaxyModule } from '@/galaxy/galaxy-module';
 import { resetProductionItemCounter, restoreProductionItemCounter } from '@/economy/engine';
 import { SerializedGameStateSchema } from '@/lib/schemas/game-state-schema'; // Block 08 gap-9: state validation on deserialize
 import { compactSaveV3, expandSaveV3 } from '@/lib/save-format-v3'; // R-29: ленивые залежи + словарь; R-30: v3 — единственный формат
+import { migrateDepositsIfNeeded, DEPOSIT_RNG_VERSION, type LazyDepositBody } from '@/galaxy/generate-resources'; // R-36: миграция версии RNG залежей
 import { gzipBase64, gunzipBase64, isBrowserCodecAvailable } from '@/lib/save-codec-browser'; // R-26: сжатый транспорт сейвов
 import { enqueueShipBuild as enqueueShipBuildFn, cancelShipyardItem as cancelShipyardItemFn } from '@/data/ships/shipyard-queue'; // Block 02 F6
 import { ShipsModule, resetShipCounter } from '@/ships/ships-module'; // Block 02 F5
@@ -384,6 +385,37 @@ export function serializeGameState(state: GameState): string {
  * `createdAt` from bakeGalaxyModel). Tests work around it by stripping the
  * `createdAt` field before deep-equal comparisons.
  */
+/**
+ * R-36: обход тел сейва (планеты + луны) с явной миграцией ленивых залежей.
+ * См. migrateDepositsIfNeeded (generate-resources.ts): тела с dm=false и
+ * dv ≠ текущей версии генерации материализуются сразу при загрузке.
+ * Вызывается ДО zod-валидации (passthrough-схема, но миграция меняет только
+ * залежи/флаги, а не форму).
+ */
+type PlainBodyRecord = Record<string, unknown>;
+
+function migrateLegacyDepositRng(systems: Array<PlainBodyRecord> | undefined): void {
+  if (!Array.isArray(systems)) return;
+  let migrated = 0;
+  for (const sys of systems) {
+    const planets = sys.planets as Array<PlainBodyRecord> | undefined;
+    if (!Array.isArray(planets)) continue;
+    for (const p of planets) {
+      if (migrateDepositsIfNeeded(p as unknown as LazyDepositBody)) migrated++;
+      const moons = p.moons as Array<PlainBodyRecord> | undefined;
+      if (Array.isArray(moons)) {
+        for (const m of moons) {
+          if (migrateDepositsIfNeeded(m as unknown as LazyDepositBody)) migrated++;
+        }
+      }
+    }
+  }
+  if (migrated > 0) {
+    // Явный журнал миграции (требование аудитора: без молчаливой порчи).
+    console.warn(`[save] R-36: миграция ленивых залежей (dv→${DEPOSIT_RNG_VERSION}): материализовано тел: ${migrated}`);
+  }
+}
+
 export function deserializeGameState(json: string): GameState {
   const raw = JSON.parse(json);
 
@@ -393,6 +425,14 @@ export function deserializeGameState(json: string): GameState {
   // v3 — единственный формат: fmt≠3 отклоняется явной ошибкой
   // (декодеры v1/v2 удалены в R-30 — старые сейвы стёрты владельцем).
   expandSaveV3(raw);
+
+  // ─── R-36: явная миграция ленивых залежей при смене версии генерации ──
+  // Тела с dm=false и dv ≠ DEPOSIT_RNG_VERSION (сейвы до R-36) материализуются
+  // СРАЗУ при загрузке: replay старого снимка новым кодом дал бы залежи,
+  // не согласующиеся с свод-пулом сейва. Явная миграция вместо молчаливого
+  // дрейфа (требование аудитора R-35): залежи замораживаются текущей
+  // семантикой, dm=true исключает повтор, ds обнуляется.
+  migrateLegacyDepositRng(raw.galaxy?.systems as Array<PlainBodyRecord> | undefined);
 
   // ─── Block 08 gap-9: top-level schema validation ──────────────────
   // R-26: строгая проверка — невалидный формат сейва бросает ошибку

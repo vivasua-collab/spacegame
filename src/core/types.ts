@@ -130,6 +130,12 @@ export interface Moon {
   depositsMaterialized?: boolean;
   /** Снимок состояния RNG залежей (4×uint32) для воспроизводимой материализации; null — нет гексов/не применимо */
   depositRngState?: number[] | null;
+  /**
+   * R-36: версия семантики генерации залежей, с которой записан depositRngState
+   * (DEPOSIT_RNG_VERSION). Тела сейва с другой версией материализуются при
+   * загрузке (явная миграция). undefined в живом состоянии = версия текущая.
+   */
+  depositRngVersion?: number;
   /** Владелец (factionId / playerId / null) */
   owner: EntityId | null;
 }
@@ -706,6 +712,12 @@ export interface Planet {
    * null/undefined — материализация невозможна (ГГ без гексов, старые сейвы).
    */
   depositRngState?: number[] | null;
+  /**
+   * R-36: версия семантики генерации залежей, с которой записан depositRngState
+   * (DEPOSIT_RNG_VERSION). Тела сейва с другой версией материализуются при
+   * загрузке (явная миграция). undefined в живом состоянии = версия текущая.
+   */
+  depositRngVersion?: number;
   resources: Record<string, number>; // elementId → количество на складе
   /**
    * Block 05 (PR3-min): средневзвешенная чистота ресурсов на складе.

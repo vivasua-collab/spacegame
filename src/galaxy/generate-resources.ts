@@ -16,6 +16,13 @@
  * их источники — атмосфера (газовый экстрактор) и Вода (H2O-ice).
  * Вода — единственная залежь-источник H и O: электролиз в processor
  * (рецепт process_H2O) даёт водород + кислород.
+ *
+ * R-36 (вариант «а» владельца): пулы RARE/ULTRA_RARE = docs/31 §2; элементы
+ * пула ULTRA_RARE (все 10 — deep_ore/drilling_rig) генерируют СЛЕДОВЫЕ
+ * глубинные залежи (depth 4–5, availability 0.02–0.10) — базовое присутствие
+ * ultra_rare минимально (§1.1/§3.2), извлечение — буровой установкой
+ * (здание в MVP-каталоге). Версия семантики генерации — DEPOSIT_RNG_VERSION
+ * (защита сейвов с отложенными залежами: migrateDepositsIfNeeded при загрузке).
  */
 
 import { Xoshiro128StarStar } from '@/core/prng';
@@ -24,12 +31,60 @@ import { PROFILE_ELEMENTS, RARE_ELEMENTS, ULTRA_RARE_ELEMENTS } from '@/data/pla
 import { ELEMENTS, ELEMENT_MAP } from '@/data/elements';
 import { getCurrentLookups, findContainedElements } from '@/data/baked-lookups';
 
+/** Планетарный пул уникальных ресурсов как Set (горячий цикл генерации, R-36). */
+const ULTRA_POOL_SET = new Set<string>(ULTRA_RARE_ELEMENTS);
+
 /** R-29: тело (планета/луна) с ленивыми залежами — минимальный интерфейс материализации. */
 export interface LazyDepositBody {
   hexes: HexCell[];
   type: string;
   depositsMaterialized?: boolean;
   depositRngState?: number[] | null;
+  /** R-36: версия семантики RNG/веток генерации залежей (см. DEPOSIT_RNG_VERSION). */
+  depositRngVersion?: number;
+}
+
+/**
+ * R-36: версия семантики генерации залежей (RNG-поток + ветки).
+ *
+ * История:
+ *   1 — до R-36 (Fisher–Yates G-05, пул W/Co/Pt/Y/Ba/Au/U/Li/V, без
+ *       отдельной ultra-ветки);
+ *   2 — R-36: пулы = docs/31 §2 (вариант «а»), новая ultra-ветка следовых
+ *       глубинных залежей → РАСХОЖДЕНИЕ ПОТОКА RNG: replay старого `ds`
+ *       новым кодом даёт ДРУГИЕ (детерминированные, но иные) залежи, чем
+ *       свод-пул, посчитанный при генерации такого сейва.
+ *
+ * Защита сейвов (требование аудитора R-35): сейв v3 хранит `dv`; при загрузке
+ * тела с `dm=false`, `ds` и `dv ≠ DEPOSIT_RNG_VERSION` МАТЕРИАЛИЗУЮТСЯ
+ * НЕМЕДЛЕННО (`migrateDepositsIfNeeded` — явная миграция: залежи замораживаются
+ * новой семантикой, повторного дрейфа нет; свод-пул сверки не переписывается).
+ */
+export const DEPOSIT_RNG_VERSION = 2;
+
+/**
+ * R-36: явная миграция ленивых залежей при смене версии генерации.
+ *
+ * Вызывается при ЗАГРУЗКЕ сейва (deserializeGameState) для каждого тела
+ * с гексами: если тело ещё не материализовано, а снимок `ds` записан
+ * ДРУГОЙ версией генерации (dv отсутствует — сейв до R-36 — или dv меньше
+ * текущей), то replay старым потоком новым кодом дал бы залежи, не
+ * согласующиеся с свод-пулом из сейва. Вместо молчаливого дрейфа —
+ * немедленная материализация: залежи замораживаются текущей семантикой
+ * (dm=true), `ds` обнуляется за ненадобностью, повторных дрейфов нет.
+ *
+ * @returns true, если миграция (материализация) выполнена в этом вызове.
+ */
+export function migrateDepositsIfNeeded(body: LazyDepositBody): boolean {
+  if (body.depositsMaterialized) return false;
+  if (!body.depositRngState || body.hexes.length === 0) return false;
+  if ((body.depositRngVersion ?? 1) === DEPOSIT_RNG_VERSION) return false;
+  const migrated = materializePlanetDeposits(body);
+  if (migrated) {
+    // Снимок больше не нужен: залежи зафиксированы (dm=true).
+    body.depositRngState = null;
+  }
+  return migrated;
 }
 
 /**
@@ -173,6 +228,8 @@ export function assignResourceDeposits(hexes: HexCell[], rng: Xoshiro128StarStar
     const mult = catMult[cat] ?? 0.3;
     const isProfile = profileSet.has(element.id);
     const isRare = rareSet.has(element.id);
+    // R-36: планетарный пул уникальных ресурсов (docs/31 §2/§8.2, вариант «а»).
+    const isUltraPool = ULTRA_POOL_SET.has(element.id);
 
     let baseQuantity: number;
     let hexFraction: number;
@@ -182,6 +239,18 @@ export function assignResourceDeposits(hexes: HexCell[], rng: Xoshiro128StarStar
       baseQuantity = (200 + rng.nextFloat() * 800) * mult * 3.0;
       hexFraction = Math.min(0.6, 0.2 + mult * 0.3);
       baseAvailability = 0.3 + rng.nextFloat() * 0.5;
+    } else if (isUltraPool) {
+      // R-36 (вариант «а»): элементы пула ULTRA_RARE — ВСЕ deep_ore
+      // (drilling_rig), у каждого базовое присутствие МИНИМАЛЬНО (docs/31
+      // §1.1 «на всех планетах есть все ресурсы» + §3.2: ultra_rare ×0.05).
+      // ДО R-36 они шли по обычной ветке (qty 6–42/гекс × 4–6 гексов →
+      // свод ≥ 10) и после синхронизации пула со спекой ВСЕ кандидаты
+      // отсеивались фильтром eligibleUltra (qty ≥ 10) → 0 уникальных на
+      // планете — регрессия G-06. Следовые количества (×0.05 от обычной
+      // ветки) держат qty 1–3 < 10 → пул кандидатов никогда не пуст.
+      baseQuantity = (5 + rng.nextFloat() * 30) * mult * 0.05;
+      hexFraction = Math.max(1 / nonOceanHexes.length, 0.02 + mult * 0.05);
+      baseAvailability = 0.02 + rng.nextFloat() * 0.08;
     } else if (isRare) {
       baseQuantity = (5 + rng.nextFloat() * 30) * mult * 0.15;
       hexFraction = Math.max(1 / nonOceanHexes.length, 0.05 + mult * 0.1);
@@ -210,7 +279,9 @@ export function assignResourceDeposits(hexes: HexCell[], rng: Xoshiro128StarStar
         elementId: oreId,
         availability: Math.min(1, baseAvailability * (0.7 + rng.nextFloat() * 0.6)),
         quantity: Math.max(1, Math.round(baseQuantity * quantityVariance)),
-        depth: isRare ? rng.nextInt(3, 5) : rng.nextInt(1, 4),
+        // Глубина: уникальные — глубинные залежи (docs/31 §6.1: depth 4–5 —
+        // юрисдикция drilling_rig); редкие — 3–5; остальные — 1–4.
+        depth: isUltraPool ? rng.nextInt(4, 5) : isRare ? rng.nextInt(3, 5) : rng.nextInt(1, 4),
       });
     }
   }
@@ -382,7 +453,11 @@ export function aggregateResourceDeposits(
     eligibleUltra.splice(eligibleUltra.indexOf(elId), 1);
     ultraChosen.add(elId);
     deposits.set(elId, {
-      totalQuantity: Math.max(1, Math.round(1 + rng.nextFloat() * 5)),
+      // R-36: qty 4-6 — «повышенная концентрация» выбранного уникального
+      // ресурса планеты (docs/31 §8.2), отличимая от следовых количеств
+      // остальных 8-9 элементов пула (гекс-ветка даёт qty 1-2). Один вызов
+      // nextFloat — длина RNG-потока не меняется.
+      totalQuantity: 4 + Math.floor(rng.nextFloat() * 3),
       totalAvailability: 0.01 + rng.nextFloat() * 0.04,
       hexCount: 1,
       maxAvailability: 0.05,
@@ -394,11 +469,12 @@ export function aggregateResourceDeposits(
   for (const [elementId, data] of deposits) {
     const isProfile = profileSet.has(elementId);
     const isRare = rareSet.has(elementId);
-    // G-06 (fix): явно выбранные ультраредкие — tier 'ultra_rare', даже если
-    // элемент входит и в RARE_ELEMENTS (пересечение множеств в
-    // planet-types.ts — осознанное допущение, «уникальный ресурс планеты» —
-    // более сильная классификация, чем «редкий везде»; profileSet исключён
-    // из кандидатов выше). Прежняя эвристика !isRare затирала намерение.
+    // G-06 (fix): явно выбранные ультраредкие — tier 'ultra_rare'.
+    // R-36: пулы RARE/ULTRA_RARE не пересекаются (оба = спискам docs/31 §2),
+    // поэтому «пересечение» прежних комментариев устранено: выбранный ultra
+    // всегда вне RARE_ELEMENTS. Остальные элементы пула ULTRA_RARE приходят
+    // сюда следовыми количествами (ветка isUltraPool выше) и классифицируются
+    // эвристикой ниже — тоже 'ultra_rare' (минимальная концентрация, docs/31 §8.2).
     const isUltra = ultraChosen.has(elementId)
       || (!isProfile && !isRare && (data.totalQuantity < 20 || data.maxAvailability < 0.05));
 

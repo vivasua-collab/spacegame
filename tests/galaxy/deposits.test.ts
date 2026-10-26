@@ -359,7 +359,11 @@ describe('D2/G-05: перемешивание Fisher–Yates (регрессия
 });
 
 describe('D3/G-06: ультраредкие элементы (1-2 уникальных для планеты)', () => {
-  /** Подпись выбранного ultra: следовое количество, hexCount=1, maxAvail=0.05. */
+  /**
+   * Подпись ВЫБРАННОГО ultra (R-36): «повышенная концентрация» qty 4-6,
+   * hexCount=1, maxAvail=0.05. Не-выбранные элементы пула приходят из
+   * следовой гекс-ветки (qty 1-2, maxAvail ≤ 0.13) — подписи не совпадают.
+   */
   function ultraSignatures(pool: ReturnType<typeof aggregateResourceDeposits>, type: string) {
     const profile = new Set(PROFILE_ELEMENTS[type as keyof typeof PROFILE_ELEMENTS] ?? []);
     return pool.filter(d =>
@@ -367,6 +371,7 @@ describe('D3/G-06: ультраредкие элементы (1-2 уникаль
       && !profile.has(d.elementId)
       && d.hexCount === 1
       && d.maxAvailability === 0.05
+      && d.totalQuantity >= 4
       && d.totalQuantity <= 6);
   }
 
@@ -388,11 +393,12 @@ describe('D3/G-06: ультраредкие элементы (1-2 уникаль
           // уникальность (без повторов выбора)
           const ids = sig.map(s => s.elementId);
           expect(new Set(ids).size).toBe(ids.length);
-          // tier исправлен (раньше 87% выбранных получали 'rare')
+          // R-36: выбор строго из спека-пула docs/31 §2; пулы НЕ пересекаются —
+          // выбранный ultra никогда не «редкий везде» (RARE_ELEMENTS)
           for (const s of sig) {
             expect(s.tier, `${s.elementId} tier`).toBe('ultra_rare');
             expect(ULTRA_RARE_ELEMENTS).toContain(s.elementId);
-            expect(RARE_ELEMENTS.includes(s.elementId) || ['Li', 'V'].includes(s.elementId)).toBe(true);
+            expect(RARE_ELEMENTS.includes(s.elementId), `${s.elementId} не из RARE`).toBe(false);
           }
         }
       }
@@ -404,22 +410,21 @@ describe('D3/G-06: ультраредкие элементы (1-2 уникаль
     expect(twoShare).toBeLessThan(0.7);
   });
 
-  test('19. Выбранный ultra из пересечения RARE∩ULTRA всё же ultra_rare (не rare)', () => {
-    // Ищем планету, где выбран элемент из RARE_ELEMENTS (пересечение множеств)
-    let foundOverlapCase = false;
-    for (let seed = 1; seed <= 40 && !foundOverlapCase; seed++) {
+  test('19. R-36: пулы НЕ пересекаются, состав = спека docs/31 §2; выбранный ultra извлекаем буровой', () => {
+    // Прежний тест проверял выбор из пересечения RARE∩ULTRA — после
+    // синхронизации со спекой (вариант «а») пулы ДИЗЪЮКТНЫ, и контракт
+    // переносится в D4 (guard-тесты состава). Здесь — инвариант на живой
+    // генерации: каждый выбранный ultra — deep_ore/drilling_rig (добываем).
+    const lookups = getCurrentLookups();
+    for (let seed = 1; seed <= 20; seed++) {
       const hexes = mkHexes(37);
       assignResourceDeposits(hexes, new Xoshiro128StarStar(seed).derive('d'), 'rocky');
       const pool = aggregateResourceDeposits(hexes, 'rocky', new Xoshiro128StarStar(seed).derive('u'));
-      for (const d of ultraSignatures(pool, 'rocky')) {
-        if (RARE_ELEMENTS.includes(d.elementId)) {
-          expect(d.tier).toBe('ultra_rare'); // прежде было 'rare'
-          foundOverlapCase = true;
-          break;
-        }
+      for (const s of ultraSignatures(pool, 'rocky')) {
+        const ore = lookups.oreMap.get(`${s.elementId}-ore`);
+        expect(ore?.sourceBuildingId, `${s.elementId}-ore`).toBe('drilling_rig');
       }
     }
-    expect(foundOverlapCase, 'хотя бы одна планета с ultra из пересечения множеств').toBe(true);
   });
 
   test('20. Профильные элементы не выбираются как ultra', () => {
@@ -431,6 +436,87 @@ describe('D3/G-06: ультраредкие элементы (1-2 уникаль
       const sig = ultraSignatures(pool, 'volcanic');
       expect(sig.every(s => s.elementId !== 'V')).toBe(true);
       expect(sig.every(s => s.tier !== 'profile')).toBe(true);
+    }
+  });
+
+  test('21. R-36 ultra-ветка: следовые глубинные залежи всех 10 руд пула на каждой планете', () => {
+    // Базовое присутствие ultra_rare минимально (docs/31 §1.1/§3.2),
+    // глубина 4-5 (§6.1 — юрисдикция drilling_rig), availability следовая.
+    // ВНИМАНИЕ: помимо ultra-ветки, руды пула могут попадать на гексы веткой
+    // «случайных богатых залежей» (15% гексов, availability 0.5-1.0, depth
+    // 1-3 — pre-existing) — они исключаются фильтром по availability.
+    const lookups = getCurrentLookups();
+    for (const type of PLANET_TYPES) {
+      const hexes = mkHexes(61);
+      assignResourceDeposits(hexes, new Xoshiro128StarStar(77).derive('d'), type);
+      for (const el of ULTRA_RARE_ELEMENTS) {
+        const oreId = lookups.elementToOre[el] ?? `${el}-ore`;
+        const allDeps = hexes.flatMap(h => h.deposits.filter(d => d.elementId === oreId));
+        const traceDeps = allDeps.filter(d => d.availability <= 0.15);
+        expect(traceDeps.length, `${type} ${oreId}: следовые залежи есть`).toBeGreaterThan(0);
+        for (const d of traceDeps) {
+          expect(d.depth, `${type} ${oreId} depth`).toBeGreaterThanOrEqual(4);
+          expect(d.depth, `${type} ${oreId} depth`).toBeLessThanOrEqual(5);
+          // следовая ветка: base 0.02-0.10 × пер-гексовый множитель 0.7-1.3
+          expect(d.availability, `${type} ${oreId} avail`).toBeLessThanOrEqual(0.13 + 1e-9);
+          expect(d.quantity, `${type} ${oreId} qty следовое`).toBeLessThanOrEqual(3);
+        }
+      }
+    }
+  });
+});
+
+describe('D4/R-36: состав пулов = спека docs/31 §2 (guard-тесты «третьего источника»)', () => {
+  /** Спека docs/31-resources.md §2 — РЕДКИЕ (перечень дословно). */
+  const DOCS31_RARE = ['Co', 'W', 'Mo', 'V', 'Ag', 'Pt', 'Au', 'U', 'Li', 'Be'];
+  /** Спека docs/31-resources.md §2 — УНИКАЛЬНЫЕ (перечень дословно). */
+  const DOCS31_ULTRA = ['Ir', 'Os', 'Re', 'Ru', 'Rh', 'Pd', 'Hf', 'Ta', 'Nb', 'Zr'];
+
+  test('22. RARE_ELEMENTS / ULTRA_RARE_ELEMENTS дословно равны перечням спеки', () => {
+    expect([...RARE_ELEMENTS].sort()).toEqual([...DOCS31_RARE].sort());
+    expect([...ULTRA_RARE_ELEMENTS].sort()).toEqual([...DOCS31_ULTRA].sort());
+  });
+
+  test('23. Пулы дизъюнктны; каждый элемент пула — из своего класса rarity (надкласс elements.ts)', () => {
+    const rareSet = new Set(RARE_ELEMENTS);
+    const ultraSet = new Set(ULTRA_RARE_ELEMENTS);
+    for (const el of rareSet) expect(ultraSet.has(el), `${el} в обоих пулах`).toBe(false);
+    for (const el of RARE_ELEMENTS) {
+      expect(ELEMENT_MAP.get(el)?.rarity, `${el} rarity`).toBe('rare');
+    }
+    for (const el of ULTRA_RARE_ELEMENTS) {
+      expect(ELEMENT_MAP.get(el)?.rarity, `${el} rarity`).toBe('ultra_rare');
+    }
+  });
+
+  test('24. Всякий элемент пула ULTRA_RARE имеет deep_ore/drilling_rig (добываем буровой, MVP)', () => {
+    const lookups = getCurrentLookups();
+    for (const el of ULTRA_RARE_ELEMENTS) {
+      const oreId = lookups.elementToOre[el];
+      expect(oreId, `${el}: руда есть в хим.модели`).toBeDefined();
+      const ore = lookups.oreMap.get(oreId!);
+      expect(ore?.type, `${el} тип руды`).toBe('deep_ore');
+      expect(ore?.sourceBuildingId, `${el} добытчик`).toBe('drilling_rig');
+      // порог глубины достижим максимальным уровнем здания (10)
+      expect(ore?.minSourceLevel ?? 0, `${el} minSourceLevel ≤ 10`).toBeLessThanOrEqual(10);
+    }
+  });
+
+  test('25. Кандидатский пул ultra никогда не пуст: у всех 10 свод < 10 (eligible)', () => {
+    // Инвариант «каждая планета получает 1-2 уникальных» (G-06) держится
+    // только если фильтр eligibleUltra (qty < 10) оставляет кандидатов.
+    for (const type of PLANET_TYPES) {
+      for (let seed = 1; seed <= 10; seed++) {
+        const hexes = mkHexes(37);
+        assignResourceDeposits(hexes, new Xoshiro128StarStar(seed).derive('d'), type);
+        const pool = aggregateResourceDeposits(hexes, type, new Xoshiro128StarStar(seed).derive('u'));
+        const poolById = new Map(pool.map(d => [d.elementId, d]));
+        const eligible = ULTRA_RARE_ELEMENTS.filter(e => {
+          const q = poolById.get(e)?.totalQuantity;
+          return q === undefined || q < 10;
+        });
+        expect(eligible.length, `${type} seed${seed}: кандидаты ultra`).toBeGreaterThan(0);
+      }
     }
   });
 });

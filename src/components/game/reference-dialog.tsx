@@ -786,7 +786,7 @@ function ProcessingTab() {
       />
       <ChainSection
         title="Глубинная добыча (буровая)"
-        hint="Редкие и тугоплавкие металлы. Буровая установка в MVP не реализована — руды уже присутствуют в модели галактики."
+        hint="Редкие и тугоплавкие металлы (Ir, Os, Re, Ru, Rh, Pd, Hf, Ta, Nb, Zr, Be и др.). Буровая установка (R-36, MVP): руда с minSourceLevel N требует уровень здания ≥ N (Re — 8)."
         rows={deepRows}
       />
       <ChainSection

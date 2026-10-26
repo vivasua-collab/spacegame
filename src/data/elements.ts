@@ -2,6 +2,28 @@
  * Определения элементов — 60 элементов (57 базовых + 3 трансурановых Np/Pu/Am из Block 01 P7) для SpaceGame.
  * Расширенная таблица (версия 4.0) на основе docs/32-mendeleev.md.
  *
+ * СЕМАНТИКА `rarity` (R-36, аудит «третьего источника»): базовая категория
+ * распространённости элемента по docs/31-resources.md §2/§3 (базовое присутствие,
+ * множители концентрации) — НЕ планетарный пул генерации (см. RARE_ELEMENTS /
+ * ULTRA_RARE_ELEMENTS в planet-types.ts: явные списки спеки, подмножества
+ * классов rarity). Функциональные потребители: fallback-правила генерации руд
+ * (chemistry/ore-generator.ts: RARITY_MODIFIER, уровни переработки) — для
+ * элементов без курированной записи в ore-specs.ts.
+ *
+ * R-36: таблица соответствия с docs/31 §2 (5 расхождений устранены;
+ * остальные 55 значений не менялись):
+ *   | Элемент | Было       | Стало      | Основание |
+ *   |---------|------------|------------|-----------|
+ *   | Pt      | ultra_rare | rare       | docs/31 §2 rare |
+ *   | Au      | ultra_rare | rare       | docs/31 §2 rare |
+ *   | U       | ultra_rare | rare       | docs/31 §2 rare |
+ *   | Be      | ultra_rare | rare       | docs/31 §2 rare |
+ *   | Zr      | rare       | ultra_rare | docs/31 §2 ultra_rare |
+ * Регрессионный снапшот распределения (14/12/13/21) — tests/elements-rarity.test.ts.
+ * На запечённую химию изменения не влияют: все 5 элементов имеют курированные
+ * ORE_SPECS (fallback-правила по rarity до них не доходят), в UI rarity не
+ * отображается (проверено rg, R-36).
+ *
  * Категории:
  * - structural: строительные базовые материалы (Fe, Si, Al, C)
  * - fuel: топливные/энергетические (H, He)
@@ -56,7 +78,7 @@ export const ELEMENTS: ElementDef[] = [
 
   // ============ Щёлочноземельные металлы ============
   { id: 'Be', name: 'Бериллий', symbol: 'Be', category: 'alkaline_earth', baseValue: 8, density: 1.85, isAtmospheric: false,
-    atomicNumber: 4, atomicMass: 9.0, chemicalCharacter: 'alkaline_earth', oxidationState: 2, rarity: 'ultra_rare' },
+    atomicNumber: 4, atomicMass: 9.0, chemicalCharacter: 'alkaline_earth', oxidationState: 2, rarity: 'rare' }, // R-36: ultra_rare → rare (docs/31 §2)
   { id: 'Mg', name: 'Магний', symbol: 'Mg', category: 'alkaline_earth', baseValue: 1.2, density: 1.74, isAtmospheric: false,
     atomicNumber: 12, atomicMass: 24.3, chemicalCharacter: 'alkaline_earth', oxidationState: 2, rarity: 'abundant' },
   { id: 'Ca', name: 'Кальций', symbol: 'Ca', category: 'alkaline_earth', baseValue: 0.6, density: 1.55, isAtmospheric: false,
@@ -112,9 +134,9 @@ export const ELEMENTS: ElementDef[] = [
 
   // ============ Благородные металлы ============
   { id: 'Au', name: 'Золото', symbol: 'Au', category: 'noble', baseValue: 15, density: 19.32, isAtmospheric: false,
-    atomicNumber: 79, atomicMass: 197.0, chemicalCharacter: 'noble_metal', oxidationState: 3, rarity: 'ultra_rare' },
+    atomicNumber: 79, atomicMass: 197.0, chemicalCharacter: 'noble_metal', oxidationState: 3, rarity: 'rare' }, // R-36: ultra_rare → rare (docs/31 §2)
   { id: 'Pt', name: 'Платина', symbol: 'Pt', category: 'noble', baseValue: 20, density: 21.45, isAtmospheric: false,
-    atomicNumber: 78, atomicMass: 195.1, chemicalCharacter: 'noble_metal', oxidationState: 4, rarity: 'ultra_rare' },
+    atomicNumber: 78, atomicMass: 195.1, chemicalCharacter: 'noble_metal', oxidationState: 4, rarity: 'rare' }, // R-36: ultra_rare → rare (docs/31 §2)
   { id: 'Ag', name: 'Серебро', symbol: 'Ag', category: 'noble', baseValue: 12, density: 10.49, isAtmospheric: false,
     atomicNumber: 47, atomicMass: 107.9, chemicalCharacter: 'noble_metal', oxidationState: 1, rarity: 'rare' },
   { id: 'Ru', name: 'Рутений', symbol: 'Ru', category: 'noble', baseValue: 18, density: 12.45, isAtmospheric: false,
@@ -142,9 +164,9 @@ export const ELEMENTS: ElementDef[] = [
 
   // ============ Редкие/стратегические ============
   { id: 'U', name: 'Уран', symbol: 'U', category: 'rare', baseValue: 10, density: 19.05, isAtmospheric: false,
-    atomicNumber: 92, atomicMass: 238.0, chemicalCharacter: 'reactive_metal', oxidationState: 4, rarity: 'ultra_rare' },
+    atomicNumber: 92, atomicMass: 238.0, chemicalCharacter: 'reactive_metal', oxidationState: 4, rarity: 'rare' }, // R-36: ultra_rare → rare (docs/31 §2)
   { id: 'Zr', name: 'Цирконий', symbol: 'Zr', category: 'rare', baseValue: 5, density: 6.52, isAtmospheric: false,
-    atomicNumber: 40, atomicMass: 91.2, chemicalCharacter: 'refractory_metal', oxidationState: 4, rarity: 'rare' },
+    atomicNumber: 40, atomicMass: 91.2, chemicalCharacter: 'refractory_metal', oxidationState: 4, rarity: 'ultra_rare' }, // R-36: rare → ultra_rare (docs/31 §2)
   { id: 'Hf', name: 'Гафний', symbol: 'Hf', category: 'rare', baseValue: 8, density: 13.31, isAtmospheric: false,
     atomicNumber: 72, atomicMass: 178.5, chemicalCharacter: 'refractory_metal', oxidationState: 4, rarity: 'ultra_rare' },
 

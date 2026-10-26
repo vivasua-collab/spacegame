@@ -105,8 +105,11 @@ export function processEconomyTick(planets: Planet[], queues: Map<EntityId, Prod
  *   - quarry (карьер) — НЕМЕТАЛЛИЧЕСКИЕ ресурсы (sourceBuildingId='quarry');
  *   - gas_extractor (газовый экстрактор) — АТМОСФЕРНЫЕ ГАЗЫ (на поверхности
  *     и в атмосферном слоте — из атмосферы планеты, НЕ из залежей гекса);
- *   - глубинные руды (sourceBuildingId='drilling_rig') — post-MVP, базовым
- *     добытчикам недоступны (docs/31-resources.md §5.2, docs/40 §2.4);
+ *   - drilling_rig (буровая установка) — ГЛУБИННЫЕ руды
+ *     (sourceBuildingId='drilling_rig'). R-36 (вариант «а» владельца):
+ *     здание добавлено в MVP-каталог (surface.json) — пулы RARE (Be) и
+ *     ULTRA_RARE (Ir,Os,Re,Ru,Rh,Pd,Hf,Ta,Nb,Zr) добываемы; порог глубины —
+ *     BakedOre.minSourceLevel (уровень здания ≥ порога руды);
  *   - вода H2O-ice — добывается и шахтой, и карьером (R-27: единственная
  *     залежь-источник H/O, ice_harvester post-MVP — recipes.ts process_H2O).
  * До фикса поверхностная ветка обрабатывала ЛЮБОЕ здание категории extraction
@@ -145,8 +148,10 @@ function processExtraction(planet: Planet): void {
       } else {
         for (const deposit of hex.deposits) {
           if (deposit.quantity <= 0) continue;
-          // G-01 (fix): только залежи, принадлежащие роли этого здания
-          if (!canMineDeposit(buildingDef.id, deposit.elementId)) continue;
+          // G-01 (fix): только залежи, принадлежащие роли этого здания.
+          // R-36: + порог глубины minSourceLevel (уровень здания ≥ порога руды;
+          // у всех mine/quarry-руд порог 1 — поведение не меняется).
+          if (!canMineDeposit(buildingDef.id, deposit.elementId, hex.buildingLevel)) continue;
 
           // 1 тик = 1 день. Базовая скорость: ~1 единица/день при availability=0.5
           const baseRate = 1.0 * deposit.availability;
@@ -221,17 +226,26 @@ function processExtraction(planet: Planet): void {
 
 /**
  * G-01 (Task 37): может ли поверхностное добывающее здание buildingId
- * (mine/quarry/…) добыть залежь resourceId? Роль залежи берётся из
+ * (mine/quarry/drilling_rig) добыть залежь resourceId? Роль залежи берётся из
  * запечённой хим.модели (BakedOre.sourceBuildingId — единый источник
  * истины, автогенерация docs/33-chemistry.md).
+ *
+ * R-36: buildingLevel (опционально, по умолчанию Infinity — без ограничения)
+ * включает порог ГЛУБИНЫ BakedOre.minSourceLevel (docs/40 §2.4: «каждый
+ * уровень буровой открывает большую глубину»; данные уже были в хим.модели:
+ * Re-ore=8, Rh/Ta/Pd/Dy=6, большинство deep_ore=5, Y=2, Ba=1; у всех
+ * mine/quarry-руд порог = 1 — фиксируется тестом). Colony hub вызывает
+ * isSurfaceMinable БЕЗ уровня: его роль — базовые поверхностные руды
+ * (пороги 1), глубинные руды ему недоступны по роли.
  */
-function canMineDeposit(buildingId: string, resourceId: string): boolean {
+function canMineDeposit(buildingId: string, resourceId: string, buildingLevel: number = Number.POSITIVE_INFINITY): boolean {
   if (!hasCurrentLookups()) return true; // нет baked-модели — легаси-поведение
   const lookups = getCurrentLookups();
 
   // Руда с известной ролью: добытчик должен совпадать (mine/quarry/drilling_rig)
+  // и здание должно достигать глубины залежи (minSourceLevel, R-36).
   const ore = lookups.oreMap.get(resourceId);
-  if (ore) return ore.sourceBuildingId === buildingId;
+  if (ore) return ore.sourceBuildingId === buildingId && buildingLevel >= ore.minSourceLevel;
 
   // R-27: вода (H2O-ice) — единственная залежь-источник H и O; добывается
   // и шахтой, и карьером (ice_harvester — post-MVP, docs/40-buildings §2.5).

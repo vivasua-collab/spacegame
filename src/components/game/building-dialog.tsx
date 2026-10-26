@@ -1276,7 +1276,7 @@ function ProcessorSpecializationPanel({
         {/* Universal processor — подсказка про минимальный уровень */}
         {isUniversalInstance && !isLimitSpecializedForm && (
           <div className="text-[11px] text-slate-500 italic">
-            Требуется уровень здания ≥ 3 для специализации. Глубинные руды (Y, Ba, Zr и др.) — ≥ 5.
+            Требуется уровень здания ≥ 3 для специализации. Глубинные руды (добываются буровой установкой) — ≥ 5.
           </div>
         )}
       </div>

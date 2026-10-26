@@ -136,3 +136,68 @@ describe('Block 01 T1: PRNG determinism', () => {
     expect(std).toBeLessThan(0.31);
   });
 });
+
+// ============ R-36: защита от полностью нулевого состояния ============
+
+describe('R-36 (аудит R-35): валидность состояния — никогда не [0,0,0,0]', () => {
+  /**
+   * Единственное требование xoshiro128** к состоянию — не все нули
+   * (нулевое состояние вырождено: переход оставляет все слова нулями,
+   * выход — постоянный 0). fromState/derive уже защищались; R-36 добавил
+   * защиту в конструктор (defense-in-depth, требование аудитора).
+   */
+
+  test('Z1. Конструктор: seed 0 и краевые seed дают НЕ-нулевое состояние', () => {
+    for (const seed of [0, 1, -1, 2 ** 31, 2 ** 53 - 1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const rng = new Xoshiro128StarStar(seed);
+      const st = rng.snapshotState();
+      const allZero = st[0] === 0 && st[1] === 0 && st[2] === 0 && st[3] === 0;
+      expect(allZero, `seed=${String(seed)}: state=${JSON.stringify(st)}`).toBe(false);
+    }
+  });
+
+  test('Z2. Конструктор(0): детерминирован и жизнеспособен (поток не вырожден в 0)', () => {
+    const a = new Xoshiro128StarStar(0);
+    const b = new Xoshiro128StarStar(0);
+    for (let i = 0; i < 100; i++) {
+      const va = a.nextU32();
+      const vb = b.nextU32();
+      expect(va).toBe(vb);
+    }
+    // поток живой: не все выходы равны 0 и не постоянны
+    const c = new Xoshiro128StarStar(0);
+    const outs = new Set<number>();
+    for (let i = 0; i < 100; i++) outs.add(c.nextU32());
+    expect(outs.size).toBeGreaterThan(50);
+  });
+
+  test('Z3. Прямо нулевое состояние через fromState([0,0,0,0]) → нормализуется', () => {
+    const rng = Xoshiro128StarStar.fromState([0, 0, 0, 0]);
+    const st = rng.snapshotState();
+    const allZero = st[0] === 0 && st[1] === 0 && st[2] === 0 && st[3] === 0;
+    expect(allZero).toBe(false);
+    // детерминированный фолбэк: слово0 = 1 (как задокументировано)
+    expect(st[0]).toBe(1);
+    // и поток живой
+    expect(rng.nextU32()).not.toBeUndefined();
+  });
+
+  test('Z4. fromState: не-числа/NaN/Infinity → 0-слова; всё-нулевое после нормализации → фолбэк', () => {
+    const rng = Xoshiro128StarStar.fromState([Number.NaN, 'x', null, Number.POSITIVE_INFINITY]);
+    const st = rng.snapshotState();
+    const allZero = st[0] === 0 && st[1] === 0 && st[2] === 0 && st[3] === 0;
+    expect(allZero).toBe(false);
+  });
+
+  test('Z5. Широкий прогон: 100k seed подряд — ни одного нулевого состояния', () => {
+    // Defense-in-depth не должен когда-либо срабатывать на практике
+    // (splitMix64 не даёт 4 подряд нулевых младших слова), но контракт
+    // проверяем на большом диапазоне.
+    let zeroCount = 0;
+    for (let seed = 0; seed < 100_000; seed++) {
+      const st = new Xoshiro128StarStar(seed).snapshotState();
+      if (st[0] === 0 && st[1] === 0 && st[2] === 0 && st[3] === 0) zeroCount++;
+    }
+    expect(zeroCount).toBe(0);
+  });
+});

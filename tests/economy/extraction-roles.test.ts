@@ -7,7 +7,10 @@
  *   - mine (шахта)       — металлические руды (sourceBuildingId='mine');
  *   - quarry (карьер)    — неметаллические ресурсы (sourceBuildingId='quarry');
  *   - gas_extractor      — атмосферные газы (поверхность И слот — из атмосферы);
- *   - drilling_rig-руды  — post-MVP: базовым добытчикам недоступны;
+ *   - drilling_rig       — глубинные руды (deep_ore). R-36 (вариант «а»
+ *     владельца): здание в MVP-каталоге; базовые добытчики (mine/quarry/hub)
+ *     глубокие руды НЕ извлекают (негативные тесты), буровая извлекает все
+ *     (позитивные), порог глубины — BakedOre.minSourceLevel;
  *   - H2O-ice (вода)     — R-27: добывается и шахтой, и карьером;
  *   - colony_hub         — базовая добыча (mine ∪ quarry ∪ вода) на 50% шахты.
  *
@@ -21,9 +24,11 @@
 
 import { test, expect, describe } from 'bun:test';
 import { processEconomyTick } from '@/economy/engine';
-import { setCurrentLookups } from '@/data/baked-lookups';
+import { setCurrentLookups, getCurrentLookups } from '@/data/baked-lookups';
 import { bakeGalaxyModel } from '@/data/chemistry-generator';
 import { ELEMENTS } from '@/data/elements';
+import { ULTRA_RARE_ELEMENTS } from '@/data/planet-types';
+import { BUILDING_MAP } from '@/data/buildings';
 import { createDefaultWarehouse, getUsedCapacityByType } from '@/data/warehouse';
 import { ATMOSPHERE_GAS_MAP, DIRECT_GAS_MAP } from '@/data/atmosphere-gases';
 import type { Planet, HexCell, HexTerrain, EntityId, ProductionQueue, AtmosphericSlot, ResourceDeposit } from '@/core/types';
@@ -132,8 +137,10 @@ describe('D1/G-01: роли поверхностных добытчиков (ф�
     expect(depositQty(p, 'Y-ore')).toBe(1000);
   });
 
-  test('3. Глубинные руды drilling_rig недоступны НИ ОДНОМУ текущему добытчику', () => {
-    // docs/31-resources.md §5.2: глубинная руда — drilling_rig (post-MVP)
+  test('3. Глубинные руды drilling_rig недоступны НИ ОДНОМУ базовому добытчику', () => {
+    // docs/31-resources.md §5.2: глубинная руда — drilling_rig.
+    // R-36: drilling_rig теперь ЕСТЬ в MVP — но mine/quarry/hub по-прежнему
+    // не добывают deep_ore (роль залежи ≠ роль здания).
     for (const b of ['mine', 'quarry', 'colony_hub'] as const) {
       const p = makePlanet({ buildingId: b });
       runTicks(p, 5);
@@ -295,5 +302,121 @@ describe('D1: модификаторы добычи (уровень, местн�
     const p = makePlanet({ buildingId: 'gas_extractor', atmosphere: 'standard', deposits: [] });
     runTicks(p, 3000); // 4 газа × 1.38/тик — газовый склад 2000 заполнится
     expect(getUsedCapacityByType(p, 'gas')).toBeLessThanOrEqual(2000 + 1e-6);
+  });
+});
+
+// ============ R-36: буровая установка (drilling_rig) — MVP ============
+
+/** Все 10 руд спека-пула ultra_rare (docs/31 §2, вариант «а»). */
+const SPEC_ULTRA_ORES = ULTRA_RARE_ELEMENTS.map(el => `${el}-ore`);
+
+describe('R-36: буровая установка — глубокие руды пулов RARE/ULTRA_RARE', () => {
+  test('R1. Негатив: mine/quarry/colony_hub НЕ добывают НИ ОДНУ из 10 спековых руд', () => {
+    const deposits: ResourceDeposit[] = SPEC_ULTRA_ORES.map(oreId => ({
+      elementId: oreId, availability: 0.5, quantity: 1000, depth: 5,
+    }));
+    for (const b of ['mine', 'quarry', 'colony_hub'] as const) {
+      const p = makePlanet({ buildingId: b, deposits });
+      runTicks(p, 10);
+      for (const oreId of SPEC_ULTRA_ORES) {
+        expect(p.resources[oreId], `${b} / ${oreId}`).toBeUndefined();
+      }
+      // залежи не тратятся
+      for (const d of p.hexes[0]!.deposits) expect(d.quantity, `${b} / ${d.elementId}`).toBe(1000);
+    }
+  });
+
+  test('R2. Позитив: буровая L10 извлекает КАЖДУЮ из 10 спековых руд (глубина 5)', () => {
+    for (const oreId of SPEC_ULTRA_ORES) {
+      const p = makePlanet({
+        buildingId: 'drilling_rig',
+        buildingLevel: 10, // покрывает все minSourceLevel ≤ 8 (Re)
+        deposits: [{ elementId: oreId, availability: 0.5, quantity: 1000, depth: 5 }],
+      });
+      runTicks(p, 10);
+      // L10: 0.5 × (1 + 10×0.15) × 1 (plains без бонуса) = 1.25/тик → 12.5 за 10 тиков
+      expect(p.resources[oreId], `${oreId} добыта буровой`).toBeCloseTo(12.5, 5);
+      expect(depositQty(p, oreId), `${oreId} залежь истощается`).toBeCloseTo(1000 - 12.5, 5);
+    }
+  });
+
+  test('R3. Порог глубины: Re-ore (minSourceLevel 8) — L7 нет, L8 да', () => {
+    for (const [level, extracted] of [[7, false], [8, true]] as const) {
+      const p = makePlanet({
+        buildingId: 'drilling_rig',
+        buildingLevel: level,
+        deposits: [{ elementId: 'Re-ore', availability: 0.5, quantity: 1000, depth: 5 }],
+      });
+      runTicks(p, 10);
+      if (extracted) {
+        // L8: 0.5 × (1 + 8×0.15) = 1.1/тик
+        expect(p.resources['Re-ore'], `L${level}`).toBeCloseTo(11, 5);
+      } else {
+        expect(p.resources['Re-ore'], `L${level}`).toBeUndefined();
+        expect(depositQty(p, 'Re-ore'), `L${level}: залежь не тратится`).toBe(1000);
+      }
+    }
+  });
+
+  test('R4. Порог глубины: Y-ore (minSourceLevel 2) — L1 нет, L2 да; Ba-ore (1) — L1 да', () => {
+    const y1 = makePlanet({
+      buildingId: 'drilling_rig', buildingLevel: 1,
+      deposits: [{ elementId: 'Y-ore', availability: 0.5, quantity: 1000, depth: 4 }],
+    });
+    runTicks(y1, 10);
+    expect(y1.resources['Y-ore'], 'Y-ore L1 (порог 2)').toBeUndefined();
+
+    const y2 = makePlanet({
+      buildingId: 'drilling_rig', buildingLevel: 2,
+      deposits: [{ elementId: 'Y-ore', availability: 0.5, quantity: 1000, depth: 4 }],
+    });
+    runTicks(y2, 10);
+    expect(y2.resources['Y-ore'], 'Y-ore L2').toBeCloseTo(10 * 0.5 * 1.3, 5);
+
+    const ba1 = makePlanet({
+      buildingId: 'drilling_rig', buildingLevel: 1,
+      deposits: [{ elementId: 'Ba-ore', availability: 0.5, quantity: 1000, depth: 4 }],
+    });
+    runTicks(ba1, 10);
+    expect(ba1.resources['Ba-ore'], 'Ba-ore L1 (порог 1)').toBeCloseTo(10 * 0.5 * 1.15, 5);
+  });
+
+  test('R5. Каталог: drilling_rig — extraction/surface/10 уровней; у ВСЕХ deep_ore порог ≤ 10', () => {
+    const def = BUILDING_MAP.get('drilling_rig');
+    expect(def, 'drilling_rig в каталоге (data-driven surface.json)').toBeDefined();
+    expect(def!.category).toBe('extraction');
+    expect(def!.layer).toContain('surface');
+    expect(def!.levels).toBe(10);
+
+    const lookups = getCurrentLookups();
+    for (const ore of lookups.oreMap.values()) {
+      if (ore.sourceBuildingId === 'drilling_rig') {
+        expect(ore.minSourceLevel, `${ore.id}: порог достижим`).toBeLessThanOrEqual(10);
+      }
+    }
+  });
+
+  test('R6. Регрессия порога: у ВСЕХ mine/quarry-руд minSourceLevel=1 (поведение L1 без изменений)', () => {
+    const lookups = getCurrentLookups();
+    for (const ore of lookups.oreMap.values()) {
+      if (ore.sourceBuildingId === 'mine' || ore.sourceBuildingId === 'quarry') {
+        expect(ore.minSourceLevel, `${ore.id}`).toBe(1);
+      }
+    }
+  });
+
+  test('R7. Синергия mining_cluster: две смежные буровые +10% (тот же подтип)', () => {
+    const deposits: ResourceDeposit[] = [
+      { elementId: 'Zr-ore', availability: 0.5, quantity: 100000, depth: 4 },
+    ];
+    const solo = makePlanet({ buildingId: 'drilling_rig', buildingLevel: 3, deposits });
+    const paired = makePlanet({
+      buildingId: 'drilling_rig', buildingLevel: 3, deposits,
+      extraHexes: [{ buildingId: 'drilling_rig', buildingLevel: 1, coord: { q: 1, r: 0 } }],
+    });
+    runTicks(solo, 10);
+    runTicks(paired, 10);
+    // Zr-ore minSourceLevel 3 — L3 обеих буровых проходит порог
+    expect(paired.resources['Zr-ore']! / solo.resources['Zr-ore']!).toBeCloseTo(1.1, 5);
   });
 });
