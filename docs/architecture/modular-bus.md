@@ -1725,6 +1725,96 @@ export const gameBus = new EventBus();
 
 ---
 
+## 9.1 Поправка R-39: единая шина и контракт синхронизации стора (актуальное состояние)
+
+> **Статус:** реализовано в R-39 (этап 2, P0-1). Разделы 1–10 выше — исходный
+> проект 2026-03; этот раздел фиксирует ФАКТИЧЕСКИЙ контракт после R-39.
+> При расхождениях приоритет у этого раздела.
+
+### 9.1.1 Единая шина (gameBus === mediator.getBus())
+
+До R-39 существовали ДВЕ шины: собственная `TypedEventBus` медиатора и
+глобальный синглтон `gameBus`, в который engine-функции (`economy/engine.ts`,
+`ships/fleet-engine.ts`, `data/ships/shipyard-queue.ts`) эмитили исходы
+операций (`economy:production-complete`, `fleet:movement-started`,
+`ships:construction-progress`, ...). В продакшене на `gameBus` не было ни
+одного подписчика — события терялись, будущие модули (AI этапа 3) не могли
+бы на них подписаться. Это нарушало принцип §1.3 «Шина — единственный
+канал».
+
+**С R-39** `GameMediator` использует `gameBus` как свою шину:
+`gameBus === mediator.getBus()` — один инстанс на процесс. Любые эмишены
+engine достигают подписчиков медиатора, и наоборот. Безопасность
+синглтона: `GameMediator` создаётся только через `getGameMediator()`;
+`resetGameMediator()` перед пересозданием вызывает `bus.clear()` (подписки
+не протекают между инстансами).
+
+### 9.1.2 Дублирование эмишенов устранено
+
+Прежде `EconomyModule` РЕ-эмитил `economy:building-constructed/upgraded/
+downgraded/demolished`, `economy:planet-colonized` на шину медиатора
+(потому что engine эмитил в «мёртвый» gameBus). После унификации это
+стало бы ДУБЛЕМ (два события на одно действие). Р-39: модуль больше НЕ
+ре-эмитит события, которые публикует engine с идентичным payload
+(конвенция reportIndex: surface → hexIndex ≥ 0, atmosphere → −1−slot,
+orbit → −100−slot).
+
+### 9.1.3 Порядок событий (контракт)
+
+| Источник | Когда эмитит | Примеры |
+|---|---|---|
+| engine-функции | в момент операции, ВНУТРИ `produce()` модуля (до коммита) | `economy:building-constructed`, `economy:production-complete`, `fleet:movement-started` |
+| модули | ПОСЛЕ `mediator.commitState()` | `core:state-changed`, `tech:*` |
+| стор (UI-действия) | после мутации + `syncMediatorState()` | `tech:fundamental-leveled` |
+
+Payload событий самодостаточен (не содержит ссылок на state). Подписчикам,
+которым нужен закоммиченный state, следует читать его в обработчике
+`core:state-changed` или после возврата store-действия.
+
+### 9.1.4 Контракт синхронизации store ↔ mediator (закрытие Pass 1 P0-1)
+
+Два разрешённых паттерна изменения GameState:
+
+- **Pattern A (через шину):** store-экшен эмитит команду (`economy:build`,
+  `economy:colonize`, ...) → модуль оборачивает engine-вызов в
+  `immer.produce()` → `mediator.commitState()` → `core:state-changed` →
+  подписка стора обновляет Zustand. Используется для операций с движковой
+  валидацией (строительство, колонизация, очереди).
+- **Pattern B (прямая мутация + синк):** store-экшен мутирует draft через
+  immer-middleware и вызывает `syncMediatorState()` → `commitState()` →
+  `core:state-changed` (тот же ref — ре-рендера нет). Используется для
+  простых мутаций (склад, резервы, флоты, исследования).
+
+**Правила:** (1) каждое действие проходит ровно ОДИН коммит — двойная
+обработка исключена; (2) прямой `useGameStore.setState({ gameState })` в
+продакшн-коде ЗАПРЕЩЁН (минуя экшены он не синхронизирует медиатор) —
+только UI-поля (view/selected*/galaxySeed); (3) UI-only действия
+(view/selectSystem/selectPlanet/selectFleet/rollGalaxySeed) gameState не
+трогают и синхронизации не требуют.
+
+### 9.1.5 Жизненный цикл GameLoop (R-39)
+
+- `setLoadedState(state)`: НЕ останавливает модули (они не владеют
+  состоянием); приводит loop в соответствие фазе загруженного сейва
+  (playing+speed>0 → `startAll`+`loop.start()`; иначе → `loop.pause()`).
+  Прежде `stopAll()` без `startAll()` замораживал симуляцию при загрузке
+  в активной сессии.
+- `newGame()` поверх активной игры: `loop.pause()` (интервал прошлой игры
+  не утекает), модули остаются started.
+- `saveGame()`: loop реально останавливается на время сериализации+сети
+  (`mediator.loop.pause()`), фаза playing сериализуется как `paused`
+  (семантика «playing-сейв загружается на паузе»), фаза `colonization`
+  сериализуется честно (баннер колонизации переживает загрузку).
+- Phase-guard в тиках модулей (Economy/Ships/Fleet/Research): экономика и
+  движение обрабатываются ТОЛЬКО в фазе `playing` (защита в глубину).
+- `resetGameMediator()` → следующий store-экшен перерегистрирует модули
+  на новом медиаторе и восстанавливает его gameState из стора
+  (instance-tracking `modulesRegisteredOn`).
+
+Покрытие: `tests/r39-store-mediator-sync.test.ts` (T1–T19).
+
+---
+
 ## 10. Шаблон нового модуля
 
 ### 10.1 Структура файлов

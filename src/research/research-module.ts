@@ -257,8 +257,8 @@ export class ResearchModule implements IGameModule {
       }
     }
 
-    // Note: tech:fundamental-leveled is emitted from game-store.levelUpFundamental action
-    // (it's a UI-triggered action, not a tick).
+    // R-39: tech:fundamental-leveled эмитится store-акцией levelUpFundamental
+    // (UI-действие, не тик) — пост-мутация на шине медиатора (единая gameBus).
     void time;
   }
 

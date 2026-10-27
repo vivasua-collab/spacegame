@@ -26,7 +26,9 @@ import { getGameMediator } from '@/core/game-mediator';
 import { applyColonyRole, calculateWarehouseCapacity, calculateWarehouseCapacities, canStoreResource, getOrbitBufferUsed } from '@/data/warehouse';
 import { bakeGalaxyModel } from '@/data/chemistry-generator';
 import { ELEMENTS } from '@/data/elements';
-import { setCurrentLookups } from '@/data/baked-lookups';
+import { setCurrentLookups, getCurrentLookups } from '@/data/baked-lookups';
+import type { BakedGalaxyModel } from '@/data/chemistry-generator'; // R-39: тип модели для защиты lookups при отказе загрузки
+import type { GameMediator } from '@/core/game-mediator'; // R-39: тип для instance-tracking регистрации модулей
 import { EconomyModule } from '@/economy/economy-module';
 import { GalaxyModule } from '@/galaxy/galaxy-module';
 import { resetProductionItemCounter, restoreProductionItemCounter } from '@/economy/engine';
@@ -108,6 +110,14 @@ export interface GameStore {
   isSaving: boolean;
   saveError: string | null;
   isLoading: boolean;
+  /**
+   * R-39: предупреждения последней УСПЕШНОЙ загрузки (наблюдаемость
+   * миграций для пользователя — не только console.warn): сюда попадают
+   * отказы миграции свода R-38 (тело сохраняет прежний свод) и перепись
+   * тел, ожидающих версионной материализации R-37. Пустой массив —
+   * чистая загрузка без замечаний. UI (page.tsx) показывает тост.
+   */
+  loadWarnings: string[];
   /**
    * Audit 2026-08-28: случайный seed галактики для нового меню.
    * Хранится в Zustand store (НЕ в локальном useState компонента page.tsx),
@@ -251,19 +261,29 @@ export interface GameStore {
 
 // ============ Медиатор (инициализация) ============
 
-/** Флаг: были ли модули уже зарегистрированы */
-let modulesRegistered = false;
+/**
+ * R-39 (P0-1): медиатор, на котором зарегистрированы модули стора.
+ *
+ * Прежде это был булев флаг `modulesRegistered`, который НЕ сбрасывался
+ * при resetGameMediator(): после пересоздания синглтона стор продолжал
+ * думать, что модули зарегистрированы, — новый медиатор оставался БЕЗ
+ * модулей и БЕЗ подписки core:state-changed (тихий полный рассинхрон
+ * стора и симуляции). Теперь отслеживаем ИНСТАНС: если синглтон
+ * пересоздан (тесты/resetGameMediator) — модули и подписка
+ * регистрируются заново на новом медиаторе.
+ */
+let modulesRegisteredOn: GameMediator | null = null;
 
 /**
  * Получить медиатор с зарегистрированными модулями.
- * Также подписывается на `core:state-changed` один раз —
- * это позволяет модулям и медиатору синхронизировать Zustand-store
- * после любой мутации GameState (patrn 3.6 из Block 06).
+ * Также подписывается на `core:state-changed` один раз (на каждый инстанс
+ * медиатора) — это позволяет модулям и медиатору синхронизировать
+ * Zustand-store после любой мутации GameState (паттерн 3.6 из Block 06).
  */
-function getMediatorWithModules() {
+function getMediatorWithModules(): GameMediator {
   const mediator = getGameMediator();
 
-  if (!modulesRegistered) {
+  if (modulesRegisteredOn !== mediator) {
     const economyModule = new EconomyModule();
     const galaxyModule = new GalaxyModule();
     // Block 02 (F5, F7): ships + fleet modules — shipyard queue processing
@@ -301,7 +321,18 @@ function getMediatorWithModules() {
       useGameStore.setState({ gameState: newState });
     });
 
-    modulesRegistered = true;
+    modulesRegisteredOn = mediator;
+
+    // R-39 (D4): медиатор пересоздан (resetGameMediator в тестах / смена
+    // инстанса) — у НОВОГО медиатора нет gameState, и первый Pattern A-экшен
+    // (build/colonize/enqueue через шину) молча не сработал бы: модули читали
+    // бы null. Восстанавливаем состояние стора в медиатор (lookups уже
+    // актуальны — их resetGameMediator не трогает; loop приводится в
+    // соответствие фазе). Холодный старт (gameState null) — пропуск.
+    const currentGameState = useGameStore.getState().gameState;
+    if (currentGameState) {
+      mediator.setLoadedState(currentGameState);
+    }
   }
 
   return mediator;
@@ -453,14 +484,20 @@ function countPendingDepositMigrations(systems: Array<Record<string, unknown>> |
  * тело сохраняет прежний свод). Ленивые тела и тела с актуальным сводом
  * законно возвращают false (им миграция не нужна) — отказом НЕ считаются.
  */
-function migrateStaleMaterializedSummaries(systems: Array<Record<string, unknown>> | undefined): { migrated: number; failed: number } {
-  if (!Array.isArray(systems)) return { migrated: 0, failed: 0 };
+function migrateStaleMaterializedSummaries(systems: Array<Record<string, unknown>> | undefined): { migrated: number; failed: number; failures: string[] } {
+  if (!Array.isArray(systems)) return { migrated: 0, failed: 0, failures: [] };
   let migrated = 0;
   let failed = 0;
+  const failures: string[] = [];
   const tryBody = (body: Record<string, unknown>): void => {
     const b = body as unknown as LazyDepositBody;
     if (migrateMaterializedBodySummary(b)) { migrated++; return; }
-    if (needsSummaryMigration(b)) failed++;
+    if (needsSummaryMigration(b)) {
+      failed++;
+      // R-39: наблюдаемость отказа для пользователя (не только console):
+      // тело сохраняет прежний (устаревший) свод — это видно в UI-тосте.
+      failures.push(`тело ${typeof b.id === 'string' ? b.id : '?'}: миграция свода отказана, сохранён прежний свод`);
+    }
   };
   for (const sys of systems) {
     const planets = sys.planets as Array<Record<string, unknown>> | undefined;
@@ -473,11 +510,28 @@ function migrateStaleMaterializedSummaries(systems: Array<Record<string, unknown
       }
     }
   }
-  return { migrated, failed };
+  return { migrated, failed, failures };
+}
+
+/**
+ * R-39: предупреждения последней десериализации (наблюдаемость миграций).
+ * Сбрасывается в начале deserializeGameState; loadGame переносит в
+ * store.loadWarnings для UI-тоста. Читается ТОЛЬКО сразу после успешного
+ * deserializeGameState (канал одноразовый — consume-семантика).
+ */
+let lastDeserializeWarnings: string[] = [];
+
+/** R-39: забрать (и очистить) предупреждения последней deserializeGameState. */
+export function consumeDeserializeWarnings(): string[] {
+  const out = lastDeserializeWarnings;
+  lastDeserializeWarnings = [];
+  return out;
 }
 
 export function deserializeGameState(json: string): GameState {
   const raw = JSON.parse(json);
+  // R-39: канал предупреждений для loadGame → store.loadWarnings (UI-тост).
+  lastDeserializeWarnings = [];
 
   // ─── R-29/R-30: разворот компактного формата v3 ────────────────
   // Мутирует raw на месте (объект свежий из JSON.parse — владеем им):
@@ -529,6 +583,13 @@ export function deserializeGameState(json: string): GameState {
       + `пересчитано ${summaryMigration.migrated}, отказов ${summaryMigration.failed}`
       + ' — физика/склад/прогресс добычи сохранены, dv тел не изменён',
     );
+    // R-39: пользователь видит отказы миграции (тост), а не только консоль.
+    if (summaryMigration.failed > 0) {
+      lastDeserializeWarnings.push(
+        `R-38: миграция свод-пулов — пересчитано ${summaryMigration.migrated}, отказов ${summaryMigration.failed}`,
+        ...summaryMigration.failures,
+      );
+    }
   }
 
   // ─── R-37 (Б2): перепись тел, ожидающих версионной материализации ──
@@ -543,6 +604,10 @@ export function deserializeGameState(json: string): GameState {
     console.warn(
       `[save] R-37: тел, ожидающих версионной материализации залежей (dv → ${DEPOSIT_RNG_VERSION}): ${pendingMigrations}`
       + ' — материализация и пересчёт свод-пула при колонизации',
+    );
+    // R-39: информируем пользователя (информационное, не ошибка).
+    lastDeserializeWarnings.push(
+      `R-37: ${pendingMigrations} тел ждут версионной материализации залежей — применится при колонизации`,
     );
   }
 
@@ -593,6 +658,8 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
     isSaving: false,
     saveError: null,
     isLoading: false,
+    // R-39: предупреждения последней загрузки (миграции сейвов) для UI.
+    loadWarnings: [],
     // Audit 2026-08-28: стабильный seed в store (не прыгает при перемонтировании).
     // Ленивая инициализация один раз при загрузке страницы.
     galaxySeed: Math.floor(Math.random() * 1_000_000) + 1,
@@ -1053,18 +1120,34 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
       if (!gameState) return false;
 
       const savedSpeed = gameState.speed;
-      const savedPhase = gameState.phase;
 
-      // Block 01 P2: pause state during save via immer draft mutation.
-      if (gameState.phase === 'playing' || gameState.phase === 'colonization') {
+      // ─── R-39 (race fix): стопорим САМ GameLoop на время сохранения ──
+      // Прежде блок мутировал phase='paused' + syncMediatorState() и
+      // КОММЕНТАРИЙ утверждал, что «loop.pause() takes effect» — но
+      // loop.pause() никто не вызывал: интервал продолжал тикать всё
+      // время сетевого запроса (секунды на x50), а EconomyModule.tick не
+      // имел phase-guard — экономика обрабатывалась «в паузе», и сериализованное
+      // состояние убегало вперёд от того, что видел игрок в момент клика Save.
+      // Теперь: (1) loop.pause() — интервал реально остановлен; (2) phase
+      // мутируем как прежде (семантика «playing-сейв загружается на паузе»
+      // сохранена); (3) ФАЗА colonization НЕ мутируется — в ней интервал
+      // и так не запущен, а сериализация честного phase='colonization'
+      // восстанавливает баннер колонизации после загрузки (прежде такие
+      // сейвы портились в 'paused' — баннер терялся навсегда).
+      const mediator = getMediatorWithModules();
+      const wasPlaying = gameState.phase === 'playing';
+      if (gameState.phase === 'playing') {
         set((state) => {
           if (!state.gameState) return;
           state.gameState.phase = 'paused';
           state.gameState.speed = 0;
         });
-        // Audit Pass 1 P0-1: sync mediator so loop.pause() actually takes
-        // effect on the current state ref and no tick fires during save.
+        // Audit Pass 1 P0-1: sync mediator so the paused phase is visible to
+        // the loop/mediator on the current state ref.
         syncMediatorState();
+        // R-39: + остановить сам интервал — без этого тики продолжали
+        // обрабатывать экономику во время сетевого запроса (race).
+        mediator.loop.pause();
       }
 
       set({ isSaving: true, saveError: null });
@@ -1143,23 +1226,46 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
         return false;
       } finally {
         // Block 01 P2: restore phase via immer draft mutation.
-        if (savedPhase === 'playing' || savedPhase === 'colonization') {
+        if (wasPlaying) {
           set((state) => {
             if (!state.gameState) return;
-            state.gameState.phase = savedPhase === 'colonization' ? 'colonization' : 'playing';
+            state.gameState.phase = 'playing';
             state.gameState.speed = savedSpeed || 1;
           });
           // Audit Pass 1 P0-1: sync mediator so the GameLoop sees the
           // restored phase/speed and resumes ticking on the new state ref.
           syncMediatorState();
+          // R-39: перезапустить интервал (он был остановлен выше). Фаза
+          // colonization не трогается — её интервал и не запускался.
+          mediator.loop.setSpeed(savedSpeed || 1);
+          mediator.loop.start();
         }
         set({ isSaving: false });
       }
     },
 
     loadGame: async (id: string) => {
-      set({ isLoading: true });
+      set({ isLoading: true, loadWarnings: [] });
+      // R-39: защита активной игры. deserializeGameState сам не мутирует
+      // глобальное состояние ДО zod-валидации (отклонённый сейв бросает ДО
+      // setCurrentLookups), но УСПЕШНАЯ десериализация переключает lookups
+      // на модель загружаемой галактики. Если что-то падает ПОСЛЕ этого
+      // (счётчики/setLoadedState) — lookups восстанавливаем на модель
+      // АКТИВНОЙ игры, чтобы частичная порча не затрагивала текущую сессию.
+      // Реф lookups фиксируем ДО десериализации: восстановление только если
+      // они РЕАЛЬНО переключились (чистый отказ не перестраивает объект).
+      let prevModel: BakedGalaxyModel | null = null;
+      let lookupsAtStart: ReturnType<typeof getCurrentLookups> | null = null;
       try {
+        const activeState = get().gameState;
+        if (activeState?.galaxy.bakedModel) {
+          prevModel = activeState.galaxy.bakedModel;
+        }
+        try {
+          lookupsAtStart = getCurrentLookups();
+        } catch {
+          // lookups ещё не установлены (холодный старт) — нечего защищать.
+        }
         const res = await fetch(`/api/save/${id}`);
         if (!res.ok) throw new Error('Failed to load save');
         const data = await res.json();
@@ -1170,6 +1276,10 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
           : data.state as string;
 
         const loadedState = deserializeGameState(stateJson);
+
+        // R-39: забрать предупреждения миграций ДО любых следующих шагов
+        // (канал одноразовый) — попадут в store.loadWarnings для UI-тоста.
+        const warnings = consumeDeserializeWarnings();
 
         // R-31 (audit): восстановить счётчик ProductionItem IDs из загруженных
         // очередей (max суффикс + 1). Раньше счётчик сбрасывался в 0 — новые
@@ -1186,6 +1296,11 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
         // the very next tick. `setLoadedState` updates `mediator.gameState`,
         // resets the GameLoop time, and emits `core:state-changed` (which our
         // store subscription then forwards back to Zustand).
+        // R-39: setLoadedState также приводит GameLoop в соответствие фазе
+        // загруженного сейва (playing → модули+интервал запущены; пауза/
+        // колонизация → интервал предыдущей игры остановлен) — прежде модули
+        // оставались остановленными после stopAll при загрузке в активной
+        // сессии (заморозка симуляции).
         const mediator = getMediatorWithModules();
         mediator.setLoadedState(loadedState);
 
@@ -1197,10 +1312,27 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
           selectedFleetId: null,
           isInitialized: true,
           currentSaveId: id,
+          loadWarnings: warnings,
         });
         return true;
       } catch (e) {
         console.error('Load failed:', e);
+        // R-39: откат lookups на модель активной игры — ТОЛЬКО если
+        // десериализация успела их переключить (успешный deserialize с
+        // последующим падением счётчиков/setLoadedState). Чистый отказ
+        // (мусор/fmt≠3/zod) бросает ДО setCurrentLookups — lookups не
+        // трогаем, ссылка сохранена.
+        if (prevModel) {
+          let lookupsNow: ReturnType<typeof getCurrentLookups> | null = null;
+          try {
+            lookupsNow = getCurrentLookups();
+          } catch {
+            // lookups сброшены — восстановим модель активной игры ниже.
+          }
+          if (lookupsNow !== lookupsAtStart) {
+            setCurrentLookups(prevModel);
+          }
+        }
         return false;
       } finally {
         set({ isLoading: false });
@@ -1613,6 +1745,7 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
 
     levelUpFundamental: (branchId) => {
       let ok = false;
+      let newLevel = 0;
       set((state) => {
         if (!state.gameState) return;
         const rs = state.gameState.researchState;
@@ -1621,8 +1754,24 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
         // ветки полностью разделены (engine.levelUpFundamentalEngine:
         // миграция rpBank для старых сейвов выполняется внутри).
         ok = levelUpFundamentalEngineFn(rs, branchId);
+        if (ok) {
+          newLevel = rs.fundamentalLevels[branchId] ?? 0;
+        }
       });
       syncMediatorState();
+      // R-39 (P0-1): событие tech:fundamental-leveled ЗАЯВЛЕНО в манифесте
+      // ResearchModule ('emits') и в карте событий (events.ts), но прежде
+      // не эмитилось НИКТОМ (комментарий в research-module.ts ссылался на
+      // этот экшен — событие отсутствовало). Публикуем пост-мутации на
+      // шине медиатора (= единая gameBus): подписчики (UI/будущие модули)
+      // видят повышение ветки.
+      if (ok) {
+        getMediatorWithModules().getBus().emit('tech:fundamental-leveled', {
+          branchId,
+          factionId: get().gameState?.playerFactionId ?? 'player',
+          newLevel,
+        });
+      }
       return ok;
     },
 

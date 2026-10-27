@@ -123,6 +123,9 @@ export class FleetModule implements IGameModule {
     const currentState = this.getGameState?.();
     if (!currentState) return;
     if (currentState.fleets.length === 0) return;
+    // R-39 (phase guard): движение флотов только в фазе playing — зеркалим
+    // guard ResearchModule/EconomyModule (защита в глубину).
+    if (currentState.phase !== 'playing') return;
 
     let stateChanged = false;
     const newState = produce(currentState, (draft) => {

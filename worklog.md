@@ -3585,3 +3585,93 @@ Stage Summary:
 - Обязательное исправление R-38 выполнено и покрыто регрессом; полный набор проверок пройден честно (все числа — фактические запуски).
 - Этап 3 (3а/3б) и этап 4 не начинались; пулы ресурсов не менялись; тесты не ослаблялись.
 - Завершение R-38 не означает принятия этапа 2 — решение за владельцем после аудита.
+
+---
+Task ID: 44 (R-39)
+Agent: Z.ai Code (main agent)
+Task: Финальная приёмка этапа 2 + аудит блокеров этапа 1 (задание аудитора
+R-39, GitHub Issue #3): перепроверка R-38 по коду, закрытие P0-1
+Store→Mediator доказательно, P6/P5, GameLoop lifecycle, защита от
+повреждённых сейвов, таблицы решений владельца, полный прогон гейтов.
+Этап 3 (3а/3б) и этап 4 не начинать; баланс/пулы не менять.
+
+Work Log:
+- База зафиксирована и сверена с R-38: bun test 754/754 (49), lint 0/38,
+  tsc 86/71, validate:all 4/4.
+- ЧАСТЬ A (перепроверка R-38 по коду): migrateMaterializedBodySummary/
+  needsSummaryMigration/summaryContractVersion/save-format sv/deserialize
+  порядок — код соответствует отчёту. Уточнения: политика будущей dv=999
+  (downgrade) задокументирована явно; дефект наблюдаемости отказа миграции
+  (только console.warn) закрыт; защита lookups активной игры расширена.
+- ЧАСТЬ B (P0-1): аудит всех действий стора (16 Pattern A / 26 Pattern B /
+  UI-only / read-only). Найденные дефекты: D1 слой действий стора без
+  тестов; D2 ДВЕ шины (engine эмитил исходы в gameBus с НУЛЁМ подписчиков
+  — production-complete, fleet:*, ships:* терялись); D3 дублирующие
+  ре-эмии EconomyModule; D4 modulesRegistered-флаг не сбрасывался при
+  resetGameMediator; D5 setLoadedState stopAll без startAll — заморозка
+  симуляции при mid-session load; D6 утечка интервала при newGame;
+  D7 saveGame race (loop.pause не вызывался — до ~6 тиков «в паузе» на x50
+  за окно сохранения) + D7b порча фазы colonization в 'paused' при сейве;
+  D8 отсутствие phase-guards (Economy/Ships/Fleet); D9 tech:fundamental-
+  leveled заявлен, но не эмитился никем; D10 мёртвый код onDemolish.
+- Исправления: единая шина (GameMediator.bus = gameBus, синглтон,
+  modular-bus.md §9.1); дедупликация ре-эмичей (payload конвенции сверены);
+  instance-tracking modulesRegisteredOn + восстановление gameState
+  медиатора при пересоздании; setLoadedState без stopAll + синк loop с
+  фазой сейва; newGame → loop.pause(); saveGame → loop.pause() на окно
+  сериализации+сети + честная фаза colonization; phase-guards трёх модулей;
+  tech:fundamental-leveled из levelUpFundamental; store.loadWarnings +
+  тост page.tsx (наблюдаемость миграций R-37/R-38); откат lookups только
+  при реальном переключении.
+- P6: стоимость colony_hub уже в surface.json (Fe10/Si5/Al3) — тест T17
+  всех уровней (150→140→120 / 100→95→85 / 80→77→71), потолок, нехватка →
+  отказ. P5: каталог crafted + UI-цепочка; тесты T18 (полнота реестра —
+  все 75 рецептов разрешимы) + T19 (make_steel → steel по ID через реальный
+  тик) — проблема была только отображением, доступность крафта не зависела.
+- Тесты: tests/r39-store-mediator-sync.test.ts +19 → 773/773 (50 файлов):
+  T1 полный конвейер build (ровно 1 коммит/событие, порядок
+  constructed→state-changed, ref-равенство стора и медиатора); T2 upgrade/
+  downgrade/demolish (по одному событию); T3 cancelProduction не
+  воскрешается тиком; T4 moveToOrbit/role/reserves (буфер переживает тик);
+  T5 UI-only исключения; T6 изоляция ошибок подписчиков; T7 mid-session
+  load(paused) — модули живы (прежде заморозка); T8 cold load(playing) —
+  loop playing; T9 newGame из playing; T10 saveGame race — 0 core:tick в
+  окне на x50, сериализация paused, восстановление playing; T11 честный
+  colonization-сейв; T12–T13 мусор/fmt≠3/zod — активная игра не тронута
+  (refs+lookups); T14 loadWarnings с отказом миграции; T15
+  tech:fundamental-leveled; T16 resetGameMediator → перерегистрация; T17
+  P6; T18/T19 P5.
+- Документация: modular-bus.md §9.1 (единая шина, порядок событий, контракт
+  Pattern A/B, GameLoop lifecycle); STATUS (P0-1/P5/P6 закрыты с
+  доказательствами, метрики 773, changelog R-39); чекпоинт
+  10_27_r39_stage1_stage2_gate.md (§A перепроверка, §B таблица аудита
+  всех действий + исправления, §C таблицы решений владельца по формату
+  задания, §D гейты); план task44.
+- Гейты финал: bun test 773/773 (50) · lint 0/38 · tsc 86 (src 71, Δ0 к
+  базе R-38) · validate:all 4/4 · детерминизм scripts/r39-det-check.ts ×3
+  процесса (seed 2026, 200 систем): sha256 eaed801144b8f255…1cd0 совпал,
+  рантрип побайтно (3 157 800 Б).
+- Браузер (agent-browser, seed 424242): New Galaxy → колонизация (playing,
+  тики идут) → шахта через UI (Pattern A e2e, гекс «Ш») → Save (POST, БД
+  1) → reload → Load (paused, tick 86, семантика; шахта пережила) → x1
+  (playing, тики идут — модули живы) → Save после Load (PUT, тот же id) →
+  0 ошибок страницы/консоли → БД очищена (0 сейвов).
+- КОММИТ R-39 поверх ee25618, push origin/main без force; SHA — отдельным
+  docs-коммитом в чекпоинт §0 (конвенция R-35…R-38).
+
+Stage Summary:
+- P0-1 Store→Mediator закрыт доказательно: единая шина (gameBus ===
+  mediator.getBus()), дедупликация, instance-tracking, GameLoop lifecycle
+  (заморозка mid-session load устранена), saveGame race закрыт,
+  phase-guards, tech:fundamental-leveled, наблюдаемость миграций — всё
+  покрыто интеграционными тестами T1–T19 (полный конвейер, отсутствие
+  двойной обработки, порядок, изоляция ошибок, save/load после действий).
+- P5/P6 закрыты с тестами (отображение/стоимость). STATUS синхронизирован
+  с фактическим состоянием (устаревших «открытых» строк нет).
+- Два отклонения docs/40 §2.4 (тех-гейт, гео-бонусы) — таблицы §C чекпоинта,
+  БЕЗ самовольных изменений баланса: этап 2 не объявляется полностью
+  соответствующим документации до решения владельца.
+- Гейты: 773/773, lint 0/38, tsc Δ0, validate 4/4, sha256 ×3, браузер OK,
+  БД 0 сейвов. CI нет — не заявляется; build не запускался (dev-only).
+- Этап 3 (3а/3б) и этап 4 НЕ начинались; пулы ресурсов не менялись;
+  тесты не ослаблялись.

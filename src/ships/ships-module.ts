@@ -139,6 +139,10 @@ export class ShipsModule implements IGameModule {
   private processShipsTick(time: GameTime): void {
     const currentState = this.getGameState?.();
     if (!currentState) return;
+    // R-39 (phase guard): верфи работают только в фазе playing — зеркалим
+    // guard ResearchModule/EconomyModule (защита в глубину: loop-интервал
+    // не должен мутировать состояние «в паузе»).
+    if (currentState.phase !== 'playing') return;
 
     let shipsCreatedThisTick = 0;
     const newState = produce(currentState, (draft) => {

@@ -93,6 +93,9 @@ export default function Home() {
   // Handle load
   // R-30: отказ загрузки — видимый тост (например, сейв старого формата:
   // deserializeGameState отклоняет fmt≠3 явной ошибкой).
+  // R-39: успешная загрузка С ПРЕДУПРЕЖДЕНИЯМИ МИГРАЦИЙ (store.loadWarnings:
+  // отказы пересчёта свода R-38, тела ждущие материализации R-37) —
+  // наблюдаемость для пользователя, не только console.warn.
   const handleLoad = useCallback(async (id: string) => {
     setLoadingSaveId(id);
     const ok = await loadGame(id);
@@ -102,6 +105,14 @@ export default function Home() {
         title: 'Не удалось загрузить сейв',
         description: 'Сейв повреждён или записан в старом формате (v1/v2 не поддерживаются). Подробности — в консоли.',
         variant: 'destructive',
+      });
+      return;
+    }
+    const warnings = useGameStore.getState().loadWarnings;
+    if (warnings.length > 0) {
+      toast({
+        title: 'Сейв загружен с предупреждениями миграции',
+        description: warnings.slice(0, 3).join(' · ') + (warnings.length > 3 ? ` … (+${warnings.length - 3})` : ''),
       });
     }
   }, [loadGame]);

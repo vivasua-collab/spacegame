@@ -193,5 +193,27 @@ export class TypedEventBus {
   }
 }
 
-/** Глобальная типизированная шина событий игры */
+/**
+ * Глобальная типизированная шина событий игры.
+ *
+ * R-39 (P0-1, «единая шина»): ЭТОТ синглтон используется GameMediator как
+ * его собственная шина (см. game-mediator.ts) — gameBus ===
+ * mediator.getBus(). Engine-функции (economy/engine.ts, ships/
+ * fleet-engine.ts, data/ships/shipyard-queue.ts) эмитят исходы операций
+ * сюда же, поэтому ПОДПИСЧИКИ МЕДИАТОРА ВИДЯТ СОБЫТИЯ ENGINE — и наоборот.
+ *
+ * Порядок событий (контракт R-39): engine-события исходов (economy:
+ * building-constructed, economy:production-complete, fleet:movement-
+ * started, ...) эмитятся в момент выполнения операции — ВНУТРИ immer-
+ * produce() модуля, т.е. ДО mediator.commitState(). События, публикуемые
+ * самими модулями (core:state-changed, tech:*), — ПОСЛЕ коммита.
+ * Подписчикам, которым нужен закоммиченный state, следует читать его в
+ * обработчике core:state-changed или после возврата store-действия
+ * (payload событий самодостаточен и ссылок на state не содержит).
+ *
+ * Прежде (до R-39) медиатор создавал ОТДЕЛЬНЫЙ TypedEventBus, а engine
+ * эмитил сюда — события engine были невидимы для подписчиков медиатора
+ * («мёртвые» эмишены, нарушение modular-bus.md §1.3 «Шина — единственный
+ * канал»).
+ */
 export const gameBus = new TypedEventBus();

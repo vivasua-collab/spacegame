@@ -16,7 +16,7 @@
  * который делегирует действия медиатору.
  */
 
-import { TypedEventBus } from './typed-event-bus';
+import { TypedEventBus, gameBus } from './typed-event-bus';
 import { ModuleRegistry } from './module-registry';
 import { GameLoop } from './game-loop';
 import type { IGameModule, ModuleId } from './module-types';
@@ -36,7 +36,21 @@ export class GameMediator {
   private gameState: GameState | null = null;
 
   constructor() {
-    this.bus = new TypedEventBus();
+    // ─── R-39 (P0-1, «единая шина»): медиатор использует глобальный
+    // синглтон gameBus как СВОЮ шину ──────────────────────────────────
+    // Прежде здесь создавался ОТДЕЛЬНЫЙ TypedEventBus: события исходов
+    // (economy:production-complete, fleet:*, ships:construction-*, ...)
+    // эмитились engine-функциями в gameBus, где в продакшене не было ни
+    // одного подписчика — «шутихие» события, невидимые для модулей и
+    // будущих AI-подписчиков (нарушение контракта docs/architecture/
+    // modular-bus.md §1.3: «Шина — единственный канал межмодульного
+    // взаимодействия»). Теперь gameBus === mediator.getBus(): любые
+    // эмишены engine достигают подписчиков медиатора и наоборот.
+    // Синглтонность безопасна: GameMediator создаётся только через
+    // getGameMediator() (единственный живой инстанс), resetGameMediator()
+    // перед пересозданием вызывает bus.clear() (подписки не протекают
+    // между инстансами), а replay-конфиг переустанавливается ниже.
+    this.bus = gameBus;
     this.registry = new ModuleRegistry(this.bus);
     this.loop = new GameLoop(this.bus, this.registry);
 
@@ -102,9 +116,15 @@ export class GameMediator {
 
   /** Создать новую игру */
   newGame(config?: Partial<GalaxyGenConfig>): GameState {
-    // Остановить текущую игру если есть
+    // Остановить цикл предыдущей игры, если есть.
+    // R-39 (GameLoop lifecycle): прежде здесь вызывался registry.stopAll() —
+    // модули останавливались и НЕ перезапускались до mediator.start()
+    // (который React-эффект вызывает только при смене isInitialized).
+    // Модули не владеют состоянием (всё в GameState) — останавливать их
+    // не нужно; достаточно остановить ИНТЕРВАЛ предыдущей игры, иначе он
+    // продолжал тикать впустую (утечка) до следующего loop.start().
     if (this.gameState) {
-      this.registry.stopAll();
+      this.loop.pause();
     }
 
     const galaxy = generateGalaxy(config);
@@ -142,8 +162,16 @@ export class GameMediator {
 
   /** Установить загруженное состояние */
   setLoadedState(state: GameState): void {
-    this.registry.stopAll();
-
+    // ─── R-39 (P0-1 / GameLoop lifecycle) ──────────────────────────────
+    // Прежде здесь вызывался registry.stopAll() БЕЗ последующего
+    // startAll(): при загрузке сейва В АКТИВНОЙ сессии (isInitialized уже
+    // true — React-эффект mediator.start() не перезапускается) модули
+    // оставались остановленными навсегда: loop тикал, а registry.tickAll
+    // молча пропускал модули — время шло, экономика/флот/исследования
+    // стояли. Модули не владеют состоянием (state в GameState) — stopAll
+    // не нужен; вместо этого приводим loop в соответствие фазе ЗАГРУЖЕННОГО
+    // состояния (интервал предыдущей игры не должен пережить загрузку
+    // «паузы», и наоборот — playing-сейв должен сразу тикать).
     this.gameState = state;
 
     // Установить lookup для baked model
@@ -153,6 +181,17 @@ export class GameMediator {
 
     // Установить время в GameLoop
     this.loop.setTime(state.time);
+
+    if (state.phase === 'playing' && state.speed > 0) {
+      // Идемпотентно: модули уже started → no-op; после stopAll-сценариев
+      // (тесты) — переводит initialized/stopped → started.
+      this.registry.startAll();
+      this.loop.setSpeed(state.speed);
+      this.loop.start();
+    } else {
+      // Пауза/колонизация: остановить интервал предыдущей игры.
+      this.loop.pause();
+    }
 
     this.bus.emit('core:game-loaded', { saveId: '' });
     this.emitStateChanged();

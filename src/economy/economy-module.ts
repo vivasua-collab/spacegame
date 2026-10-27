@@ -20,7 +20,7 @@
 import type { IGameModule, ModuleManifest, ModulePhase } from '@/core/module-types';
 import type { TypedEventBus } from '@/core/typed-event-bus';
 import type { ModuleRegistry } from '@/core/module-registry';
-import type { GameTime, EntityId, ProductionQueue, GameState, BuildingLayer } from '@/core/types';
+import type { GameTime, EntityId, ProductionQueue, GameState } from '@/core/types';
 import type { EventPayload } from '@/core/events';
 import { findPlanet } from '@/core/find-planet';
 import { PRIORITY } from '@/core/module-types';
@@ -50,19 +50,24 @@ export class EconomyModule implements IGameModule {
     description: 'Добыча ресурсов, производство, энергетика, склады',
     dependencies: ['galaxy'],
     emits: [
-      'economy:building-constructed',
-      'economy:building-upgraded',
-      'economy:building-downgraded',
-      'economy:building-demolished',
-      'economy:production-complete',
-      'economy:planet-colonized',
+      // R-39 (единая шина): события исходов помеченные (*) эмитятся
+      // engine-функциями на gameBus (=== шина медиатора) внутри
+      // produce()-блока обработчиков; модуль их НЕ ре-эмитит (дубль).
+      // Манифест описывает события СИСТЕМЫ economy (кто бы их ни публиковал
+      // на пути store → модуль → engine).
+      'economy:building-constructed', // (*) engine.buildOn*
+      'economy:building-upgraded',    // (*) engine.upgradeBuilding
+      'economy:building-downgraded',  // (*) engine.downgradeBuilding
+      'economy:building-demolished',  // (*) engine.demolishBuilding
+      'economy:production-complete',  // (*) engine.processEconomyTick
+      'economy:planet-colonized',     // (*) engine.colonizePlanet
       'economy:energy-recalced',
       'economy:resource-depleted',
       'economy:warehouse-full',
       'economy:warehouse-updated',
       // Block 05 PR7 — specialization events
-      'economy:building-specialized',
-      'economy:specialization-upgraded',
+      'economy:building-specialized',   // (*) engine.specializeBuilding
+      'economy:specialization-upgraded',// (*) engine.upgradeSpecialization
       'economy:processor-output-changed',
       'core:state-changed',
     ],
@@ -204,7 +209,6 @@ export class EconomyModule implements IGameModule {
     // mutates the draft directly (Option A: Draft<Planet> is structurally
     // compatible with Planet for mutation purposes).
     let success = false;
-    let reportedHexIndex = payload.hexIndex ?? -1;
     // R-BLD-MOD: передаём researched в engine для проверки requiresTechs.
     // Читаем из currentState (не из draft) — research не меняется во время build.
     const researched = currentState.researchState.researched;
@@ -214,30 +218,26 @@ export class EconomyModule implements IGameModule {
       if (layer === 'atmosphere') {
         const slotIndex = payload.slotIndex ?? 0;
         success = engineBuildOnAtmosphereSlot(planet, slotIndex, payload.buildingId, researched);
-        // engine emits use hexIndex = -1 - slotIndex for atmosphere — mirror
-        // that convention so downstream listeners (UI) can locate the slot.
-        if (success) reportedHexIndex = -1 - slotIndex;
       } else if (layer === 'orbit') {
         const slotIndex = payload.slotIndex ?? 0;
         success = engineBuildOnOrbitSlot(planet, slotIndex, payload.buildingId, researched);
-        if (success) reportedHexIndex = -100 - slotIndex;
       } else {
         // surface (default)
         const hexIndex = payload.hexIndex ?? 0;
         success = engineBuildOnHex(planet, hexIndex, payload.buildingId, researched);
-        if (success) reportedHexIndex = hexIndex;
       }
     });
 
     if (success) {
+      // R-39 (единая шина): state закоммичен. Событие
+      // 'economy:building-constructed' НЕ ре-эмитится здесь — его эмитит
+      // сам engine.buildOnHex/buildOnAtmosphereSlot/buildOnOrbitSlot на
+      // gameBus (=== this.bus после унификации R-39) с ИДЕНТИЧНЫМ payload
+      // (конвенция reportIndex: surface → hexIndex, atmosphere → -1-slot,
+      // orbit → -100-slot). Прежний ре-эмит был нужен, пока engine эмитил
+      // в «мёртвый» gameBus, а модуль — в шину медиатора: после унификации
+      // он стал бы ДУБЛЕМ (двойное событие на одно действие).
       this.commitState?.(newState);
-      this.bus.emit('economy:building-constructed', {
-        planetId: payload.planetId,
-        hexIndex: reportedHexIndex,
-        buildingId: payload.buildingId,
-      });
-      // Note: core:state-changed is emitted by mediator.commitState() —
-      // no need to emit again here.
     }
   }
 
@@ -246,23 +246,16 @@ export class EconomyModule implements IGameModule {
     if (!currentState) return;
 
     let success = false;
-    let newLevel = 0;
     const newState = produce(currentState, (draft) => {
       const planet = findPlanet(draft, payload.planetId);
       if (!planet) return;
       success = engineUpgradeBuilding(planet, payload.hexIndex);
-      if (success) {
-        newLevel = planet.hexes[payload.hexIndex]?.buildingLevel ?? 0;
-      }
     });
 
     if (success) {
+      // R-39: 'economy:building-upgraded' эмитит engine.upgradeBuilding
+      // (gameBus === this.bus) — ре-эмит был бы дублем.
       this.commitState?.(newState);
-      this.bus.emit('economy:building-upgraded', {
-        planetId: payload.planetId,
-        hexIndex: payload.hexIndex,
-        level: newLevel,
-      });
     }
   }
 
@@ -279,7 +272,6 @@ export class EconomyModule implements IGameModule {
 
     const layer = payload.layer ?? 'surface';
     let success = false;
-    let reportedIndex = payload.hexIndex ?? -1;
 
     const newState = produce(currentState, (draft) => {
       const planet = findPlanet(draft, payload.planetId);
@@ -287,31 +279,21 @@ export class EconomyModule implements IGameModule {
       if (layer === 'atmosphere') {
         const slotIndex = payload.slotIndex ?? 0;
         success = engineDowngradeBuilding(planet, 'atmosphere', slotIndex);
-        if (success) reportedIndex = -1 - slotIndex;
       } else if (layer === 'orbit') {
         const slotIndex = payload.slotIndex ?? 0;
         success = engineDowngradeBuilding(planet, 'orbit', slotIndex);
-        if (success) reportedIndex = -100 - slotIndex;
       } else {
         const hexIndex = payload.hexIndex ?? 0;
         success = engineDowngradeBuilding(planet, 'surface', hexIndex);
-        if (success) reportedIndex = hexIndex;
       }
     });
 
     if (success) {
+      // R-39: 'economy:building-downgraded' / 'economy:building-demolished'
+      // (уровень 1 = снос) эмитит engine.downgradeBuilding на gameBus
+      // (=== this.bus) с той же конвенцией reportIndex — ре-эмит был бы
+      // дублем после унификации шин.
       this.commitState?.(newState);
-      // engine уже эмитнул economy:building-downgraded /
-      // economy:building-demolished (уровень 1 = снос) через gameBus —
-      // здесь дублируем на шину модуля для UI-слушателей медиатора.
-      const isDemolition = this.isCellEmptyAfter(newState, payload.planetId, layer, payload);
-      if (!isDemolition) {
-        this.bus.emit('economy:building-downgraded', {
-          planetId: payload.planetId,
-          hexIndex: reportedIndex,
-          level: this.getCellLevelAfter(newState, payload.planetId, layer, payload),
-        });
-      }
     }
   }
 
@@ -324,12 +306,7 @@ export class EconomyModule implements IGameModule {
     if (!currentState) return;
 
     const layer = payload.layer ?? 'surface';
-    // Считываем id ДО сноса (для эмита на шину модуля).
-    const beforeBuildingId = this.getBuildingIdAt(currentState, payload.planetId, layer, payload);
-    if (!beforeBuildingId) return;
-
     let success = false;
-    let reportedIndex = payload.hexIndex ?? -1;
 
     const newState = produce(currentState, (draft) => {
       const planet = findPlanet(draft, payload.planetId);
@@ -337,72 +314,21 @@ export class EconomyModule implements IGameModule {
       if (layer === 'atmosphere') {
         const slotIndex = payload.slotIndex ?? 0;
         success = engineDemolishBuilding(planet, 'atmosphere', slotIndex);
-        if (success) reportedIndex = -1 - slotIndex;
       } else if (layer === 'orbit') {
         const slotIndex = payload.slotIndex ?? 0;
         success = engineDemolishBuilding(planet, 'orbit', slotIndex);
-        if (success) reportedIndex = -100 - slotIndex;
       } else {
         const hexIndex = payload.hexIndex ?? 0;
         success = engineDemolishBuilding(planet, 'surface', hexIndex);
-        if (success) reportedIndex = hexIndex;
       }
     });
 
     if (success) {
+      // R-39: 'economy:building-demolished' эмитит engine.demolishBuilding
+      // (gameBus === this.bus, payload идентичен: тот же removedId/
+      // reportIndex) — ре-эмит был бы дублем.
       this.commitState?.(newState);
-      this.bus.emit('economy:building-demolished', {
-        planetId: payload.planetId,
-        hexIndex: reportedIndex,
-        buildingId: beforeBuildingId,
-      });
     }
-  }
-
-  /** id здания в указанной ячейке (для эмита до сноса). */
-  private getBuildingIdAt(
-    state: GameState,
-    planetId: EntityId,
-    layer: BuildingLayer,
-    payload: EventPayload<'economy:demolish'>,
-  ): string | null {
-    const planet = findPlanet(state, planetId);
-    if (!planet) return null;
-    if (layer === 'atmosphere') {
-      return planet.atmosphericSlots[payload.slotIndex ?? 0]?.buildingId ?? null;
-    }
-    if (layer === 'orbit') {
-      return planet.orbitSlots[payload.slotIndex ?? 0]?.buildingId ?? null;
-    }
-    return planet.hexes[payload.hexIndex ?? 0]?.buildingId ?? null;
-  }
-
-  /** Ячейка пуста после операции (снос прошёл, а не понижение)? */
-  private isCellEmptyAfter(
-    state: GameState,
-    planetId: EntityId,
-    layer: BuildingLayer,
-    payload: EventPayload<'economy:downgrade'>,
-  ): boolean {
-    return this.getBuildingIdAt(state, planetId, layer, payload) == null;
-  }
-
-  /** Уровень здания в ячейке после операции (для эмита понижения). */
-  private getCellLevelAfter(
-    state: GameState,
-    planetId: EntityId,
-    layer: BuildingLayer,
-    payload: EventPayload<'economy:downgrade'>,
-  ): number {
-    const planet = findPlanet(state, planetId);
-    if (!planet) return 0;
-    if (layer === 'atmosphere') {
-      return planet.atmosphericSlots[payload.slotIndex ?? 0]?.buildingLevel ?? 0;
-    }
-    if (layer === 'orbit') {
-      return planet.orbitSlots[payload.slotIndex ?? 0]?.buildingLevel ?? 0;
-    }
-    return planet.hexes[payload.hexIndex ?? 0]?.buildingLevel ?? 0;
   }
 
   private onEnqueue(payload: EventPayload<'economy:enqueue'>): void {
@@ -426,7 +352,6 @@ export class EconomyModule implements IGameModule {
     if (!currentState) return;
 
     let success = false;
-    let colonyHubHexIndex = -1;
     const newState = produce(currentState, (draft) => {
       const planet = findPlanet(draft, payload.planetId);
       if (!planet) return;
@@ -441,16 +366,14 @@ export class EconomyModule implements IGameModule {
           planet.warehouse.totalCapacity = calculateWarehouseCapacity(planet);
           planet.warehouse.orbitBuffer.capacity = getOrbitBufferCapacity(planet);
         }
-        colonyHubHexIndex = planet.hexes.findIndex(h => h.buildingId === 'colony_hub');
       }
     });
 
     if (success) {
+      // R-39: 'economy:planet-colonized' эмитит engine.colonizePlanet на
+      // gameBus (=== this.bus; hexIndex = гекс размещения colony_hub) —
+      // ре-эмит был бы дублем.
       this.commitState?.(newState);
-      this.bus.emit('economy:planet-colonized', {
-        planetId: payload.planetId,
-        hexIndex: colonyHubHexIndex,
-      });
     }
   }
 
@@ -461,8 +384,8 @@ export class EconomyModule implements IGameModule {
    * specializationLevel/activeRecipes) и списанной/возвращённой стоимостью.
    *
    * engine.specializeBuilding сам эмитит economy:building-specialized и
-   * economy:processor-output-changed через gameBus (legacy adapter проксирует
-   * в typedBus) — повторный эмит здесь не нужен.
+   * economy:processor-output-changed на gameBus (после унификации R-39 —
+   * это и есть шина медиатора) — повторный эмит здесь не нужен.
    */
   private onSpecialize(payload: EventPayload<'economy:specialize'>): void {
     const currentState = this.getGameState?.();
@@ -485,7 +408,7 @@ export class EconomyModule implements IGameModule {
    * Block 05 PR7: обработчик economy:upgrade-specialization.
    * Оборачивает engine.upgradeSpecialization в immer.produce().
    * engine.upgradeSpecialization сам эмитит economy:specialization-upgraded
-   * и economy:processor-output-changed через gameBus.
+   * и economy:processor-output-changed на gameBus (единая шина R-39).
    */
   private onUpgradeSpecialization(payload: EventPayload<'economy:upgrade-specialization'>): void {
     const currentState = this.getGameState?.();
@@ -516,6 +439,13 @@ export class EconomyModule implements IGameModule {
   private processEconomyTick(): void {
     const currentState = this.getGameState?.();
     if (!currentState) return;
+    // R-39 (phase guard): экономика обрабатывается ТОЛЬКО в фазе playing.
+    // Прежде guard был только у посредника (mediator.tick) и GameLoop
+    // (loop.start только из playing), но не у самого модуля: saveGame
+    // ставил phase='paused', не останавливая интервал (race R-39), и тики
+    // продолжали обрабатывать экономику «в паузе». Зеркалим guard
+    // ResearchModule (процесс-такт — защита в глубину).
+    if (currentState.phase !== 'playing') return;
 
     const newState = produce(currentState, (draft) => {
       const colonizedPlanets = draft.galaxy.systems
