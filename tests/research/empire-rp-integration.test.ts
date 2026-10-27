@@ -342,4 +342,58 @@ describe('R-RES-QUEUE-01 — единый пул RP империи (реальн
     expect(() => deserializeGameState(JSON.stringify(parallelSlots))).toThrow('несовместимый контракт исследований');
   });
 
+  // ─── R-RES-QUEUE-VERIFY (Issue #16): скорость ≠ масштаб времени ────
+  test('INT-10. Скорость игры НЕ ускоряет исследования: тик при speed=50 даёт РОВНО один день притока', () => {
+    // Контракт ядра: 1 тик = 1 день при ЛЮБОЙ скорости (GameTime.tick —
+    // «количество прошедших дней», src/core/types.ts; game-loop реализует
+    // speed как тиков/сек: интервал 1000/speed мс + ticksDue = elapsed×speed).
+    // Приток RP за тик обязан быть независим от speed — иначе speed входит
+    // в расчёт ДВАЖДЫ (исторический speed²-дефект game-loop, чинившийся
+    // в R-42: «интервал 1000/speed мс И speed тиков за интервал»).
+    //
+    // Арифметика (1 планета, 1 лаборатория L5):
+    //   base = 25; research_rate add 0.02×5 = 0.1 → приток 27.5 RP/день;
+    //   fundamentals=0 + проект активен → дерево 50% = 13.75; фокус ×1.2
+    //   → 16.5 RP за тик — НЕЗАВИСИМО от speed.
+    // Дефект (deltaSeconds = currentState.speed): на speed=50 тик даёт
+    // 825 RP — уровень L1 (500) завершается с ОДНОГО тика.
+    const { planetIds } = startGame(1);
+    placeLab(planetIds[0]!, 5);
+    const store = useGameStore.getState();
+    expect(store.startResearch('fusion_reactor', 1)).not.toBeNull();
+    expect(rs().activeSlots[0]!.rpInvested).toBeCloseTo(0, 5);
+
+    runTicks(1, 50);
+
+    const after = rs().activeSlots[0]!.rpInvested;
+    expect(after).toBeCloseTo(16.5, 5);
+    // Уровень НЕ завершается с одного тика: researched пуст, слот тот же.
+    expect(rs().researched['fusion_reactor']).toBeUndefined();
+    expect(rs().activeSlots).toHaveLength(1);
+    expect(rs().activeSlots[0]!.techId).toBe('fusion_reactor');
+    expect(rs().activeSlots[0]!.targetLevel).toBe(1);
+  });
+
+  test('INT-11. Инвариант скорости: K тиков на speed=50 ≡ K тиков на speed=1 (поразрядно)', () => {
+    const mkRun = (speed: 1 | 50) => {
+      const { planetIds } = startGame(1);
+      placeLab(planetIds[0]!, 5);
+      expect(useGameStore.getState().startResearch('fusion_reactor', 1)).not.toBeNull();
+      runTicks(10, speed);
+      return {
+        invested: rs().activeSlots[0]!.rpInvested,
+        targetLevel: rs().activeSlots[0]!.targetLevel,
+        researched: { ...rs().researched },
+        bank: rs().rpBank,
+      };
+    };
+    const slow = mkRun(1);
+    const fast = mkRun(50);
+    // Один и тот же игровой результат: 10 дней притока ≡ 10 дней притока.
+    expect(fast.invested).toBeCloseTo(slow.invested, 5);
+    expect(fast.targetLevel).toBe(slow.targetLevel);
+    expect(fast.researched).toEqual(slow.researched);
+    expect(fast.bank).toBeCloseTo(slow.bank, 5);
+  });
+
 });
