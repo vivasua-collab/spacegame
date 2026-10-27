@@ -3801,3 +3801,27 @@ Stage Summary:
 - Контракт once при вложенном emit закрыт по рекомендованной владельцем стратегии (consumed-флаг + удаление ДО вызова + пропуск по флагу только для once).
 - GameLoop/ModuleRegistry/экономика/PRNG/формат сейва не тронуты; тесты не ослаблялись; история не переписывалась; этапы 3а/3б и 4 не начинались.
 - Публикация follow-up: база 7635781 → коммит bf00ccaeb46ed909f339c718598181cf8308e378 (push без force); SHA вписан в чекпоинт §10.6–10.7 docs-коммитом.
+
+---
+Task ID: 47 (R-41)
+Agent: coding agent (Z.ai Code)
+Task: GitHub Issue #5 — Этап 3а: подготовка архитектуры AI-фракций (runbook владельца: фазы 0–5). Каркас AI без игровых действий, детерминизм, тесты, гейты, публикация.
+
+Work Log:
+- База: main 3faf5bc == origin/main == SHA из комментария-гейта; дерево чисто. Issue #6 (R-42) на GitHub OPEN на момент старта — допуск дан владельцем ЯВНО в чате («запускай работу»); Issue #6 не закрывался, приёмка R-42 остаётся за владельцем (отклонение от буквального условия фазы 0 шага 2 зафиксировано в чекпоинте §1).
+- Baseline заново: 831/831, lint 0/38, tsc exit 1 = 86/71 (совпало с baseline R-42), validate 4/4.
+- Свёртка контрактов (план R-41, таблица 16 строк): ModuleId 'ai' существовал; tickAll детерминирован initOrder (топосорт); фактическая структура — доменные папки; сейв v3 не включает модульные serialize; fog-of-war per-faction отсутствует; 6 вопросов фазы 1 отвечены письменно в плане.
+- src/ai/types.ts: AI_STATE_VERSION=1, AIDifficulty + частоты docs/70 §7.6 (20/10/5/1), AIConfig (операционный бюджет maxControllersPerTick вместо wall-clock ms §8.8 — запрещён runbook), инертная AIIntentQueue ('executed' невалиден), валидаторы.
+- src/ai/perception.ts: buildWorldModel (shared агрегаты, сортированные ключи/массивы, мир не копируется) + buildPerception (defensive copy, ноль ссылок на GameState).
+- src/ai/ai-module.ts: AIModule (id 'ai', deps ['economy'] → тик последним [galaxy, economy, tech, ships, fleet, ai]; emits [] — ai:* зарезервированы; подписки только lifecycle с reset кэша; query 'ai:state'; бюджет + периоды обновления; serialize={version}; deserialize no-op). game-store: accessor БЕЗ mutator (коммит физически недоступен), регистрация ПОСЛЕДНЕЙ.
+- Тесты +33 (tests/ai/): model 14 (валидация, инертная очередь, агрегаты, defensive copy), module 13 (манифест, initOrder-last, фазы, подписки без дублей, reset, phase-guard, бюджет, периоды, query), integration 6 (прод-проводка; инертность — тики с AI/без AI → serializeGameState бит-в-бит идентичен, 0 коммитов от AI; детерминизм ×3 сборки; v3-раундтрип без AI-полей; подписки load-циклов стабильны).
+- Гейты: bun test 864/864 (55 файлов, exit 0); lint exit 0 (0/38, в R-41 — 0); tsc exit 2 — 86/71 СОХРАНЯЮТСЯ НА BASELINE (набор ошибок идентичен базовому, Δ0; в R-41 — 0); validate:all exit 0 (4/4); детерминизм ×3 отдельных процесса scripts/r41-ai-det-check.ts (seed 424242, 3 контроллера normal/hard/insane): sha256(ai-snapshot)=45c41c3cb1bcd5caef148170b2d9f3e6b72e5beaa72d2253750937436f5fbd39 == ×3, sha256(gamestate)=52fdea9ea5f39cc5…ccd6 == ×3; CI (.github/workflows) отсутствует — не заявляется.
+- Браузер (agent-browser): New Galaxy 424242 → колонизация Xi Ursae I → ×1 тики (9→21) → Save → reload → Load (tick 21, paused — контракт) → resume (→23) → 0 ошибок консоли → сейв удалён, GET /api/save = [] (БД 0).
+- Документация: план (чеклист фаз), чекпоинт 10_27_r41_ai_stage3a.md (§1 допуск, §2 свёртка, §4 границы 3а/3б, §6 гейты, §8 риски), STATUS 864/864 + changelog, README, ROADMAP (этап 3: 3а выполнена — ожидает приёмки; 3б не начинался), worklog.
+- Публикация: коммит R-41 (код+тесты+доки) + docs-коммит с SHA в чекпоинт §0; push без force; Issue #5 и #6 не закрываются.
+
+Stage Summary:
+- Этап 3а выполнен по runbook (фазы 0–5): каркас AI подключён только через существующие контракты (ModuleRegistry/GameMediator/GameLoop), тикает последним, НИ ОДНОГО игрового действия, mutator отсутствует, формат сейва v3 не менялся, старые сейвы совместимы.
+- Гейты: 864/864 (+33), lint 0/38, tsc Δ0 (86/71, набор идентичен), validate 4/4, детерминизм ×3 == , браузер OK, БД 0 сейвов. CI нет — не заявляется.
+- Намеренно НЕ реализовано (3б после приёмки 3а): AI-фракции в мире, исполнение действий, GOAP/Utility, сериализация AI-состояния, fog-of-war, ms-бюджет/Web Worker.
+- Вердикт 3а: PASS (приёмка — за владельцем). Этапы 3б/4 не начинались; пулы/баланс не менялись; тесты не ослаблялись; история не переписывалась.

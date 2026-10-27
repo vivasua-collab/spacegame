@@ -40,6 +40,7 @@ import { enqueueShipBuild as enqueueShipBuildFn, cancelShipyardItem as cancelShi
 import { ShipsModule, resetShipCounter } from '@/ships/ships-module'; // Block 02 F5
 import { FleetModule } from '@/ships/fleet-module'; // Block 02 F5
 import { ResearchModule } from '@/research/research-module'; // Block 03 R7
+import { AIModule } from '@/ai/ai-module'; // Этап 3а (R-41): каркас AI без игровых действий
 import {
   createFleet as createFleetFn,
   mergeFleets as mergeFleetsFn,
@@ -297,6 +298,10 @@ function getMediatorWithModules(): GameMediator {
     // is independent of ship construction, but goes after economy so
     // building/lab changes are visible).
     const researchModule = new ResearchModule();
+    // Этап 3а (R-41, Issue #5): AI-модуль — детерминированный каркас
+    // (world model + perception, инертная intent-очередь). Регистрируется
+    // ПОСЛЕДНЕЙ → тикает последним (initOrder [...,'ai'], deps=['economy']).
+    const aiModule = new AIModule();
 
     // Модули нуждаются в доступе к GameState — устанавливаем accessor.
     // Block 01 P2: also set a mutator so modules can commit new immutable state
@@ -311,8 +316,19 @@ function getMediatorWithModules(): GameMediator {
     fleetModule.setGameStateMutator((state) => mediator.commitState(state));
     researchModule.setGameStateAccessor(() => mediator.getGameState());
     researchModule.setGameStateMutator((state) => mediator.commitState(state));
+    aiModule.setGameStateAccessor(() => mediator.getGameState());
+    // Этап 3а (R-41): mutator AI СОЗНАТЕЛЬНО НЕ устанавливается — AI не
+    // может мутировать/коммитить GameState (коммит физически недоступен;
+    // игровые действия появятся в 3б через существующие команды/шину).
 
-    mediator.registerAndInit([galaxyModule, economyModule, researchModule, shipsModule, fleetModule]);
+    mediator.registerAndInit([
+      galaxyModule,
+      economyModule,
+      researchModule,
+      shipsModule,
+      fleetModule,
+      aiModule, // последний → тик AI после всех симуляционных модулей
+    ]);
 
     // Block 01 P2: subscribe to core:state-changed — modules already produce
     // immutable state via immer.produce(), so we just assign the new reference.
