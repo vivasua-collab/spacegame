@@ -58,6 +58,8 @@ export class GameLoop {
   private intervalId: ReturnType<typeof setInterval> | null = null;
   private bus: TypedEventBus;
   private registry: ModuleRegistry;
+  /** Был ли цикл уже запущен хотя бы раз — различает core:started (первый запуск) и core:resumed. */
+  private hasEverStarted = false;
 
   constructor(bus: TypedEventBus, registry: ModuleRegistry) {
     this.bus = bus;
@@ -84,7 +86,12 @@ export class GameLoop {
       if (speed > 0) {
         this.startInterval();
       } else {
-        this.phase = 'paused';
+        // R-42 (F-02): нулевая скорость разрешена контрактом GameSpeed
+        // (0 | 1 | 5 | 15 | 50) — это путь ПАУЗЫ. Прежде фаза молча менялась
+        // на 'paused' БЕЗ core:paused, и поведение было неотличимо от pause()
+        // для подписчиков только по отсутствию события. Теперь — тот же
+        // явный контракт, что и pause(): фаза + core:paused.
+        this.pause();
       }
     }
     this.bus.emit('core:speed-changed', speed);
@@ -92,11 +99,17 @@ export class GameLoop {
 
   start(): void {
     if (this.phase === 'playing') return;
+    // R-42: различаем первый запуск (core:started) и возобновление после
+    // паузы/stop (core:resumed — событие объявлено в events.ts и
+    // modular-bus.md, но прежде не эмитилось никем, как и
+    // tech:fundamental-leveled до R-39).
+    const resuming = this.hasEverStarted;
+    this.hasEverStarted = true;
     this.phase = 'playing';
     if (this.speed > 0) {
       this.startInterval();
     }
-    this.bus.emit('core:started', undefined);
+    this.bus.emit(resuming ? 'core:resumed' : 'core:started', undefined);
   }
 
   pause(): void {
@@ -119,7 +132,16 @@ export class GameLoop {
     this.processTick();
   }
 
-  /** Остановить интервал (без изменения фазы) */
+  /**
+   * Остановить интервал и перевести фазу в paused, ЕСЛИ она была playing.
+   *
+   * R-42 (F-02): это TEARDOWN-путь (React unmount, mediator.stop()) —
+   * БЕЗ события core:paused (сознательный контракт, зафиксирован тестом R-42:
+   * прежде комментарий противоречил коду, обещая «без изменения фазы»).
+   * UI-пауза идёт через pause()/setSpeed(0) — там событие есть.
+   * ВАЖНО: фаза ДОЛЖНА уходить из 'playing', иначе повторный start()
+   * после remount стал бы no-op и игра не ожила бы.
+   */
   stop(): void {
     this.stopInterval();
     if (this.phase === 'playing') {

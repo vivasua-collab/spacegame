@@ -28,6 +28,9 @@ interface Subscription {
   once: boolean;
 }
 
+/** Максимальное число пакетов за один flush — защита от бесконечного повторного defer. */
+const MAX_FLUSH_BATCHES = 1000;
+
 /**
  * Типизированная шина событий.
  *
@@ -72,7 +75,21 @@ export class TypedEventBus {
 
     // Event replay: если событие уже происходило и помечено для replay
     if (this.replayConfig.has(event) && this.lastEvents.has(event)) {
-      handler(this.lastEvents.get(event) as EventPayload<E>);
+      try {
+        handler(this.lastEvents.get(event) as EventPayload<E>);
+      } catch (e) {
+        // R-42: изоляция ошибок подписчиков — как в emit(): ошибка обработчика
+        // на replay-доставке не должна всплывать из on() и ломать подписку.
+        console.error(`[EventBus] Ошибка replay "${String(event)}" (${label}):`, e);
+      } finally {
+        // R-42 (F-01): replay-доставка для once-подписки считается первым
+        // (и единственным) вызовом — снимаем подписку НЕМЕДЛЕННО. Прежде
+        // подписка оставалась в Set: обработчик срабатывал на replay и затем
+        // ЕЩЁ РАЗ на следующем emit (нарушение контракта once).
+        if (once) {
+          this.listeners.get(event)!.delete(sub);
+        }
+      }
     }
 
     return () => this.off(event, sub);
@@ -138,13 +155,30 @@ export class TypedEventBus {
   /**
    * Обработать все отложенные события.
    * Вызывается GameLoop'ом в конце каждого тика.
+   *
+   * R-42: добавлен защитный лимит пакетов (MAX_FLUSH_BATCHES). Прежде цикл
+   * `while (pendingEmit.length > 0)` защищал только от рекурсии ВНУТРИ одного
+   * пакета; обработчик, который безусловно повторно defer-ит событие,
+   * зацикливал flush() навсегда (подтверждено зависанием теста R-42).
    */
   flush(): void {
     if (this.processing) return; // предотвращение рекурсии
     this.processing = true;
 
     try {
+      let batches = 0;
       while (this.pendingEmit.length > 0) {
+        if (++batches > MAX_FLUSH_BATCHES) {
+          // Обработчик(и) бесконечно генерируют отложенные события: рвём цепочку,
+          // сбрасываем остаток очереди и логируем — шина остаётся живой.
+          console.error(
+            `[EventBus] flush(): превышен лимит пакетов (${MAX_FLUSH_BATCHES}) — ` +
+              `вероятно, обработчик бесконечно defer-ит события. ` +
+              `Сброшено отложенных: ${this.pendingEmit.length}.`,
+          );
+          this.pendingEmit = [];
+          break;
+        }
         // Извлечь всё и обработать пакетно (предотвращает бесконечный цикл)
         const batch = this.pendingEmit.splice(0);
         for (const { event, payload } of batch) {

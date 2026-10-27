@@ -83,7 +83,7 @@ src/
 │   ├── atmosphere-gases.ts       # 11 атмосферных газов
 │   ├── processor-categories.ts   # 7 категорий рецептов процессоров
 │   ├── processor-recipe-categories.ts
-│   ├── star-types.ts             # 12 типов звёзд
+│   ├── stars/                    # R-STARS-DATA: data-driven каталог звёзд (types.json, grids.json) + loader
 │   ├── planet-types.ts           # 7 типов планет, размеры, местность
 │   ├── warehouse.ts              # Резервы, специализация, орбитальный буфер
 │   ├── ships/                    # R-SHIPS-DATA: data-driven JSON (hulls/modules/fuel-map) + тонкие TS-loaders + shipyard-queue.ts (логика) + index.ts
@@ -100,7 +100,7 @@ src/
 │   │   ├── system-view.tsx       # Экран звёздной системы
 │   │   ├── planet-view.tsx       # Гекс-сетка планеты + застройка
 │   │   ├── building-dialog.tsx   # Диалог строительства/улучшения
-│   │   ├── resource-panel.tsx    # Панель ресурсов (по категориям)
+│   │   ├── reference-dialog.tsx  # Справочник: элементы/руды/крафт (R-39 P5)
 │   │   ├── time-controls.tsx     # Пауза / Play / скорость (x1–x50)
 │   │   ├── specialize-dialog.tsx # Диалог специализации зданий
 │   │   ├── production-queue.tsx   # Очередь производства

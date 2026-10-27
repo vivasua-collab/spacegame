@@ -29,17 +29,43 @@ export class ModuleRegistry {
   /**
    * Зарегистрировать модуль в реестре.
    * Регистрация возможна в любой момент (горячее подключение).
+   *
+   * R-42 (F-03): регистрация АТОМАРНА. Прежде Map мутировалась (а при замене
+   * ещё и destroy'ился старый модуль) ДО recalculateInitOrder(), который
+   * бросает исключение при циклической зависимости. После исключения реестр
+   * оставался частично изменённым: новый модуль — в Map, initOrder —
+   * устаревший, а при замене старый модуль был уже уничтожен (откат
+   * невозможен). Хуже того, цикл оставался в Map и БЛОКИРОВАЛ все последующие
+   * register() — восстановление без пересоздания игры было невозможно.
+   * Теперь порядок сначала вычисляется на «пробной» установке; при ошибке
+   * Map откатывается к прежнему значению (старый модуль не тронут), и только
+   * после успеха уничтожается заменённый модуль.
    */
   register(module: IGameModule): void {
-    if (this.modules.has(module.manifest.id)) {
-      console.warn(`[Registry] Модуль "${module.manifest.id}" уже зарегистрирован — перезапись`);
-      const oldModule = this.modules.get(module.manifest.id)!;
-      if (oldModule.phase !== 'destroyed') {
-        oldModule.destroy();
+    const id = module.manifest.id;
+    const previous = this.modules.get(id) ?? null;
+
+    this.modules.set(id, module);
+    try {
+      this.recalculateInitOrder();
+    } catch (e) {
+      // Откат: реестр ровно в прежнем состоянии (initOrder не менялся —
+      // recalculateInitOrder присваивает его только после успешного обхода).
+      if (previous === null) {
+        this.modules.delete(id);
+      } else {
+        this.modules.set(id, previous);
+      }
+      throw e;
+    }
+
+    // Успех: только теперь уничтожаем заменённый модуль.
+    if (previous !== null) {
+      console.warn(`[Registry] Модуль "${id}" уже зарегистрирован — перезапись`);
+      if (previous.phase !== 'destroyed') {
+        previous.destroy();
       }
     }
-    this.modules.set(module.manifest.id, module);
-    this.recalculateInitOrder();
   }
 
   /** Отменить регистрацию модуля */
