@@ -52,12 +52,22 @@ const ULTRA_POOL_SET = new Set<string>(ULTRA_RARE_ELEMENTS);
 
 /** R-29: тело (планета/луна) с ленивыми залежами — минимальный интерфейс материализации. */
 export interface LazyDepositBody {
+  /** ID тела — детерминированная соль RNG миграции свод-пула (R-38). */
+  id?: string;
   hexes: HexCell[];
   type: string;
   depositsMaterialized?: boolean;
   depositRngState?: number[] | null;
   /** R-36: версия семантики RNG/веток генерации залежей (см. DEPOSIT_RNG_VERSION). */
   depositRngVersion?: number;
+  /**
+   * R-38: версия КОНТРАКТА свод-пула (см. DEPOSIT_SUMMARY_VERSION). Отдельна от
+   * dv: dv описывает ФИЗИКУ (кем сгенерированы залежи), sv — СВОД (по каким
+   * правилам агрегирован пул). Проставляется materializePlanetDeposits (replay
+   * текущим кодом) и migrateMaterializedBodySummary (R-38-миграция старых
+   * материализованных тел: физика сохраняется, свод пересчитывается).
+   */
+  depositSummaryVersion?: number;
   /**
    * R-37 (Б2): свод-пул тела. Если присутствует (массив) — при материализации
    * ПЕРЕСЧИТЫВАЕТСЯ из свежих физических залежей (согласованность пул ↔ гексы;
@@ -90,6 +100,36 @@ export interface LazyDepositBody {
  * по построению.
  */
 export const DEPOSIT_RNG_VERSION = 3;
+
+/**
+ * R-38: версия КОНТРАКТА свод-пула resourceDeposits (отдельна от dv).
+ *
+ * История:
+ *   0 — (неявная, сейвы до R-38) пул считался прежней семантикой агрегации:
+ *       до R-36 — иной состав пула; R-36 — выбранный уникальный ресурс
+ *       ПЕРЕЗАПИСЫВАЛСЯ в пуле константами 4–6 без согласования с физикой
+ *       гексов (несогласованность «свод ≠ добыча», блокер Б3 аудита R-36).
+ *       Для НЕматериализованных тел дрейф поглощается версионной
+ *       материализацией R-37 (replay + пересчёт при колонизации), но тела,
+ *       УЖЕ материализованные в старых сейвах (dm=1, dv≠текущей), навсегда
+ *       сохраняли устаревший свод — дефект совместимости, закрытый R-38.
+ *   1 — R-38: «свод = физика» (пул = чистая агрегация физических залежей
+ *       + гарантия элементов hexCount=0, выбор уникального ресурса — в
+ *       assignResourceDeposits). Проставляется:
+ *         а) materializePlanetDeposits (replay текущим кодом);
+ *         б) migrateMaterializedBodySummary — R-38-миграция старых
+ *            материализованных тел при загрузке сейва (deserializeGameState):
+ *            ФИЗИКА СОХРАНЯЕТСЯ КАК ЕСТЬ (добытый прогресс, истощение,
+ *            здания, склад — неприкосновенны), устаревший свод пересчитывается
+ *            из фактических залежей. dv НЕ поднимается: версия физики —
+ *            честная (тело, материализованное старым кодом, НЕ эквивалентно
+ *            телу новой генерации; обновление dv само по себе не доказывает
+ *            корректность физики — требование аудита R-38 §2.4).
+ *
+ * В сейве пишется как `sv` (рядом с ds/dm/dv, только если известна —
+ * побайтная идемпотентность сейвов без sv сохранена, как у dv в R-37).
+ */
+export const DEPOSIT_SUMMARY_VERSION = 1;
 
 /**
  * R-29/R-37: ленивая (версионно-совместимая) материализация залежей гексов.
@@ -133,12 +173,20 @@ export function materializePlanetDeposits(body: LazyDepositBody): boolean {
   assignResourceDeposits(body.hexes, rng, body.type);
   body.depositsMaterialized = true;
 
+  // R-38: физика воспроизведена ТЕКУЩИМ кодом — версия физики честно
+  // актуальна (раньше dv оставался старым и после replay, что ложно
+  // помечало свежесгенерированные залежи как «до R-36/37»). Свод-пул
+  // (ниже) пересчитывается из этой же физики текущей семантикой агрегации.
+  body.depositRngVersion = DEPOSIT_RNG_VERSION;
+
   // R-37 (Б2): согласованное обновление сводного пула — агрегация свежей
   // физики продолжением того же потока (бит-в-бит как при генерации).
   // Только для тел, несущих пул (живые планеты/луны; синтетические заглушки
   // тестов без пула не трогаются).
   if (Array.isArray(body.resourceDeposits)) {
     body.resourceDeposits = aggregateResourceDeposits(body.hexes, body.type, rng);
+    // R-38: пул пересчитан текущим контрактом — фиксируем версию свода.
+    body.depositSummaryVersion = DEPOSIT_SUMMARY_VERSION;
   }
 
   // ВНИМАНИЕ (R-37): снимок ds СОЗНАТЕЛЬНО НЕ обнуляется (поведение R-29
@@ -158,6 +206,105 @@ export function materializePlanetDeposits(body: LazyDepositBody): boolean {
     );
   }
   return true;
+}
+
+// ─── R-38: миграция свод-пула МАТЕРИАЛИЗОВАННЫХ тел старых сейвов ────────────
+
+/**
+ * R-38: действующая версия контракта свод-пула тела.
+ *
+ * Тело с dv = DEPOSIT_RNG_VERSION и БЕЗ явного sv (сейвы R-37, поле ещё не
+ * существовало) считается соответствующим текущему контракту: их пулы
+ * считались materializePlanetDeposits/генерацией R-37 (чистая агрегация +
+ * гарантия). Тела с иной/неизвестной dv — версией 0 (устаревшая семантика).
+ */
+export function summaryContractVersion(body: LazyDepositBody): number {
+  if (typeof body.depositSummaryVersion === 'number') return body.depositSummaryVersion;
+  return body.depositRngVersion === DEPOSIT_RNG_VERSION ? DEPOSIT_SUMMARY_VERSION : 0;
+}
+
+/**
+ * R-38: нужно ли телу пересчитать устаревший свод-пул?
+ *
+ * Условия: тело УЖЕ материализовано (dm=1 — залежи в гексах физические,
+ * трогать их нельзя: прогресс добычи/истощение неприкосновенны), имеет
+ * гексы и свод устаревшего контракта. Ленивые тела (dm=0) НЕ попадают:
+ * их миграция — версионная материализация при колонизации (R-37),
+ * ленивость и размер сейва сохранены.
+ */
+export function needsSummaryMigration(body: LazyDepositBody): boolean {
+  return body.depositsMaterialized === true
+    && Array.isArray(body.hexes)
+    && body.hexes.length > 0
+    && summaryContractVersion(body) < DEPOSIT_SUMMARY_VERSION;
+}
+
+/**
+ * R-38: детерминированный RNG оценок гарантии для миграции свода.
+ *
+ * aggregateResourceDeposits потребляет RNG в фазе гарантии (оценки элементов
+ * без физических залежей, hexCount=0). При миграции продолжить депозитный
+ * поток НЕЛЬЗЯ (точка после assign не сохранена), поэтому оценки берутся из
+ * ИМЕНОВАННОГО дочернего потока от снимка ds: derive() не потребляет
+ * родителя, детерминирован и воспроизводим в любом процессе/окружении
+ * (C-тесты R-38). Тела без ds (повреждённые/краевые) — базовое состояние
+ * fromState(null), уникальность обеспечивает соль id тела в имени потока.
+ */
+function deriveSummaryEstimateRng(body: LazyDepositBody): Xoshiro128StarStar {
+  return Xoshiro128StarStar.fromState(body.depositRngState)
+    .derive(`r38-summary-v${DEPOSIT_SUMMARY_VERSION}:${body.id ?? 'unknown'}`);
+}
+
+/**
+ * R-38: безопасная миграция устаревшего свод-пула МАТЕРИАЛИЗОВАННОГО тела.
+ *
+ * КОНТРАКТ (аудит R-38 §2.3):
+ *   - физические залежи НЕ регенерируются и не меняются (частично/полностью
+ *     истощённые остаются истощёнными — «не восстанавливать истощённую
+ *     залежь до первоначального количества»);
+ *   - dv НЕ поднимается — версия физики остаётся честной (старое тело НЕ
+ *     эквивалентно телу новой генерации; обновление dv ничего не доказывает);
+ *   - свод пересчитывается из ФАКТИЧЕСКОЙ физики текущим контрактом
+ *     («свод = физика»: пул = Σ(залежи × доля выхода) + гарантия hexCount=0);
+ *   - проставляется depositSummaryVersion — повторная загрузка идемпотентна;
+ *   - всё прочее (здания, склад resources, owner, очереди, энергия)
+ *     неприкосновенно — функция читает hexes/type и пишет ТОЛЬКО
+ *     resourceDeposits + depositSummaryVersion.
+ *
+ * Атомарность на тело: исключение/невалидный результат — тело остаётся со
+ * СТАРЫМ сводом (частично изменённое состояние исключено), загрузка
+ * продолжается (отказ миграции одного тела не должен блокировать игру —
+ * задание R-38 §2.5: предсказуемая обработка без тихого уничтожения).
+ *
+ * @returns true, если свод был пересчитан в этом вызове.
+ */
+export function migrateMaterializedBodySummary(body: LazyDepositBody): boolean {
+  if (!needsSummaryMigration(body)) return false;
+
+  try {
+    const estimateRng = deriveSummaryEstimateRng(body);
+    const migrated = aggregateResourceDeposits(body.hexes, body.type, estimateRng);
+
+    // Валидация результата: NaN/Infinity в своде = повреждённые числовые
+    // данные сейва (например, нечисловые quantity в кортежах) — НЕ тиражируем
+    // мусор в пул, тело сохраняет прежний (числовой) свод, попытка — отказ.
+    for (const entry of migrated) {
+      if (!Number.isFinite(entry.totalQuantity) || !Number.isFinite(entry.avgAvailability)
+        || !Number.isFinite(entry.maxAvailability)) {
+        throw new Error(`невалидная агрегация: элемент ${entry.elementId} даёт NaN/Inf`);
+      }
+    }
+
+    body.resourceDeposits = migrated;
+    body.depositSummaryVersion = DEPOSIT_SUMMARY_VERSION;
+    return true;
+  } catch (err) {
+    console.warn(
+      `[deposits] R-38: миграция свод-пула тела ${body.id ?? '?'} ОТКАЗАНА — `
+      + `сохранён прежний свод (${err instanceof Error ? err.message : String(err)})`,
+    );
+    return false;
+  }
 }
 
 // Множители количества по категории для каждого типа планеты

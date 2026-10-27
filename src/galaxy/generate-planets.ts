@@ -24,7 +24,7 @@ import type { Star, Planet, Moon, PlanetSize, BinaryType, Atmosphere, Atmosphere
 import { PLANET_TYPES, ORBIT_SLOTS, ORBIT_SLOTS_BY_SIZE, GAS_GIANT_ATMOSPHERE_SLOTS, PLANET_DENSITY, PLANET_TYPE_RADIUS, getSizeFromRadius, getPlanetGravityForRadius, getMoonGravityForRadius, LIFE_LEVEL_WEIGHTS, TYPE_NAMES, GAS_GIANT_MOON_COUNT, MOON_RADIUS, MOON_DENSITY, MOON_ORBIT_RADIUS_KM, MOON_TYPE_WEIGHTS, MOON_SIZE_HEX_COUNT } from '@/data/planet-types';
 import { genId } from './gen-context';
 import { generateHexGrid } from './hex-grid';
-import { assignResourceDeposits, aggregateResourceDeposits, DEPOSIT_RNG_VERSION } from './generate-resources';
+import { assignResourceDeposits, aggregateResourceDeposits, DEPOSIT_RNG_VERSION, DEPOSIT_SUMMARY_VERSION } from './generate-resources';
 
 // ============ Конвертация чисел ============
 
@@ -602,6 +602,9 @@ export function generatePlanet(
   // R-36: версия генерации пишется ТОЛЬКО вместе со снимком (как ds) —
   // для тел без гексов (ГГ) поле не имеет смысла и не пишется (рантрип).
   const depositRngVersion = depositRngState ? DEPOSIT_RNG_VERSION : undefined;
+  // R-38: пул при генерации считается текущим контрактом агрегации —
+  // помечаем версию свода (как dv, только вместе со снимком/гексами).
+  const depositSummaryVersion = depositRngState ? DEPOSIT_SUMMARY_VERSION : undefined;
 
   // Атмосферные слоты (только для газовых гигантов)
   const atmosphericSlots: AtmosphericSlot[] = planetDef.type === 'gas_giant'
@@ -667,6 +670,7 @@ export function generatePlanet(
     depositsMaterialized: false,
     depositRngState,
     depositRngVersion, // R-36: версия генерации (только при наличии ds)
+    depositSummaryVersion, // R-38: версия контракта свод-пула (как dv — только при наличии ds)
     resources: {},
     energyBalance: 0,
     owner: null,
@@ -784,6 +788,8 @@ function generateMoons(
     }
     // R-36: версия — только вместе со снимком (как у планет выше).
     const moonDepositRngVersion = moonDepositRngState ? DEPOSIT_RNG_VERSION : undefined;
+    // R-38: версия контракта свод-пула — как у планет (пул считаем текущим кодом).
+    const moonDepositSummaryVersion = moonDepositRngState ? DEPOSIT_SUMMARY_VERSION : undefined;
     const resourceDeposits = aggregateResourceDeposits(hexes, moonType, moonDepositRng);
     for (const hex of hexes) hex.deposits = [];
 
@@ -813,6 +819,7 @@ function generateMoons(
       depositsMaterialized: false,
       depositRngState: moonDepositRngState,
       depositRngVersion: moonDepositRngVersion, // R-36 (только при наличии ds)
+      depositSummaryVersion: moonDepositSummaryVersion, // R-38: версия свод-контракта (как у планет)
       owner: null,
     });
   }

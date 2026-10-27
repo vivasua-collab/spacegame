@@ -17,6 +17,13 @@
  *      колонизации replay текущим кодом + пересчёт свод-пула из физики.
  *      dv пишется только если версия известна — старые сейвы без dv проходят
  *      рантрип побайтно без инъекции версии (Б2).
+ *      R-38: рядом пишется `sv` — версия КОНТРАКТА свод-пула
+ *      (DEPOSIT_SUMMARY_VERSION; dv описывает ФИЗИКУ, sv — СВОД: тела,
+ *      материализованные старым кодом в старых сейвах, при загрузке
+ *      сохраняют физику как есть, а устаревший свод пересчитывается
+ *      из фактических залежей — migrateMaterializedBodySummary). Пишется
+ *      тем же правилом «только если известна» (рантрип сейвов без sv
+ *      побайтно идемпотентен).
  *   3. Истощённые залежи (qty<=0) НЕ пишутся: добыча их пропускает,
  *      пул-агрегат не пересчитывается — «проще на поздних стадиях».
  *
@@ -84,6 +91,8 @@ interface PlainBody {
   depositRngState?: number[] | null;
   /** R-36: версия семантики генерации залежей (DEPOSIT_RNG_VERSION). */
   depositRngVersion?: number;
+  /** R-38: версия контракта свод-пула (DEPOSIT_SUMMARY_VERSION). */
+  depositSummaryVersion?: number;
 }
 
 // ============ Encode: v1-объекты → v3 (компакт + словарь) ============
@@ -157,6 +166,9 @@ function compactBody(body: Plain & PlainBody, idxOf: (id: unknown) => number): P
   // колонизации, R-37). R-37: dv пишется ТОЛЬКО если версия известна —
   // старые сейвы без dv проходят рантрип без инъекции версии (побайтная
   // идемпотентность, блокер Б2).
+  // R-38: sv — версия КОНТРАКТА свод-пула (dv описывает физику, sv — свод;
+  // пишется тем же правилом «только если известна» — рантрип сейвов без sv
+  // побайтно идемпотентен, как у dv в R-37).
   if (Array.isArray(out.hexes) && out.hexes.length > 0) {
     if (Array.isArray(body.depositRngState)) {
       out.ds = body.depositRngState.slice();
@@ -164,12 +176,16 @@ function compactBody(body: Plain & PlainBody, idxOf: (id: unknown) => number): P
         out.dv = body.depositRngVersion;
       }
     }
+    if (typeof body.depositSummaryVersion === 'number') {
+      out.sv = body.depositSummaryVersion;
+    }
   } else {
     // ГГ без гексов: пустой свод-пул остаётся, гексы []
     out.hexes = [];
   }
   delete out.depositRngState;
   delete out.depositRngVersion;
+  delete out.depositSummaryVersion;
   delete out.depositsMaterialized;
   if (body.depositsMaterialized === true) out.dm = 1;
 
@@ -320,19 +336,25 @@ function expandBody(body: Plain, idOf: (i: unknown) => string): void {
     }));
   }
 
-  // ds/dm/dv → канонические поля (всегда определены — форма состояния единая).
+  // ds/dm/dv/sv → канонические поля (всегда определены — форма состояния единая).
   // depositRngVersion (R-37): версия сохраняется КАК ЕСТЬ — dv из сейва; при
   // ОТСУТСТВИИ dv — undefined (версия неизвестна; потребители трактуют
   // undefined как «до R-36» = 1 — needsDepositMigration в game-store и
   // materializePlanetDeposits в generate-resources). Прежняя инъекция 1 (R-36)
   // ломала побайтную идемпотентность рантрипа старых сейвов: decode добавлял
   // версию, encode писал «dv":1 — рост сейва без пользы (блокер Б2 R-37).
+  // depositSummaryVersion (R-38): sv → свод-контракт; при отсутствии sv —
+  // undefined (как dv: генерация тоже всегда пишет ключ — у ГГ без гексов
+  // значением undefined, рантрип структурно идентичен). Потребители выводят
+  // версию из dv, если sv неизвестна (summaryContractVersion).
   body.depositsMaterialized = body.dm === 1;
   body.depositRngState = Array.isArray(body.ds) ? (body.ds as number[]).slice() : null;
   body.depositRngVersion = typeof body.dv === 'number' ? body.dv : undefined;
+  body.depositSummaryVersion = typeof body.sv === 'number' ? body.sv : undefined;
   delete body.dm;
   delete body.ds;
   delete body.dv;
+  delete body.sv;
 }
 
 // ============ Хелперы для тестов/инспекции ============

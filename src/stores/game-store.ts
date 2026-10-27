@@ -32,7 +32,7 @@ import { GalaxyModule } from '@/galaxy/galaxy-module';
 import { resetProductionItemCounter, restoreProductionItemCounter } from '@/economy/engine';
 import { SerializedGameStateSchema } from '@/lib/schemas/game-state-schema'; // Block 08 gap-9: state validation on deserialize
 import { compactSaveV3, expandSaveV3 } from '@/lib/save-format-v3'; // R-29: ленивые залежи + словарь; R-30: v3 — единственный формат
-import { DEPOSIT_RNG_VERSION, type LazyDepositBody } from '@/galaxy/generate-resources'; // R-37: перепись тел, ожидающих версионную материализацию
+import { DEPOSIT_RNG_VERSION, migrateMaterializedBodySummary, needsSummaryMigration, type LazyDepositBody } from '@/galaxy/generate-resources'; // R-37: перепись тел, ожидающих версионную материализацию; R-38: миграция свода материализованных тел
 import { gzipBase64, gunzipBase64, isBrowserCodecAvailable } from '@/lib/save-codec-browser'; // R-26: сжатый транспорт сейвов
 import { enqueueShipBuild as enqueueShipBuildFn, cancelShipyardItem as cancelShipyardItemFn } from '@/data/ships/shipyard-queue'; // Block 02 F6
 import { ShipsModule, resetShipCounter } from '@/ships/ships-module'; // Block 02 F5
@@ -424,6 +424,58 @@ function countPendingDepositMigrations(systems: Array<Record<string, unknown>> |
   return pending;
 }
 
+/**
+ * R-38: миграция свод-пулов МАТЕРИАЛИЗОВАННЫХ тел старых сейвов.
+ *
+ * Непокрытый R-37 сценарий (аудит R-38 §2): тело уже колонизировано в старом
+ * сейве — физические залежи записаны (dm=1), но свод-пул посчитан устаревшей
+ * семантикой агрегации (выбранный уникальный ресурс перезаписывался
+ * константами без согласования с физикой и т.п.). Версионная материализация
+ * R-37 тут НЕ работает (dm=1 — replay невозможен, залежи уже физические) —
+ * устаревший свод оставался навсегда.
+ *
+ * Стратегия (явная, документированная): ФИЗИКА СОХРАНЯЕТСЯ КАК ЕСТЬ
+ * (deposits/buildings/owner/склад/прогресс добычи/истощение неприкосновенны),
+ * а свод пересчитывается из фактических залежей текущим контрактом
+ * «свод = физика» (migrateMaterializedBodySummary). dv НЕ поднимается —
+ * версия физики остаётся честной; повторная загрузка идемпотентна (sv).
+ * Молчаливой регенерации НЕТ: тело, материализованное старым кодом, НЕ
+ * получает залежи новой генерации (следовые ultra/усиленная уникальная
+ * залежь отсутствуют — задокументированное ограничение для владельца).
+ *
+ * Вызывается ПОСЛЕ setCurrentLookups (агрегации нужна модель загружаемой
+ * галактики — порядок Б1 R-37 сохранён) и НЕ трогает ленивые тела (dm=0 —
+ * ленивость и размер сейва R-37 сохранены). Атомарность на тело: отказ
+ * миграции одного тела сохраняет его прежний свод и не блокирует загрузку.
+ *
+ * Подсчёт отказов: отказавшим считается тело, которому миграция БЫЛА НУЖНА
+ * (needsSummaryMigration) но не состоялась (исключение/невалидный результат —
+ * тело сохраняет прежний свод). Ленивые тела и тела с актуальным сводом
+ * законно возвращают false (им миграция не нужна) — отказом НЕ считаются.
+ */
+function migrateStaleMaterializedSummaries(systems: Array<Record<string, unknown>> | undefined): { migrated: number; failed: number } {
+  if (!Array.isArray(systems)) return { migrated: 0, failed: 0 };
+  let migrated = 0;
+  let failed = 0;
+  const tryBody = (body: Record<string, unknown>): void => {
+    const b = body as unknown as LazyDepositBody;
+    if (migrateMaterializedBodySummary(b)) { migrated++; return; }
+    if (needsSummaryMigration(b)) failed++;
+  };
+  for (const sys of systems) {
+    const planets = sys.planets as Array<Record<string, unknown>> | undefined;
+    if (!Array.isArray(planets)) continue;
+    for (const p of planets) {
+      tryBody(p);
+      const moons = p.moons as Array<Record<string, unknown>> | undefined;
+      if (Array.isArray(moons)) {
+        for (const m of moons) tryBody(m);
+      }
+    }
+  }
+  return { migrated, failed };
+}
+
 export function deserializeGameState(json: string): GameState {
   const raw = JSON.parse(json);
 
@@ -457,6 +509,27 @@ export function deserializeGameState(json: string): GameState {
   // при колонизации), а lookups устанавливаются здесь — до возврата состояния.
   const bakedModel = raw.galaxy.bakedModel ?? bakeGalaxyModel(raw.galaxy.seed ?? 42, ELEMENTS);
   setCurrentLookups(bakedModel);
+
+  // ─── R-38: миграция свод-пулов МАТЕРИАЛИЗОВАННЫХ тел старых сейвов ──
+  // Единственная работа с залежами на загрузке: тела, уже колонизированные
+  // старым кодом (dm=1, dv≠текущей), сохраняют ФИЗИКУ как есть (прогресс
+  // добычи/истощение/здания/склад неприкосновенны), а устаревший свод
+  // пересчитывается из фактических залежей контрактом «свод = физика»
+  // (migrateStaleMaterializedSummaries → migrateMaterializedBodySummary).
+  // ПОСЛЕ setCurrentLookups (агрегации нужна модель загружаемой галактики —
+  // порядок Б1 R-37 сохранён); ленивые тела (dm=0) не затрагиваются.
+  // Отказы не бросаются наружу: тело сохраняет прежний свод, загрузка
+  // продолжается (аудит R-38 §2.3/§2.5 — предсказуемо, без тихой порчи).
+  const summaryMigration = migrateStaleMaterializedSummaries(
+    raw.galaxy?.systems as Array<Record<string, unknown>> | undefined,
+  );
+  if (summaryMigration.migrated > 0 || summaryMigration.failed > 0) {
+    console.warn(
+      `[save] R-38: миграция свод-пулов материализованных тел (свод = физика): `
+      + `пересчитано ${summaryMigration.migrated}, отказов ${summaryMigration.failed}`
+      + ' — физика/склад/прогресс добычи сохранены, dv тел не изменён',
+    );
+  }
 
   // ─── R-37 (Б2): перепись тел, ожидающих версионной материализации ──
   // ЗАГРУЗКА НЕ МАТЕРИАЛИЗУЕТ (ленивость R-29 и размер сейва сохранены):
