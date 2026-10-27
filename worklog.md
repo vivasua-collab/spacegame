@@ -3983,3 +3983,21 @@ Stage Summary:
 - Хвост Issue #14 закрыт docs-only: трансурановые Np/Pu/Am канонизированы как OWNER-DECISION 2026-10-27 (набор 60 = 57+3; продвинутое MVP; интеграция в рецепты отложена; «максимум = 57» — SUPERSEDED); решение о циклической очереди исследований зафиксировано в audit matrix §9.2 с маршрутизацией в R-RES-QUEUE-01 (Issue #15).
 - Код не менялся: элементы уже в коде, рецепты уже без трансуранов — вердикт владельца подтверждает текущее состояние.
 - Issue #14 остаётся OPEN — приёмка за владельцем (по статус-комментарию владельца).
+
+---
+Task ID: 55 (R-RES-QUEUE-01 Stage 1 — docs)
+Agent: coding agent (Z.ai Code)
+Task: GitHub Issue #15 — «R-RES-QUEUE-01 — циклическая очередь исследований и единый пул RP империи», Этап 1 по протоколу задачи: сначала каноническая документация (отдельный docs-only commit) ДО runtime-правок. Решение владельца 2026-10-27 (комментарий к #14 19:51:58Z + тело Issue #15) — нормативный источник.
+
+Work Log:
+- Preflight: HEAD f714234 (DOC-AUDIT-01 ADDENDUM); прочитаны docs/60-research.md (полностью, v1.0), research-unification.md (очередь не описывает — правки не требуется), !listing, STATUS; код: engine.ts (tickResearch/advanceQueue/createResearchSlot/getEffectiveRPPerSec/getMaxResearchSlots/getFocusBonus/getResearchInflowSplit), research-module.ts (planets-фильтр p.owner != null — включает чужие фракции, дефект к исправлению в runtime-срезе), game-store.ts (startResearch параллельные слоты + allocation-split; addToResearchQueue немедленный старт; cancel/reorder/remove/clear), research-view.tsx (слоты X/maxSlots, allocation-слайдер, авто-распределение), тесты queue-and-rp/process-tick/research-split (проанализирована зона регрессии), serializeGameState (researchState сериализуется как есть — новых полей НЕ нужно).
+- docs/60-research.md v1.1: §3.3 «Единый поток RP империи» [OWNER-DECISION 2026-10-27] — empire-level inflow по планетам owner===playerFactionId, чужие фракции исключены, без требования связи, per-planet пулов нет; §3.4 «Циклическая очередь исследований» [OWNER-DECISION] — один активный проект (100% + фокус), передача хода после каждого завершённого уровня, возврат не-maxed в хвост, maxed покидает цикл, единственный проект продолжает, ручное добавление → переключение после текущего уровня, пример [1,1,2]→[2,2,3], остаток RP детерминированно по очереди (без потери, без повторных бонусов; edge «все закрыты» — остаток не сохраняется, rpBank-альтернатива отклонена по инварианту R-SPLIT [PROPOSED POLICY]), валидация/деградация, управление очередью (startResearch «в голову» [PROPOSED POLICY]), сейв без новых полей, legacy-консолидация параллельных слотов [PROPOSED POLICY]; §3.5 фокус ×1.2 всегда для активного; SUPERSEDED-блоки для процентного распределения и параллельных слотов; §9.5 SUPERSEDED; §9.7 примечание; шапка v1.1 + легенда разметки статусов.
+- docs/!listing.md: строка 60-research (v1.1, ~25K/1398) + итоговая шапка ~459K.
+- docs/STATUS.md: шапка «Изменён», §3.1 строка Исследования (v1.1 опубликована до runtime), changelog Task 55 Stage 1.
+- R-SPLIT (§3.1.1) и rpBank — не менялись (явное требование задачи «не путать глобальный поток с rpBank; правило R-SPLIT не менять»).
+- Дифф — docs-only (60-research, !listing, STATUS, worklog); src/tests/scripts не тронуты. Гейты не запускались (docs-only; базовые прогоны 906/906 действительны).
+
+Stage Summary:
+- Каноническая спецификация циклической очереди + единого пула RP империи опубликована ДО runtime-правок (протокол Этапа 1 задачи соблюдён): docs/60-research.md v1.1 §3.3–3.5 с разметкой OWNER-DECISION/PROPOSED POLICY/SUPERSEDED, примером владельца [1,1,2]→[2,2,3], правилами остатка RP, валидацией очереди, сейв-совместимостью без новых полей и legacy-миграцией параллельных слотов.
+- Открытые инженерные допущения честно помечены [PROPOSED POLICY]: семантика остатка при полном закрытии цикла; startResearch «в голову»; cancel без сохранения прогресса; консолидация legacy-слотов с переносом rpInvested.
+- Следующий шаг по протоколу задачи: Этап 2 (регрессионные тесты) → Этап 3 (минимальная runtime-реализация) отдельным коммитом; Issue #15 не закрывается (приёмка за владельцем).
