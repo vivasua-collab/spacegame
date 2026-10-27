@@ -3,7 +3,7 @@
 > **Номерной файл-источник истины.** Классы корпусов, модули, конструктор кораблей.
 >
 > **Создан:** 2026-05-03
-> **Изменён:** 2026-10-27 — SHIPFLOW-DOCS: ссылка на docs/55, migration note и пометки legacy в §1.4/Приложении C (Issue #13; ранее 2026-08-28 — R-SHIPS-DATA: данные по корпусам/модулям/топливу вынесены во внешние JSON-файлы, data-driven, см. §11 + `docs/data-driven-architecture.md`).
+> **Изменён:** 2026-10-27 — DOC-AUDIT-01 / Issue #14: уточнён статус приёмки docs/55 (4 формулировки «утверждённая спецификация» смягчены до «архитектура принята, документ ожидает приёмки»); SHIPFLOW-DOCS: ссылка на docs/55, migration note и пометки legacy в §1.4/Приложении C (Issue #13; ранее 2026-08-28 — R-SHIPS-DATA: данные по корпусам/модулям/топливу вынесены во внешние JSON-файлы, data-driven, см. §11 + `docs/data-driven-architecture.md`).
 > **Версия:** 1.1
 > **Статус:** Дизайн-документ (реализация Block 02 + R-SHIPS-DATA data-driven миграция)
 
@@ -98,7 +98,8 @@ cost_total = hull.cost + Σ(modules[i].cost)
 
 ### 1.4 Структура модуля
 
-> **SHIPFLOW-DOCS (2026-10-27):** утверждённая спецификация потокового производства кораблей —
+> **SHIPFLOW-DOCS (2026-10-27):** спецификация потокового производства кораблей (архитектура принята
+> владельцем; подробный документ опубликован и ожидает приёмки — DOC-AUDIT-01) —
 > [55-ship-production-flow.md](./55-ship-production-flow.md). В ней зафиксировано, что у ShipModule
 > пока НЕТ производственных полей (`productionTime`/`recipeId`) — это пробел данных, а не работающая
 > механика; маршрутизация производства модулей по заводам §6 docs/40 и универсальному заводу —
@@ -1425,14 +1426,14 @@ function validateShip(design: ShipDesign): ValidationResult {
 
 ### Связь с производством
 
-> ⚠️ **MIGRATION NOTE (SHIPFLOW-DOCS, 2026-10-27):** утверждённая спецификация будущего runtime —
-> [55-ship-production-flow.md](./55-ship-production-flow.md): потоковый конвейер
+> ⚠️ **MIGRATION NOTE (SHIPFLOW-DOCS, 2026-10-27):** принятая владельцем архитектура будущего runtime —
+> [55-ship-production-flow.md](./55-ship-production-flow.md) (подробный документ ожидает приёмки — DOC-AUDIT-01): потоковый конвейер
 > `DESIGN_VALIDATED → BUILD_ORDER_CREATED → (HULL_WELDING || MODULE_JOBS) → FINAL_ASSEMBLY →
 > LAUNCHED_TO_ORBIT`, последовательная очередь (один активный ship build project на верфь),
 > резервирование компонентов при активации заказа, per-planet буферы, модульные задачи на планетарных
 > заводах §6. Правила ниже — **legacy текущего runtime** (до миграции): общий time budget правила
 > верфи по корпусу (`SHIP_BUILD_TIME[hull.size]`), списание ресурсов в тик завершения, без резерва.
-> Новые правила — утверждённая спецификация будущего runtime; старый runtime до отдельного
+> Новые правила — спецификация будущего runtime (архитектура принята владельцем, документ ожидает приёмки — DOC-AUDIT-01); старый runtime до отдельного
 > runtime-среза не изменён.
 
 Корабли строятся на **верфях**. Требования верфи:
@@ -1448,7 +1449,7 @@ function validateShip(design: ShipDesign): ValidationResult {
 | Флагман | 7 | 3 000 |
 
 Время постройки можно сократить (⚠️ LEGACY до runtime-миграции — см. migration note выше; в
-утверждённой схеме docs/55: время заказа = критический путь (сварка корпуса || модульные задачи) +
+принятой схеме docs/55 (документ ожидает приёмки — DOC-AUDIT-01): время заказа = критический путь (сварка корпуса || модульные задачи) +
 финальная сборка, параллельные корабельные проекты на верфь — superseded):
 - Улучшение верфи: -10% за уровень сверх минимального
 - Модули быстрее корпуса: время = время_корпуса + Σ(время_модуля_i) (⚠️ не соответствует текущему
@@ -1489,7 +1490,7 @@ function validateShip(design: ShipDesign): ValidationResult {
 
 ## 11. Data-driven структура хранения (R-SHIPS-DATA)
 
-> **Связанные документы:** [data-driven-architecture.md](./data-driven-architecture.md) (общая архитектура data-driven хранения: buildings/research/ships), [03-project-structure.md](./03-project-structure.md) (структура каталогов), [55-ship-production-flow.md](./55-ship-production-flow.md) (утверждённая спецификация потокового производства кораблей: конвейер, резервирование, планировщик, баланс цехов W(L)).
+> **Связанные документы:** [data-driven-architecture.md](./data-driven-architecture.md) (общая архитектура data-driven хранения: buildings/research/ships), [03-project-structure.md](./03-project-structure.md) (структура каталогов), [55-ship-production-flow.md](./55-ship-production-flow.md) (спецификация потокового производства кораблей: конвейер, резервирование, планировщик, баланс цехов W(L); архитектура принята владельцем, документ ожидает приёмки — DOC-AUDIT-01).
 
 ### 11.1 Принцип data-driven хранения
 
