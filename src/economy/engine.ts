@@ -12,6 +12,7 @@ import { ELEMENT_MAP } from '@/data/elements';
 import { canStoreResource, calculateWarehouseCapacities, getOrbitBufferCapacity, ensureReservesForResources, getWarehouseType } from '@/data/warehouse';
 import { DIRECT_GAS_MAP, getAtmosphericGasesForType } from '@/data/atmosphere-gases';
 import { getCurrentLookups, hasCurrentLookups } from '@/data/baked-lookups';
+import { GEOLOGICAL_ACTIVITY_BONUS } from '@/data/planet-types'; // R-40: §2.4 40-buildings
 import {
   BASE_CONSTRUCTION_RECIPE_IDS,
   AUTO_PROCESSING_BATCH_SIZE,
@@ -139,6 +140,16 @@ function processExtraction(planet: Planet): void {
       // ×0.5^(n−1)) — добывающие здания дают бонус СКОРОСТИ ДОБЫЧИ.
       const miningMult = getMiningSpeedMultiplier(planet, i);
 
+      // R-40 (docs/40-buildings.md §2.4): бонус геологической активности
+      // планеты — ТОЛЬКО для буровой установки, по ТИПУ планеты (Planet.type,
+      // не по террейну гекса). Применяется РОВНО ОДИН РАЗ в формуле ниже;
+      // terrainMult каталога и синергия mining_cluster НЕ удваиваются.
+      // У остальных добытчиков (mine/quarry) множителя нет — их формула
+      // не меняется при любом типе планеты.
+      const geologicalMult = buildingDef.id === 'drilling_rig'
+        ? (GEOLOGICAL_ACTIVITY_BONUS[planet.type] ?? 1)
+        : 1;
+
       if (buildingDef.id === 'gas_extractor') {
         // G-01 (fix): газовый экстрактор на ПОВЕРХНОСТИ добывает атмосферу
         // (та же логика, что и в атмосферном слоте газового гиганта), а не
@@ -154,8 +165,10 @@ function processExtraction(planet: Planet): void {
           if (!canMineDeposit(buildingDef.id, deposit.elementId, hex.buildingLevel)) continue;
 
           // 1 тик = 1 день. Базовая скорость: ~1 единица/день при availability=0.5
+          // R-40 (§2.4): для буровой × geological_activity_bonus (один раз;
+          // скаляр 1 для остальных — формула прежняя).
           const baseRate = 1.0 * deposit.availability;
-          const amount = baseRate * levelMult * terrainMult * miningMult;
+          const amount = baseRate * levelMult * terrainMult * miningMult * geologicalMult;
           const requested = Math.min(amount, deposit.quantity);
 
           // Audit Pass 2 P1-1 (fix): only debit the deposit for the portion
@@ -1286,8 +1299,22 @@ export function buildOnOrbitSlot(
 
 /**
  * Улучшить здание на гексе.
+ *
+ * R-40: добавлен опциональный `researched` — requiresTechs-гейт действует
+ * и на АПГРЕЙД (симметрично buildOnHex). Контракт гейта: существующие
+ * здания при загрузке старых сейвов НЕ удаляются и продолжают работать,
+ * но новые действия (постройка НОВОГО здания, апгрейд существующего)
+ * отклоняются до изучения технологии. Если `researched` не передан —
+ * гейт пропускается (backward-compat для тестов и прямых вызовов).
+ * Уровни технологий не уменьшаются, поэтому для зданий, построенных ПОСЛЕ
+ * гейта (synthesizer/refinery/drilling_rig), апгрейд всегда разрешён —
+ * регрессии старых сейвов нет.
  */
-export function upgradeBuilding(planet: Planet, hexIndex: number): boolean {
+export function upgradeBuilding(
+  planet: Planet,
+  hexIndex: number,
+  researched?: Record<string, number>,
+): boolean {
   if (hexIndex < 0 || hexIndex >= planet.hexes.length) return false;
   const hex = planet.hexes[hexIndex];
   if (!hex.buildingId) return false;
@@ -1295,6 +1322,11 @@ export function upgradeBuilding(planet: Planet, hexIndex: number): boolean {
   const buildingDef = BUILDING_MAP.get(hex.buildingId);
   if (!buildingDef) return false;
   if (hex.buildingLevel >= buildingDef.levels) return false;
+
+  // R-40: requiresTechs-гейт на апгрейд (та же семантика, что в buildOnHex).
+  if (researched && !areBuildingTechsMet(buildingDef, researched)) {
+    return false;
+  }
 
   for (const [resourceId, baseAmount] of Object.entries(buildingDef.costPerLevel)) {
     const amount = baseAmount * hex.buildingLevel;

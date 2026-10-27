@@ -41,6 +41,8 @@ import { SpecializeDialog } from './specialize-dialog';
 import { toast } from '@/hooks/use-toast';
 import { ShipyardDialog } from './shipyard-dialog';
 import { getResearchRate } from '@/research/engine'; // Block 03 R2: RP/sec для laboratory
+import { TECH_MAP } from '@/data/research'; // R-40: имена технологий для гейта апгрейда
+import { GEOLOGICAL_ACTIVITY_BONUS, TYPE_NAMES } from '@/data/planet-types'; // R-40: §2.4 40-buildings
 
 /**
  * Target — what the user clicked to open the dialog.
@@ -137,6 +139,7 @@ export function BuildingDialog({ open, onOpenChange, planet, target }: BuildingD
           existingBuilding={existingBuilding}
           existingLevel={hex.buildingLevel}
           starLuminosity={starLuminosity}
+          researched={researched}
           onUpgrade={() => {
             upgradeBuildingOnHex(planet.id, target.hexIndex);
             onOpenChange(false);
@@ -245,6 +248,7 @@ function UpgradeMode({
   existingBuilding,
   existingLevel,
   starLuminosity,
+  researched,
   onUpgrade,
   onDowngrade,
   onDemolish,
@@ -258,12 +262,20 @@ function UpgradeMode({
   existingLevel: number;
   /** R-24: светимость звезды системы — для реальной выработки (P1-26). */
   starLuminosity: number;
+  /** R-40: карта researched — гейт апгрейда по requiresTechs (симметрично engine). */
+  researched: Record<string, number>;
   onUpgrade: () => void;
   onDowngrade: () => void;
   onDemolish: () => void;
 }) {
   const canAffordUpgrade = canAffordBuildingUpgrade(planet, existingLevel, existingBuilding);
   const isMaxLevel = existingLevel >= existingBuilding.levels;
+  // R-40: гейт апгрейда по requiresTechs (симметрично engine.upgradeBuilding).
+  // Существующее здание НЕ удаляется и работает, но апгрейд запрещён до изучения.
+  const techsMet = areBuildingTechsMet(existingBuilding, researched);
+  const missingTechNames = (existingBuilding.requiresTechs ?? [])
+    .filter((r) => (researched[r.techId] ?? 0) < r.minLevel)
+    .map((r) => TECH_MAP.get(r.techId)?.name ?? r.techId);
   // R-DEMOLISH: колониальный хаб нельзя понижать/сносить (ядро колонии).
   const isProtected = existingBuilding.id === 'colony_hub';
   // R-SYNERGY: активные бонусы соседства этого здания.
@@ -373,6 +385,15 @@ function UpgradeMode({
                 </div>
               )}
 
+              {/* ─── R-40 (docs/40-buildings.md §2.4): геологическая активность
+                   планеты — множитель добычи буровой по ТИПУ планеты (рядом
+                   с бонусом местности — UI уже показывает множители добычи). ─── */}
+              {existingBuilding.id === 'drilling_rig' && (
+                <div className="text-sm text-emerald-400">
+                  Геологическая активность: ×{GEOLOGICAL_ACTIVITY_BONUS[planet.type]} ({TYPE_NAMES[planet.type]})
+                </div>
+              )}
+
               {/* ─── R-SYNERGY: активные бонусы соседства (docs §5) — замещает
                    R-26-солнечную синергию: power_boost покрывает солнечные
                    станции общим механизмом (docs/40-buildings.md §5.1). ─── */}
@@ -432,6 +453,12 @@ function UpgradeMode({
               ) : (
                 <>
                   <div className="text-sm text-slate-300 mb-2">Апгрейд до Lvl {existingLevel + 1}:</div>
+                  {/* R-40: предупреждение о неизученных технологиях (гейт апгрейда). */}
+                  {!techsMet && (
+                    <div className="text-xs text-amber-400 mb-2">
+                      Требуется технология: {missingTechNames.join(', ')} — апгрейд недоступен до изучения.
+                    </div>
+                  )}
                   <div className="space-y-1">
                     {Object.entries(existingBuilding.costPerLevel).map(([resourceId, baseAmount]) => {
                       const cost = baseAmount * existingLevel;
@@ -452,7 +479,7 @@ function UpgradeMode({
                   </div>
                   <Button
                     className="w-full mt-2"
-                    disabled={!canAffordUpgrade}
+                    disabled={!canAffordUpgrade || !techsMet}
                     onClick={onUpgrade}
                   >
                     <ArrowUp className="size-4 mr-1" />

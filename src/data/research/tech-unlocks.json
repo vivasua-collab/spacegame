@@ -17,6 +17,9 @@
   "superconductors": [
     { "level": 1, "type": "recipe", "id": "make_superconductor" }
   ],
+  "deep_drilling": [
+    { "level": 1, "type": "building", "id": "drilling_rig" }
+  ],
   "ballistic_weapons": [
     { "level": 1, "type": "module", "id": "ballistic_turret" }
   ],

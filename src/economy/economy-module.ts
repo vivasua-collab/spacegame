@@ -246,10 +246,13 @@ export class EconomyModule implements IGameModule {
     if (!currentState) return;
 
     let success = false;
+    // R-40: requiresTechs-гейт действует и на апгрейд — читаем researched
+    // из currentState (не из draft), как в onBuild.
+    const researched = currentState.researchState.researched;
     const newState = produce(currentState, (draft) => {
       const planet = findPlanet(draft, payload.planetId);
       if (!planet) return;
-      success = engineUpgradeBuilding(planet, payload.hexIndex);
+      success = engineUpgradeBuilding(planet, payload.hexIndex, researched);
     });
 
     if (success) {

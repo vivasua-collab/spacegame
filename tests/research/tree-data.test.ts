@@ -3,9 +3,9 @@
  * Block 03 — T-R1 — Tech tree data validation.
  *
  * Tests per plan §7 T-R1:
- *   1. TECH_TREE has 15 elements
+ *   1. TECH_TREE has 16 elements (R-40: +deep_drilling — тех-гейт буровой §2.4 40-buildings)
  *   2. validateTechTree returns [] for valid tree
- *   3. STARTER_TECH_IDS has 5 entries, all in TECH_TREE
+ *   3. STARTER_TECH_IDS has 6 entries, all in TECH_TREE (R-40: deep_drilling — starter)
  *   4. FUNDAMENTAL_BRANCHES_MVP has 5 entries (no xenoarchaeology)
  *   5. BRANCH_LINKS has 8 entries (5 MVP + 1 ghost + ... actually 7+1 ghost)
  *   6. Duplicate ID → error
@@ -25,16 +25,18 @@ import { validateTechTree } from '@/research/engine';
 import type { Technology, SpecializedBranchId, FundamentalBranchId } from '@/core/types';
 
 describe('Block 03 T-R1 — Tree data', () => {
-  test('TECH_TREE has 15 elements', () => {
-    expect(TECH_TREE.length).toBe(15);
+  test('TECH_TREE has 16 elements (R-40: +deep_drilling)', () => {
+    expect(TECH_TREE.length).toBe(16);
+    expect(TECH_MAP.has('deep_drilling')).toBe(true);
   });
 
   test('validateTechTree returns [] for valid TECH_TREE', () => {
     expect(validateTechTree(TECH_TREE)).toEqual([]);
   });
 
-  test('STARTER_TECH_IDS has 5 entries, all exist in TECH_TREE', () => {
-    expect(STARTER_TECH_IDS.length).toBe(5);
+  test('STARTER_TECH_IDS has 6 entries, all exist in TECH_TREE (R-40: deep_drilling — starter)', () => {
+    expect(STARTER_TECH_IDS.length).toBe(6);
+    expect(STARTER_TECH_IDS).toContain('deep_drilling');
     for (const id of STARTER_TECH_IDS) {
       expect(TECH_MAP.has(id)).toBe(true);
       const tech = TECH_MAP.get(id)!;

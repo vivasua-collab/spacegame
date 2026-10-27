@@ -183,7 +183,7 @@ totalQuantity(elementId, planet) = basePresence(elementId, planet.size) × conce
 |-------------|--------|------|------------|
 | Металлическая руда | mine | surface | — |
 | Неметаллическая руда | quarry | surface | — |
-| Глубинная руда | drilling_rig | surface | Уровень здания ≥ minSourceLevel руды; тех-гейт «Глубокое бурение» — после расширения tech-tree (R-36) |
+| Глубинная руда | drilling_rig | surface | Уровень здания ≥ minSourceLevel руды; тех-гейт «Глубокое бурение» (deep_drilling) — РЕАЛИЗОВАН в R-40 (engine build/upgrade + UI) |
 | Атмосферный газ | gas_extractor | surface/atmosphere | requiresAtmosphere |
 | Ледяное соединение | ice_harvester (post-MVP) | surface | Низкая T |
 | Самородный элемент | mine (редкая находка) | surface | Шанс при добыче |

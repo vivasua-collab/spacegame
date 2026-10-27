@@ -123,6 +123,21 @@
     "sortOrder": 14
   },
   {
+    "id": "deep_drilling",
+    "name": "Глубокое бурение",
+    "nameEn": "Deep drilling",
+    "branch": "materials",
+    "baseCost": 800,
+    "maxLevel": 10,
+    "improvementType": "linear",
+    "improvementPerLevel": 0.05,
+    "prerequisites": [],
+    "effects": [],
+    "description": "Открывает здание «Буровая установка» (drilling_rig) — доступ к редким и уникальным элементам, залегающим на глубине (по §2.4 40-buildings).",
+    "icon": "drill",
+    "sortOrder": 15
+  },
+  {
     "id": "ballistic_weapons",
     "name": "Баллистическое оружие",
     "nameEn": "Ballistic weapons",
