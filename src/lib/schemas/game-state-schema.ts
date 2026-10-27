@@ -21,6 +21,8 @@
  */
 
 import { z } from 'zod';
+import { AI_FACTION_ARCHETYPES, AI_GOAL_KINDS } from '@/ai/factions';
+import { AI_DIFFICULTIES } from '@/ai/types';
 
 /** Текущий формат времени — `tick` + `dayInYear` + `year`. */
 const GameTimeSchema = z.object({
@@ -67,6 +69,69 @@ const ProductionQueuesSchema = z.array(
   z.tuple([z.string(), z.unknown()]),
 );
 
+// ─── Этап 3б.1 (R-44): AI-секция сейва (версионированная) ────────────────
+//
+// `aiFactions` — постоянный реестр AI-фракций (Record<id, AIFactionState>).
+// STRICT-схемы: лишние поля во фракции (например, попытка прокрасти копии
+// владений/ресурсов — нарушение ссылочного контракта) отклоняют сейв.
+// Семантические инварианты (сумма бюджета ≈ 1, ключ == faction.id) — refine.
+// Пишется serializeGameState'ом ТОЛЬКО при непустом реестре вместе с маркером
+// `aiFactionsV` (см. serialize/deserialize в game-store). Старые сейвы без
+// этих полей валидируются как прежде (поля optional).
+
+const AIBudgetSchema = z.strictObject({
+  economy: z.number(),
+  military: z.number(),
+  research: z.number(),
+  trade: z.number(),
+  diplomacy: z.number(),
+});
+
+const AIFactionThresholdsSchema = z.strictObject({
+  attack: z.number(),
+  colonization: z.number(),
+  maxColonizations: z.number().int(),
+});
+
+const AIFactionGoalSchema = z.strictObject({
+  id: z.string().min(1),
+  kind: z.enum(AI_GOAL_KINDS),
+  createdAtTick: z.number().int().nonnegative(),
+});
+
+const AIFactionStateSchema = z.strictObject({
+  id: z.string().min(1),
+  archetype: z.enum(AI_FACTION_ARCHETYPES),
+  config: z.strictObject({
+    difficulty: z.enum(AI_DIFFICULTIES),
+    updateIntervalTicks: z.number().int().min(1),
+    maxControllersPerTick: z.number().int().min(0),
+  }),
+  createdAtTick: z.number().int().nonnegative(),
+  budget: AIBudgetSchema,
+  thresholds: AIFactionThresholdsSchema,
+  goals: z.array(AIFactionGoalSchema),
+});
+
+/**
+ * Реестр AI-фракций: ключ обязан совпадать с faction.id, суммы бюджетов
+ * в допуске 1e-6 (двойная проверка с validateAIFactionRegistry — защита
+ * загрузки от повреждённых/рукодельных сейвов).
+ */
+const AIFactionsRegistrySchema = z
+  .record(z.string(), AIFactionStateSchema)
+  .refine(
+    (reg) => Object.entries(reg).every(([key, f]) => f.id === key),
+    { message: 'ключ реестра aiFactions обязан совпадать с faction.id' },
+  )
+  .refine(
+    (reg) => Object.values(reg).every((f) => {
+      const s = f.budget.economy + f.budget.military + f.budget.research + f.budget.trade + f.budget.diplomacy;
+      return Number.isFinite(s) && Math.abs(s - 1) <= 1e-6;
+    }),
+    { message: 'сумма бюджетных весов фракции должна быть 1 (±1e-6)' },
+  );
+
 /**
  * Top-level serialized GameState schema (v1).
  *
@@ -94,6 +159,11 @@ export const SerializedGameStateSchema = z.object({
   shipyardQueues: z.array(z.tuple([z.string(), z.unknown()])).optional().default([]),
   ships: z.array(z.tuple([z.string(), z.unknown()])).optional().default([]),
   playerFactionId: z.string(),
+  // Этап 3б.1 (R-44): AI-секция — ТОЛЬКО при непустом реестре (serialize
+  // опускает пустой); маркер версии aiFactionsV — транспортный (int).
+  // Старые сейвы без AI-полей проходят как прежде (обязательства нет).
+  aiFactions: AIFactionsRegistrySchema.optional(),
+  aiFactionsV: z.number().int().optional(),
 }).passthrough();
 
 /**

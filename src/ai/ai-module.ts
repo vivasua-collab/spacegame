@@ -25,6 +25,15 @@
  *   меняется, старые сейвы совместимы по построению.
  * - Бюджет на тик — детерминированный операционный лимит
  *   (maxControllersPerTick), без wall-clock.
+ *
+ * Этап 3б.1 (R-44): постоянное состояние AI-фракций живёт в GameState
+ * (state.aiFactions — ссылочные сущности, см. src/ai/factions.ts), НЕ в
+ * модуле: кэш контроллеров по-прежнему вычисляемый и синхронизируется от
+ * реестра состояния каждый тик (syncControllersFromState — отсортированные
+ * ключи, attach/идемпотентное обновление конфига, БЕЗ удаления ручных/
+ * тестовых контроллеров). Подписки НЕ растут (синхронизация тиковая,
+ * event-подписки прежние). Модуль по-прежнему БЕЗ мутатора: реестр пишет
+ * СТОР (setupAIFactions), модуль только читает. Игровые действия — 3б.3+.
  */
 
 import type { IGameModule, ModuleManifest, ModulePhase } from '@/core/module-types';
@@ -60,11 +69,13 @@ export interface AIStateQueryResult {
 export class AIModule implements IGameModule {
   readonly manifest: ModuleManifest = {
     id: 'ai',
-    name: 'AI-фракции (этап 3а: каркас)',
-    version: '0.1.0',
+    name: 'AI-фракции (этап 3б.1: постоянное состояние)',
+    version: '0.2.0',
     description:
-      'Детерминированный каркас AI: общая world model + perception-снимки контроллеров, ' +
-      'инертная очередь намерений. Без игровых действий (этап 3б) и без мутации GameState.',
+      'Детерминированный AI: постоянный реестр фракций живёт в GameState (aiFactions, ' +
+      'сериализуется в v3 с маркером aiFactionsV); контроллеры — вычисляемый кэш от реестра ' +
+      '(syncControllersFromState), world model + perception — defensive copy, инертная очередь ' +
+      'намерений. Без игровых действий (3б.3+) и без мутации GameState (мутатора нет).',
     dependencies: ['economy'],
     // 3а: модуль НЕ эмитит события — ai:* остаются зарезервированными
     // (events.ts, каталог «вперёд» под этапы 3б/4).
@@ -161,8 +172,10 @@ export class AIModule implements IGameModule {
 
   /**
    * Сериализация состояния модуля.
-   * 3а: AI-состояние — вычисляемый кэш, в сейв НЕ сериализуется
-   * (формат v3 не меняется). Возвращаем только версию — как ResearchModule.
+   * Постоянное состояние фракций живёт в GameState (aiFactions) и попадает
+   * в сейв через serializeGameState (v3-секция aiFactions/aiFactionsV, R-44) —
+   * модульный serialize его НЕ дублирует. Кэш контроллеров вычисляемый,
+   * в сейв не пишется. Возвращаем версию — как ResearchModule.
    */
   serialize(): Record<string, unknown> {
     return {
@@ -203,6 +216,11 @@ export class AIModule implements IGameModule {
 
     // Общая world model: пересборка каждый игровой тик (лёгкие агрегаты).
     this.worldModel = buildWorldModel(state);
+
+    // Этап 3б.1 (R-44): контроллеры синхронизируются от постоянного реестра
+    // state.aiFactions (отсортированные ключи — детерминизм; БЕЗ удаления
+    // ручных/тестовых контроллеров; БЕЗ мутаций GameState).
+    this.syncControllersFromState(state);
 
     // Детерминированный бюджет на тик.
     let processed = 0;
@@ -284,6 +302,51 @@ export class AIModule implements IGameModule {
   /** Текущая общая world model (только чтение; null до первого тика playing). */
   getWorldModel(): AIWorldModel | null {
     return this.worldModel;
+  }
+
+  // ─── Синхронизация контроллеров от постоянного реестра (3б.1) ──
+
+  /**
+   * Синхронизация кэша контроллеров от state.aiFactions (R-44).
+   *
+   * - Отсортированные ключи реестра (детерминизм порядка вставки Map);
+   * - НОВОЙ фракции — контроллер с конфигом ИЗ фракции (faction.config);
+   * - существующей — идемпотентное обновление конфига при расхождении;
+   * - БЕЗ удаления: контроллеры, подключённые вручную/тестами (3а API),
+   *   сохраняются; удаление фракций из реестра — за пределами 3б.1
+   *   (API не существует; контракт зафиксирован в чекпоинте R-44);
+   * - отсутствие реестра (старые состояния/сейвы) — no-op (3а-совместимость).
+   */
+  private syncControllersFromState(state: GameState): void {
+    const registry = state.aiFactions;
+    if (!registry) return; // 3а-совместимость: реестра нет — контроллеры не трогаем
+    for (const factionId of Object.keys(registry).sort()) {
+      const faction = registry[factionId];
+      if (!faction || faction.id !== factionId) continue; // повреждённая запись — не читаем (валидация на setup/загрузке)
+      const config: AIConfig = {
+        difficulty: faction.config.difficulty,
+        updateIntervalTicks: faction.config.updateIntervalTicks,
+        maxControllersPerTick: faction.config.maxControllersPerTick,
+      };
+      const existing = this.controllers.get(factionId);
+      if (!existing) {
+        this.controllers.set(factionId, {
+          factionId,
+          difficulty: config.difficulty,
+          config,
+          perception: null,
+          intents: createIntentQueue(factionId),
+          lastProcessedTick: Number.NEGATIVE_INFINITY,
+        });
+      } else if (
+        existing.difficulty !== config.difficulty ||
+        existing.config.updateIntervalTicks !== config.updateIntervalTicks ||
+        existing.config.maxControllersPerTick !== config.maxControllersPerTick
+      ) {
+        existing.difficulty = config.difficulty;
+        existing.config = config;
+      }
+    }
   }
 
   // ─── Внутреннее ───────────────────────────────────────

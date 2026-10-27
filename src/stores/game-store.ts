@@ -42,6 +42,13 @@ import { FleetModule } from '@/ships/fleet-module'; // Block 02 F5
 import { ResearchModule } from '@/research/research-module'; // Block 03 R7
 import { AIModule } from '@/ai/ai-module'; // Этап 3а (R-41): каркас AI без игровых действий
 import {
+  AI_FACTION_STATE_VERSION,
+  createAIFactionRoster,
+  validateAIFactionRegistry,
+  type AIFactionSetupOptions,
+  type AIFactionState,
+} from '@/ai/factions'; // Этап 3б.1 (R-44): постоянный реестр AI-фракций + v3-секция сейва
+import {
   createFleet as createFleetFn,
   mergeFleets as mergeFleetsFn,
   splitFleet as splitFleetFn,
@@ -165,6 +172,12 @@ export interface GameStore {
 
   // Колонизация
   colonizePlanet: (planetId: EntityId) => boolean;
+
+  // Этап 3б.1 (R-44): детерминированная расстановка AI-фракций по seed галактики.
+  // Отказ (false): нет gameState / реестр уже непуст (дубликат-регистрация —
+  // явный отказ по контракту среза) / невалидные опции. НЕ меняет поведение
+  // существующих систем — только добавляет поле aiFactions в состояние.
+  setupAIFactions: (options?: AIFactionSetupOptions) => boolean;
 
   // Склад
   setColonyRole: (planetId: EntityId, role: ColonyRole) => void;
@@ -391,8 +404,14 @@ function syncMediatorState(): void {
  */
 export function serializeGameState(state: GameState): string {
   const { systemMap: _systemMap, bakedModel: _bakedModel, ...galaxyWithoutMap } = state.galaxy;
+  // Этап 3б.1 (R-44): AI-реестр вырезается из spread ВСЕГДА; пишется обратно
+  // ТОЛЬКО при непустом реестре (с маркером версии aiFactionsV, ключи — в
+  // конце, порядок детерминирован). Состояния без AI-фракций (и с пустым
+  // реестром) сериализуются побайтно как прежде — якоря sha256 R-39/R-40/
+  // R-42/R-41 сохраняются, старые сейвы проходят рантрип без инъекции ключей.
+  const { aiFactions, ...stateWithoutAI } = state;
   const serializable = {
-    ...state,
+    ...stateWithoutAI,
     galaxy: galaxyWithoutMap,
     productionQueues: Array.from(state.productionQueues.entries()),
     // Block 02 (F7): serialize shipDesigns + shipyardQueues + ships as entries arrays
@@ -400,10 +419,14 @@ export function serializeGameState(state: GameState): string {
     shipyardQueues: Array.from(state.shipyardQueues.entries()),
     ships: Array.from(state.ships.entries()),
   };
+  const hasAIFactions = !!aiFactions && Object.keys(aiFactions).length > 0;
+  const payload = hasAIFactions
+    ? { ...serializable, aiFactions, aiFactionsV: AI_FACTION_STATE_VERSION }
+    : serializable;
   // R-29: формат v3 — ленивые залежи (только материализованные тела,
   // истощённые не пишутся) + словарь id (кортежи-индексы). Чистая функция:
   // живое state не мутируется (строятся новые объекты).
-  return JSON.stringify(compactSaveV3(serializable as unknown as Record<string, unknown>));
+  return JSON.stringify(compactSaveV3(payload as unknown as Record<string, unknown>));
 }
 
 /**
@@ -567,6 +590,27 @@ export function deserializeGameState(json: string): GameState {
       .map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`)
       .join('; ');
     throw new Error(`deserializeGameState: невалидный формат сейва — ${issues}`);
+  }
+
+  // ─── Этап 3б.1 (R-44): AI-секция сейва (версионированная) ──────────
+  // Маркер aiFactionsV — ТРАНСПОРТНЫЙ (не состояние): при наличии реестра
+  // обязан совпадать с AI_FACTION_STATE_VERSION (иначе явная ошибка — как
+  // fmt≠3 в R-30: молчаливая интерпретация чужой версии портила бы
+  // состояние), после проверки удаляется из raw. Отсутствие AI-полей —
+  // совместимость: предсказуемый дефолт «реестра нет» (поле в GameState
+  // не создаётся; читатели обязаны трактовать отсутствие как пустой реестр).
+  if (raw.aiFactions !== undefined) {
+    if (raw.aiFactionsV !== AI_FACTION_STATE_VERSION) {
+      throw new Error(
+        `deserializeGameState: версия AI-секции сейва aiFactionsV=${String(raw.aiFactionsV)} `
+        + `не поддерживается (ожидается ${AI_FACTION_STATE_VERSION}). `
+        + 'Сейв создан другой версией игры — начните новую игру.',
+      );
+    }
+    delete raw.aiFactionsV;
+  } else if (raw.aiFactionsV !== undefined) {
+    // Маркер без реестра — пустой реестр: маркер снимаем, поле не создаём.
+    delete raw.aiFactionsV;
   }
 
   // ─── R-37 (Б1): baked-model ИМЕННО загружаемой галактики → setCurrentLookups ──
@@ -1039,6 +1083,41 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
         });
       }
       return success;
+    },
+
+    // ─── Этап 3б.1 (R-44): AI-фракции ─────────────────────
+    // Детерминированная расстановка AI-фракций по seed галактики (канонический
+    // PRNG derive — аудит R-43 №6). Контракт среза: НЕ меняет поведение
+    // существующих систем (только добавляет поле aiFactions в GameState),
+    // без стартовых бонусов; дубликат-регистрация — явный отказ (false).
+    // Коммит — через существующий mediator.commitState (Pattern A-проводка;
+    // у AI-модуля mutator по-прежнему отсутствует — состояние пишет СТОР,
+    // не AI).
+    setupAIFactions: (options = {}) => {
+      const gameState = get().gameState;
+      if (!gameState) return false;
+      // Дубликат-регистрация — явный отказ (контракт 3б.1).
+      if (gameState.aiFactions && Object.keys(gameState.aiFactions).length > 0) return false;
+      let roster: Record<EntityId, AIFactionState>;
+      try {
+        roster = createAIFactionRoster(gameState.galaxy.seed, {
+          ...options,
+          createdAtTick: gameState.time.tick,
+        });
+      } catch {
+        // Невалидные опции (программная ошибка) — отказ без броска
+        // (контракт store-действий: boolean).
+        return false;
+      }
+      const check = validateAIFactionRegistry(roster);
+      if (!check.ok) return false;
+      const next = produce(gameState, (draft) => {
+        draft.aiFactions = roster;
+      });
+      // commitState эмитит core:state-changed — стор синхронизируется
+      // существующей подпиской (порядок R-39 не нарушается).
+      getMediatorWithModules().commitState(next);
+      return true;
     },
 
     // ─── Склад ────────────────────────────────────────────

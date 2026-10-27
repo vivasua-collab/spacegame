@@ -338,7 +338,10 @@ describe('R-41 3а: AIModule lifecycle', () => {
     const ai = getAI(mediator);
     ai.attachController('ai_s');
     const data = ai.serialize();
-    expect(data.version).toBe('0.1.0');
+    // R-44 (3б.1): манифест бампнут 0.1.0 → 0.2.0 (постоянный реестр в
+    // GameState + syncControllersFromState); тест проверяет, что serialize
+    // возвращает АКТУАЛЬНУЮ версию манифеста — смысл теста не ослаблен.
+    expect(data.version).toBe('0.2.0');
     expect(data.aiStateVersion).toBe(1);
     expect(data.controllerCount).toBe(1);
     expect(() => ai.deserialize(data)).not.toThrow();
