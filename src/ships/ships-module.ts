@@ -135,6 +135,16 @@ export class ShipsModule implements IGameModule {
    * Block 01 P2: обёрнуто в immer produce() — после тика создаётся новое
    * иммутабельное состояние с новыми ссылками для изменённых путей
    * (planet.resources, planet.hexes, gameState.ships).
+   *
+   * SHIPFLOW-00 (Issue #12): коммит обязателен при ЛЮБОМ изменении очереди,
+   * а не только при создании корабля. Прежде промежуточный прогресс
+   * (progressTicks), удаление item'а с отсутствующим дизайном и любые иные
+   * изменения очереди вычислялись в draft, но отбрасывались: модуль каждый
+   * тик читает mediator.getGameState() заново, и незакоммиченный
+   * produce-результат терялся → прогресс навсегда застревал на 0 и корабль
+   * не завершался никогда (для totalTicks > 1). Регрессионный тест —
+   * tests/ships/shipyard-integration.test.ts (реальный конвейер
+   * store/mediator, чистый helper недостаточен).
    */
   private processShipsTick(time: GameTime): void {
     const currentState = this.getGameState?.();
@@ -145,6 +155,7 @@ export class ShipsModule implements IGameModule {
     if (currentState.phase !== 'playing') return;
 
     let shipsCreatedThisTick = 0;
+    let queueChangedThisTick = false;
     const newState = produce(currentState, (draft) => {
       // Для каждой планеты с очередью верфи — processShipyardTick
       for (const [planetId, queue] of draft.shipyardQueues) {
@@ -161,6 +172,13 @@ export class ShipsModule implements IGameModule {
         const result = processShipyardTick(planet, queue, shipIdGen, design);
         // Apply queue update
         draft.shipyardQueues.set(planetId, result.newQueue);
+        // SHIPFLOW-00: helper возвращает ТОТ ЖЕ объект при отсутствии
+        // изменений (пустой рост / нехватка ресурсов) и НОВЫЙ объект при
+        // любом изменении очереди (инкремент прогресса, удаление item'а,
+        // завершение) — ссылочное сравнение надёжно фиксирует изменение.
+        if (result.newQueue !== queue) {
+          queueChangedThisTick = true;
+        }
         // If ship was created — add to ships Map
         if (result.ship) {
           draft.ships.set(result.ship.id, result.ship as Ship);
@@ -169,8 +187,10 @@ export class ShipsModule implements IGameModule {
       }
     });
 
-    // Коммит нового состояния (если что-то изменилось)
-    if (shipsCreatedThisTick > 0) {
+    // Коммит нового состояния (если что-то изменилось): создание корабля
+    // ИЛИ любое изменение очереди (SHIPFLOW-00 — промежуточный прогресс
+    // обязан сохраняться и быть видимым UI до завершения корабля).
+    if (shipsCreatedThisTick > 0 || queueChangedThisTick) {
       this.commitState?.(newState);
     }
   }
