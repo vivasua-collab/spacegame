@@ -4024,3 +4024,23 @@ Stage Summary:
 - Гейты: 931/931 (+25), tsc 86 Δ0 (в файлах задачи 0, exit ненулевой — не PASS), lint 0/38, validate 4/4, детерминизм == базам, браузерный smoke — переключение после одного уровня поймано в UI, 0 ошибок. CI нет — не заявляется.
 - 4 инженерных допущения честно помечены [PROPOSED POLICY] в docs/60 §3.4 и чекпоинте §7 — за владельцем.
 - Issue #15 НЕ закрывается — приёмка за владельцем; ничего за пределами задачи (экономика/флот/AI/SHIPFLOW) не начато.
+
+
+---
+Task ID: 56 (R-RES-QUEUE-01 playtest follow-up)
+Agent: ChatGPT
+Task: Issue #15 — плейтест владельца: первая технология достигла уровня 8, а остальные не участвовали. Сначала отдельный docs-only commit, затем отдельный runtime/tests commit. Issue не закрывать до принятия владельцем.
+
+Work Log:
+- Preflight: основной код сверялся на main 3cda0f1. Отдельный docs-only коммит e09c99ef24e71297e04a11e88136a721a9b7a2d8 закрепил решения владельца 2026-10-28 перед правками runtime.
+- Runtime-коммит f2421215e4720fdf2da53870a5abbf25b2d72e5c: удалены hasStartableQueuedTech и consolidateLegacySlots; cyclicCascade теперь безусловно передаёт ход по FIFO, если есть ожидающие проекты; advanceQueue просматривает не более текущей длины очереди, поэтому заблокированные prerequisite-кандидаты не вызывают бесконечный spin.
+- Добавлено поле researchProgressByTech в ResearchState и сериализуемое состояние; cancel сохраняет частичный RP, повторное добавление/автозапуск восстанавливает этот RP. UI больше не предлагает head-priority start action и оставляет обычное добавление в хвост.
+- Неиспользованный остаток после закрытия последнего допустимого проекта единожды добавляется в rpBank. Удалены тесты, существовавшие только для неподдерживаемой legacy-консолидации.
+- Добавлены/обновлены тесты: длительный 300-tick сценарий через реальный store→mediator→ResearchModule, FIFO для внутреннего startResearch, cancel→resume, save/load paused progress, reject legacy saves, остаток RP → rpBank.
+- Валидация: GitHub main и содержимое ключевых изменённых файлов сверены после публикации. GitHub Actions workflows отсутствуют (API вернул 0 runs); локальный bun test, tsc, lint и браузерный плейтест не запускались в этой среде. PASS не заявляется.
+- Приёмка: Issue #15 остаётся OPEN до запуска тестов и подтверждения плейтеста владельцем.
+
+Stage Summary:
+- Раздельный порядок соблюдён: docs-only commit e09c99e → runtime/tests commit f242121 → данный docs-only статус/worklog commit.
+- Runtime исправление опубликовано, но результат не подтверждён прогоном. Следующие обязательные проверки: bun test tests/research/cyclic-queue.test.ts tests/research/empire-rp-integration.test.ts; затем полный bun test / tsc / lint и ручной плейтест с тремя технологиями.
+- Issue #15 не закрывать автоматически.
