@@ -731,3 +731,173 @@ describe('R-42: медиатор — пауза через setSpeed(0) без д
     off();
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════
+// R-42 follow-up (комментарий владельца к Issue #6): контракт once при
+// ВЛОЖЕННОМ emit того же события.
+//
+// Дефект: в emit() удаление once-подписок откладывалось в toRemove до конца
+// обхода snapshot, а в on() replay-пути подписка снималась в finally ПОСЛЕ
+// вызова обработчика. Вложенный синхронный emit того же события строил
+// snapshot из Set, где once-подписка ещё присутствовала, → обработчик
+// вызывался ВТОРОЙ раз. Также: если вложенный emit происходил из обычного
+// обработчика с более высоким приоритетом ДО достижения once во внешнем
+// обходе, вложенный dispatch вызывал и удалял once-подписку, но внешний
+// snapshot всё ещё содержал её → снова второй вызов.
+//
+// Фикс: явный флаг потребления consumed в Subscription; once удаляется из
+// Set и помечается consumed ДО вызова обработчика; обход snapshot
+// пропускает consumed-once (только once — snapshot-семантика обычных
+// подписок сохранена).
+// ═══════════════════════════════════════════════════════════════════════
+
+describe('R-42 follow-up: TypedEventBus — once при вложенном emit того же события', () => {
+  let bus: TypedEventBus;
+
+  beforeEach(() => {
+    bus = new TypedEventBus();
+  });
+
+  test('T1: once + replay — вложенный emit из replay-обработчика НЕ вызывает его второй раз', () => {
+    bus.enableReplay('core:game-created');
+    bus.emit('core:game-created', { galaxyId: 'g0', seed: 0 });
+
+    let calls = 0;
+    bus.once('core:game-created', (p) => {
+      calls++;
+      if (calls === 1) {
+        // вложенный синхронный emit того же события: на дефектном коде
+        // подписка ещё в Set (снятие было в finally ПОСЛЕ вызова) →
+        // вложенный dispatch вызывал обработчик повторно
+        bus.emit('core:game-created', { galaxyId: 'g1', seed: p.seed + 1 });
+      }
+    });
+    // replay-доставка — единственный вызов; вложенный emit не добавляет второй
+    expect(calls).toBe(1);
+    expect(bus.listenerCount('core:game-created')).toBe(0);
+  });
+
+  test('T2: once без replay — вложенный emit из самого once-обработчика не вызывает его второй раз', () => {
+    let calls = 0;
+    bus.once('core:tick', (t) => {
+      calls++;
+      if (calls === 1) {
+        bus.emit('core:tick', { ...t, tick: t.tick + 1 });
+      }
+    });
+    bus.emit('core:tick', T1);
+    // на дефектном коде: 2 (вложенный snapshot содержал once-подписку)
+    expect(calls).toBe(1);
+    expect(bus.listenerCount('core:tick')).toBe(0);
+  });
+
+  test('T3: вложенный emit ДО достижения once во внешнем snapshot — ровно один вызов once, порядок и синхронность сохранены', () => {
+    const order: string[] = [];
+    let highCalls = 0;
+
+    // обычный обработчик с ВЫСШИМ приоритетом: на первом вызове эмитит
+    // то же событие — вложенный dispatch добирается до once раньше,
+    // чем внешний обход дойдёт до неё по snapshot
+    const offHigh = bus.on(
+      'core:tick',
+      (t) => {
+        highCalls++;
+        order.push('high');
+        if (highCalls === 1) {
+          bus.emit('core:tick', { ...t, tick: t.tick + 1 });
+        }
+      },
+      { priority: 10 },
+    );
+
+    let onceCalls = 0;
+    bus.once('core:tick', () => {
+      onceCalls++;
+      order.push('once');
+    });
+
+    bus.emit('core:tick', T1);
+
+    // once вызван ровно один раз (на дефектном коде: 2 — внешний snapshot
+    // всё ещё содержал подписку, уже вызванную и удалённую вложенным dispatch)
+    expect(onceCalls).toBe(1);
+    // обычный обработчик: вложенный emit вызывает его второй раз —
+    // snapshot-семантика для обычных подписок сохранена
+    expect(highCalls).toBe(2);
+    // синхронная семантика: вложенный dispatch завершается полностью внутри
+    // первого вызова high
+    expect(order).toEqual(['high', 'high', 'once']);
+    // остался только обычный high; once удалена сразу
+    expect(bus.listenerCount('core:tick')).toBe(1);
+    offHigh();
+  });
+
+  test('T4: исключение в once-обработчике (обычный emit) — подписка потреблена, изоляция сохранена, остальные работают', () => {
+    let onceCalls = 0;
+    let afterCalls = 0;
+    bus.once('core:tick', () => {
+      onceCalls++;
+      throw new Error('once-boom');
+    });
+    bus.on('core:tick', () => { afterCalls++; }, { priority: 200 });
+
+    // исключение не вылетает из emit()
+    expect(() => bus.emit('core:tick', T1)).not.toThrow();
+    expect(onceCalls).toBe(1);
+    expect(afterCalls).toBe(1);
+    expect(bus.listenerCount('core:tick')).toBe(1);
+
+    // повторный emit — once не возрождается (потребление необратимо,
+    // ошибка обработчика не возвращает подписку)
+    bus.emit('core:tick', { ...T1, tick: 2 });
+    expect(onceCalls).toBe(1);
+    expect(afterCalls).toBe(2);
+  });
+
+  test('T4b: исключение в once-обработчике на replay-доставке — изоляция + подписка не восстанавливается', () => {
+    bus.enableReplay('core:game-created');
+    bus.emit('core:game-created', { galaxyId: 'g1', seed: 1 });
+
+    let calls = 0;
+    expect(() =>
+      bus.once('core:game-created', () => {
+        calls++;
+        throw new Error('replay-boom');
+      }),
+    ).not.toThrow();
+    expect(calls).toBe(1);
+    expect(bus.listenerCount('core:game-created')).toBe(0);
+
+    // следующий emit не вызывает обработчик повторно
+    bus.emit('core:game-created', { galaxyId: 'g2', seed: 2 });
+    expect(calls).toBe(1);
+  });
+
+  test('T5: bus.once() и bus.on({once:true}) — одинаковая семантика при вложенном emit; отписка после потребления безопасна', () => {
+    // (a) публичный bus.once()
+    let a = 0;
+    const offA = bus.once('core:tick', (t) => {
+      a++;
+      if (a === 1) bus.emit('core:tick', { ...t, tick: 9 });
+    });
+    bus.emit('core:tick', T1);
+    expect(a).toBe(1);
+    expect(bus.listenerCount('core:tick')).toBe(0);
+    expect(() => offA()).not.toThrow(); // idempotent delete — безопасно
+
+    // (b) публичный bus.on(..., { once: true })
+    let b = 0;
+    const offB = bus.on(
+      'core:tick',
+      (t) => {
+        b++;
+        if (b === 1) bus.emit('core:tick', { ...t, tick: 9 });
+      },
+      { once: true },
+    );
+    bus.emit('core:tick', T1);
+    expect(b).toBe(1);
+    expect(bus.listenerCount('core:tick')).toBe(0);
+    expect(() => offB()).not.toThrow();
+  });
+});

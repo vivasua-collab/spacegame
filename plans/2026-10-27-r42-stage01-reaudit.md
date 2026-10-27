@@ -79,5 +79,36 @@
 
 ## Результат
 
-- Статус: in_progress
-- (заполняется по завершении)
+- Статус: complete (основной R-42) + follow-up complete (см. ниже)
+
+## Follow-up (комментарий владельца к Issue #6, 2026-10-27 12:14 UTC)
+
+**Пробел первоначального R-42 (честно признан):** контракт `once` при ВЛОЖЕННОМ
+emit того же события был не закрыт. В `emit()` удаление once-подписок откладывалось
+в `toRemove` до конца обхода snapshot; в replay-пути `on()` подписка снималась в
+`finally` ПОСЛЕ вызова обработчика. Три сценария двойного вызова: (а) вложенный
+emit из replay-обработчика; (б) вложенный emit из самого once-обработчика;
+(в) вложенный emit из обычного обработчика с более высоким приоритетом ДО
+достижения once во внешнем snapshot.
+
+Чеклист follow-up (по ТЗ владельца):
+
+- [x] Прочитать шину/тесты/modular-bus.md/чекпоинт перед изменениями
+- [x] База проверена: main, HEAD `7635781` == remote main == SHA из ТЗ; дерево чисто
+- [x] T1 (replay + nested same-event emit) — тест ДО фикса: FAIL `Expected: 1, Received: 2`
+- [x] T2 (nested emit из самого once-обработчика) — FAIL `Expected: 1, Received: 2`
+- [x] T3 (nested emit ДО достижения once во внешнем snapshot, priority 10 vs 100) — FAIL `Expected: 1, Received: 2`; порядок/синхронность зафиксированы
+- [x] T4 (исключение в once-обработчике, обычный emit) — PASS до и после (инвариант изоляции + необратимость потребления)
+- [x] T4b (исключение на replay-доставке) — PASS до и после (инвариант)
+- [x] T5 (`bus.once()` и `bus.on({once:true})` — одинаковая семантика; отписка после потребления безопасна) — FAIL до (по двойному вызову), PASS после
+- [x] Фикс: флаг `consumed` в Subscription; once помечается потреблённой и удаляется из Set ДО вызова (replay-путь и emit); snapshot-обход пропускает consumed-once ТОЛЬКО для once (обычные подписки — прежняя snapshot-семантика, проверка `set.has()` не вводилась); `toRemove` удалён за ненадобностью; изоляция исключений/приоритеты/вложенный emit/replay не-once — без изменений
+- [x] `bun test tests/r42-stage01-reaudit.test.ts` — 38/38 (exit 0)
+- [x] `bun test` — 831/831 (exit 0, +6 к 825)
+- [x] `bun run lint` — exit 0, 0 errors/38 warnings (Δ0)
+- [x] `bunx tsc --noEmit` — exit 2; 86 ошибок (src 71) сохраняются на baseline R-40/R-42 (Δ0); в typed-event-bus.ts — 0
+- [x] `bun run validate:all` — exit 0, 4/4
+- [x] Детерминизм ×3 независимых процесса (`scripts/r39-det-check.ts`): sha256(gen)=`eaed801144b8f255…1cd0` ×3 == базам R-39/R-40/R-42; sha256(rt) идентичен
+- [x] GitHub check-runs на базовом SHA: 0; workflow runs: 0 — CI отсутствует (не заявляется)
+- [x] Браузерный смоук (agent-browser, среда доступна): New Galaxy 424242 → колонизация Xi Ursae I → Солнечная станция → UI-пауза (тики 34→34) → resume (→38) → Save (tick 42) → reload → Load (tick 42, станция и колония пережили) → 0 ошибок консоли → БД очищена (`GET /api/save` → `[]`)
+- [x] GameLoop/ModuleRegistry/экономика/PRNG/формат сейва НЕ тронуты (границы follow-up соблюдены)
+- [x] Артефакты: этот план (раздел follow-up), чекпоинт §10, worklog (append), STATUS.md (831/831 + changelog), README.md

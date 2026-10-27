@@ -26,6 +26,14 @@ interface Subscription {
   priority: number;
   label: string;
   once: boolean;
+  /**
+   * R-42 follow-up: одноразовая подписка уже ПОТРЕБЛЕНА (вызвана хотя бы раз).
+   * Ставится и удаляет подписку из Set ДО вызова обработчика — вложенный
+   * синхронный emit того же события строит snapshot уже без неё, а внешний
+   * (устаревший) snapshot пропускает потреблённую once по этому флагу.
+   * Ошибка обработчика потребление НЕ отменяет.
+   */
+  consumed: boolean;
 }
 
 /** Максимальное число пакетов за один flush — защита от бесконечного повторного defer. */
@@ -69,26 +77,29 @@ export class TypedEventBus {
       priority,
       label,
       once,
+      consumed: false,
     };
 
     this.listeners.get(event)!.add(sub);
 
     // Event replay: если событие уже происходило и помечено для replay
     if (this.replayConfig.has(event) && this.lastEvents.has(event)) {
+      // R-42 (F-01) + follow-up: replay-доставка для once-подписки считается
+      // первым (и единственным) вызовом. Подписка помечается потреблённой и
+      // удаляется из Set ДО вызова обработчика: вложенный emit того же события
+      // из replay-обработчика больше не находит её в Set (на дефектной версии
+      // снятие было в finally ПОСЛЕ вызова — вложенный dispatch вызывал
+      // обработчик второй раз). Ошибка обработчика потребление НЕ отменяет.
+      if (once) {
+        sub.consumed = true;
+        this.listeners.get(event)!.delete(sub);
+      }
       try {
         handler(this.lastEvents.get(event) as EventPayload<E>);
       } catch (e) {
         // R-42: изоляция ошибок подписчиков — как в emit(): ошибка обработчика
         // на replay-доставке не должна всплывать из on() и ломать подписку.
         console.error(`[EventBus] Ошибка replay "${String(event)}" (${label}):`, e);
-      } finally {
-        // R-42 (F-01): replay-доставка для once-подписки считается первым
-        // (и единственным) вызовом — снимаем подписку НЕМЕДЛЕННО. Прежде
-        // подписка оставалась в Set: обработчик срабатывал на replay и затем
-        // ЕЩЁ РАЗ на следующем emit (нарушение контракта once).
-        if (once) {
-          this.listeners.get(event)!.delete(sub);
-        }
       }
     }
 
@@ -123,24 +134,28 @@ export class TypedEventBus {
     const set = this.listeners.get(event);
     if (!set) return;
 
-    // Сортировка по приоритету (детерминизм)
+    // Сортировка по приоритету (детерминизм, стабильная при равных priority)
     const sorted = Array.from(set).sort((a, b) => a.priority - b.priority);
-    const toRemove: Subscription[] = [];
 
     for (const sub of sorted) {
+      // R-42 follow-up: once-подписка потребляется (флаг + удаление из Set)
+      // ДО вызова обработчика. Тогда вложенный синхронный emit того же
+      // события строит snapshot уже БЕЗ неё (второй вызов невозможен),
+      // а внешний (устаревший) snapshot пропускает её по consumed ниже.
+      if (sub.once) {
+        if (sub.consumed) continue; // уже вызвана вложенным dispatch — не дублируем
+        sub.consumed = true;
+        set.delete(sub);
+      }
       try {
         sub.handler(payload);
       } catch (e) {
         console.error(`[EventBus] Ошибка в "${String(event)}" (${sub.label}):`, e);
       }
-      if (sub.once) {
-        toRemove.push(sub);
-      }
     }
-
-    for (const sub of toRemove) {
-      set.delete(sub);
-    }
+    // Для ОБЫЧНЫХ подписок проверка принадлежности Set НЕ делается:
+    // подписка, отписанная во время dispatch, по snapshot-семантике всё ещё
+    // вызывается в текущем dispatch (контракт сохранён, тест R-42).
   }
 
   /**
