@@ -14,7 +14,11 @@
  *   ползунки аллокации (5..100%), RP/сек, ETA, кнопка «Распределить поровну».
  *
  * Все действия идут через useGameStore actions (startResearch, cancelResearch,
- * setAllocation, levelUpFundamental, autoAllocateSlots) — direct immer mutation
+ * levelUpFundamental, addToResearchQueue, removeFromResearchQueue,
+ * reorderResearchQueue, clearResearchQueue) — direct immer mutation.
+ * R-RES-QUEUE-01 (Issue #15, docs/60 v1.1): циклическая очередь — активный
+ * проект всегда один (100% потока + фокус ×1.2); аллокации/параллельные
+ * слоты SUPERSEDED; UI честно показывает активный проект + циклическую очередь
  * pattern (как cancelProduction в Phase 2.4 — MVP-упрощение, не требует
  * mediator round-trip). Tick processing (RP accumulation) — в Phase 3.7
  * ResearchModule через mediator + immer.produce.
@@ -33,7 +37,6 @@ import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
-import { Slider } from '@/components/ui/slider';
 import {
   Dialog,
   DialogContent,
@@ -51,7 +54,6 @@ import {
   ChevronUp,
   X,
   Plus,
-  Scale,
   TrendingUp,
   Lock,
   CheckCircle2,
@@ -71,7 +73,6 @@ import {
   getTechStatus,
   getEffectiveMaxLevel,
   getPartialBonus,
-  getMaxResearchSlots,
   countLaboratories,
   getTotalRPPerSec,
   getEffectiveRPPerSec,
@@ -115,9 +116,7 @@ export function ResearchView() {
   const gameState = useGameStore((s) => s.gameState);
   const startResearch = useGameStore((s) => s.startResearch);
   const cancelResearch = useGameStore((s) => s.cancelResearch);
-  const setAllocation = useGameStore((s) => s.setAllocation);
   const levelUpFundamental = useGameStore((s) => s.levelUpFundamental);
-  const autoAllocateSlots = useGameStore((s) => s.autoAllocateSlots);
   const addToResearchQueue = useGameStore((s) => s.addToResearchQueue);
   const removeFromResearchQueue = useGameStore((s) => s.removeFromResearchQueue);
   const reorderResearchQueue = useGameStore((s) => s.reorderResearchQueue);
@@ -131,9 +130,11 @@ export function ResearchView() {
   // строительстве/апгрейде лабораторий).
   const { labCount, totalRPPerSec } = useMemo(() => {
     if (!gameState) return { labCount: 0, totalRPPerSec: 0 };
+    // R-RES-QUEUE-01 (docs/60 v1.1 §3.3): единый поток RP ИМПЕРИИ — только
+    // планеты игрока (owner === playerFactionId); чужие фракции не смешиваются.
     const planets = gameState.galaxy.systems
       .flatMap((s) => s.planets)
-      .filter((p) => p.owner != null);
+      .filter((p) => p.owner === gameState.playerFactionId);
     const { count } = countLaboratories(planets);
     // R-RES §E: применяем research_rate bonus (data-driven).
     const mult = resolveBonuses(gameState, 'research_rate');
@@ -143,7 +144,8 @@ export function ResearchView() {
     };
   }, [gameState]);
 
-  const maxSlots = getMaxResearchSlots(labCount);
+  // R-RES-QUEUE-01: maxSlots (1+floor(labs/10)) — SUPERSEDED решением
+  // владельца 2026-10-27: циклическая очередь не лимитируется (docs/60 §9.5).
 
   // R-SPLIT (Задача 22): доля притока, идущая в дерево технологий
   // (слоты прогрессируют от неё; остаток — в аккумулятор фундаменталов).
@@ -167,8 +169,6 @@ export function ResearchView() {
         researchState={researchState}
         labCount={labCount}
         totalRPPerSec={totalRPPerSec}
-        maxSlots={maxSlots}
-        onAutoAllocate={autoAllocateSlots}
       />
 
       {/* Main 3-column layout */}
@@ -260,10 +260,7 @@ export function ResearchView() {
           <ResearchQueuePanel
             researchState={researchState}
             techRPPerSec={techPerSec}
-            maxSlots={maxSlots}
             onCancelSlot={cancelResearch}
-            onSetAllocation={setAllocation}
-            onAutoAllocate={autoAllocateSlots}
             onRemoveFromQueue={removeFromResearchQueue}
             onReorderQueue={reorderResearchQueue}
             onClearQueue={clearResearchQueue}
@@ -277,22 +274,28 @@ export function ResearchView() {
           techId={selectedTechId}
           researchState={researchState}
           techRPPerSec={techPerSec}
-          maxSlots={maxSlots}
           onClose={() => setSelectedTechId(null)}
           onStartResearch={(techId, targetLevel) => {
-            const slotId = startResearch(techId, targetLevel);
-            if (slotId) {
-              const tech = TECH_MAP.get(techId);
+            const result = startResearch(techId, targetLevel);
+            const tech = TECH_MAP.get(techId);
+            if (result === 'queued') {
+              // R-RES-QUEUE-01: активный проект есть → «первым в очередь»;
+              // ход перейдёт к технологии после завершения текущего уровня.
+              toast({
+                title: 'Поставлен первым в очередь',
+                description: `${tech?.name} → ур.${targetLevel} — следующим ходом после текущего уровня.`,
+              });
+              setSelectedTechId(null);
+            } else if (result) {
               toast({
                 title: 'Исследование запущено',
                 description: `${tech?.name} → ур.${targetLevel}`,
               });
               setSelectedTechId(null);
             } else {
-              const tech = TECH_MAP.get(techId);
               toast({
                 title: 'Нельзя начать исследование',
-                description: `${tech?.name}: проверьте прекурсоры / свободный слот.`,
+                description: `${tech?.name}: уже в очереди/слоте, исследован или прекурсоры не готовы.`,
                 variant: 'destructive',
               });
             }
@@ -326,16 +329,13 @@ function ResearchStatsBar({
   researchState,
   labCount,
   totalRPPerSec,
-  maxSlots,
-  onAutoAllocate,
 }: {
   researchState: ResearchState;
   labCount: number;
   totalRPPerSec: number;
-  maxSlots: number;
-  onAutoAllocate: () => void;
 }) {
   const activeSlots = researchState.activeSlots.length;
+  const queueLength = researchState.researchQueue.length;
   const availableRP = getAvailableRP(researchState);
   // R-SPLIT: статус распределения притока RP между ветками.
   const fundamentalsMaxed = areAllFundamentalsMaxed(researchState);
@@ -359,11 +359,13 @@ function ResearchStatsBar({
         <span className="font-mono text-cyan-300">{totalRPPerSec.toFixed(1)}</span>
       </div>
       <Separator orientation="vertical" className="h-4 bg-white/10" />
+      {/* R-RES-QUEUE-01: циклическая очередь — один активный проект + очередь. */}
       <div className="flex items-center gap-1.5">
-        <span className="text-slate-500">Слотов:</span>
+        <span className="text-slate-500">Очередь:</span>
         <span className="font-mono text-white">
-          {activeSlots}/{maxSlots}
+          {activeSlots}/{queueLength}
         </span>
+        <span className="text-slate-600 text-[10px]">(актив/в цикле)</span>
       </div>
       <Separator orientation="vertical" className="h-4 bg-white/10" />
       {/* R-SPLIT (Задача 22): аккумулятор RP — единственный банк для
@@ -386,16 +388,6 @@ function ResearchStatsBar({
         </span>
       </div>
       <div className="flex-1" />
-      <Button
-        variant="outline"
-        size="sm"
-        className="h-6 text-[10px] border-white/10 hover:bg-white/5"
-        onClick={onAutoAllocate}
-        disabled={activeSlots === 0}
-      >
-        <Scale className="size-3 mr-1" />
-        Распределить поровну
-      </Button>
     </div>
   );
 }
@@ -878,10 +870,7 @@ function getStatusColor(status: TechStatus): string {
 function ResearchQueuePanel({
   researchState,
   techRPPerSec,
-  maxSlots,
   onCancelSlot,
-  onSetAllocation,
-  onAutoAllocate,
   onRemoveFromQueue,
   onReorderQueue,
   onClearQueue,
@@ -889,17 +878,15 @@ function ResearchQueuePanel({
   researchState: ResearchState;
   /** R-SPLIT: RP/сек, доступные ветке дерева (доля притока после split). */
   techRPPerSec: number;
-  maxSlots: number;
   onCancelSlot: (slotId: string) => boolean;
-  onSetAllocation: (slotId: string, percent: number) => boolean;
-  onAutoAllocate: () => void;
   onRemoveFromQueue: (index: number) => boolean;
   onReorderQueue: (from: number, to: number) => boolean;
   onClearQueue: () => void;
 }) {
   const activeSlots = researchState.activeSlots;
   const activeSlotsCount = activeSlots.length;
-  const focusBonus = activeSlotsCount === 1 && activeSlots[0]?.allocationPercent === 100;
+  // R-RES-QUEUE-01: активный проект всегда один на 100% → фокус всегда активен.
+  const focusBonus = activeSlotsCount > 0;
   const queue = researchState.researchQueue;
 
   return (
@@ -910,9 +897,15 @@ function ResearchQueuePanel({
             <Loader2 className="size-3.5" />
             Очередь
           </div>
-          <Badge variant="outline" className="text-[10px] h-4 px-1">
-            {activeSlotsCount}/{maxSlots}
+          {/* R-RES-QUEUE-01: циклическая очередь (docs/60 v1.1 §3.4) —
+              лимит слотов SUPERSEDED, очередь не ограничена. */}
+          <Badge variant="outline" className="text-[10px] h-4 px-1" title="Циклическая очередь: после завершения уровня ход переходит следующему проекту">
+            цикл · {queue.length}
           </Badge>
+        </div>
+        <div className="text-[10px] text-slate-600 leading-snug">
+          Циклическая очередь: после завершения уровня ход переходит следующему
+          проекту; достигший максимума покидает цикл.
         </div>
         <div className="flex items-center gap-1 text-[10px] text-slate-500">
           {/* R-SPLIT: RP/день, доступные ветке ДЕРЕВА (не полный приток). */}
@@ -946,23 +939,10 @@ function ResearchQueuePanel({
                   slot={slot}
                   researchState={researchState}
                   techRPPerSec={techRPPerSec}
-                  activeSlotsCount={activeSlotsCount}
                   onCancel={onCancelSlot}
-                  onSetAllocation={onSetAllocation}
                 />
               ))}
             </div>
-          )}
-          {activeSlots.length > 0 && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="w-full mt-2 text-[10px] text-slate-500 hover:bg-white/5"
-              onClick={onAutoAllocate}
-            >
-              <Scale className="size-3 mr-1" />
-              Распределить поровну
-            </Button>
           )}
         </div>
 
@@ -1091,17 +1071,13 @@ function ResearchSlotRow({
   slot,
   researchState,
   techRPPerSec,
-  activeSlotsCount,
   onCancel,
-  onSetAllocation,
 }: {
   slot: ResearchSlot;
   researchState: ResearchState;
-  /** R-SPLIT: RP/сек ветки дерева (доля притока после split). */
+  /** R-SPLIT: RP/сек, доступные ветке дерева (доля притока после split). */
   techRPPerSec: number;
-  activeSlotsCount: number;
   onCancel: (slotId: string) => boolean;
-  onSetAllocation: (slotId: string, percent: number) => boolean;
 }) {
   const tech = TECH_MAP.get(slot.techId);
   if (!tech) {
@@ -1117,11 +1093,9 @@ function ResearchSlotRow({
   const progress = cost > 0 ? Math.min(100, (invested / cost) * 100) : 0;
   const remaining = Math.max(0, cost - invested);
   const partialBonus = getPartialBonus(tech.branch, researchState.fundamentalLevels);
-  const effectiveRP = getEffectiveRPPerSec(
-    techRPPerSec,
-    slot.allocationPercent,
-    activeSlotsCount,
-  ) * partialBonus;
+  // R-RES-QUEUE-01: активный проект циклической очереди — всегда 100%
+  // аллокации и фокус ×1.2 (docs/60 v1.1 §3.5).
+  const effectiveRP = getEffectiveRPPerSec(techRPPerSec, 100, 1) * partialBonus;
   const etaSec = effectiveRP > 0 ? remaining / effectiveRP : Infinity;
   // R-RES §C: 1 tick = 1 day → ETA in days. Was "сек" before.
   const etaText = etaSec === Infinity ? '∞' : `${etaSec.toFixed(0)} дн`;
@@ -1154,26 +1128,9 @@ function ResearchSlotRow({
         <span>{etaText}</span>
       </div>
       <Progress value={progress} className="h-1.5 mb-1" style={{ backgroundColor: 'rgba(255,255,255,0.05)' }} />
-      <div className="flex justify-between text-[10px] text-slate-500 mb-2">
+      <div className="flex justify-between text-[10px] text-slate-500">
         <span>{invested.toFixed(0)}/{cost} RP</span>
-        <span>×{partialBonus.toFixed(2)}</span>
-      </div>
-      <div className="flex items-center gap-2 text-[10px]">
-        <span className="text-slate-500 w-10">Аллок:</span>
-        <Slider
-          value={[slot.allocationPercent]}
-          min={5}
-          max={100}
-          step={5}
-          onValueChange={(vals) => {
-            const v = vals[0];
-            if (v !== undefined) onSetAllocation(slot.slotId, v);
-          }}
-          className="flex-1"
-        />
-        <span className="text-cyan-300 w-8 text-right font-mono">
-          {slot.allocationPercent}%
-        </span>
+        <span>partial ×{partialBonus.toFixed(2)} · фокус ×1.2</span>
       </div>
     </div>
   );
@@ -1185,16 +1142,14 @@ function ResearchDetailDialog({
   techId,
   researchState,
   techRPPerSec,
-  maxSlots,
   onClose,
   onStartResearch,
   onAddToQueue,
 }: {
   techId: string;
   researchState: ResearchState;
-  /** R-SPLIT: RP/сек ветки дерева (доля притока после split). */
+  /** R-SPLIT: RP/сек, доступные ветке дерева (доля притока после split). */
   techRPPerSec: number;
-  maxSlots: number;
   onClose: () => void;
   onStartResearch: (techId: string, targetLevel: number) => void;
   onAddToQueue: (techId: string) => void;
@@ -1213,7 +1168,9 @@ function ResearchDetailDialog({
   // for non-maxed techs. Kept for safety.
   const ceilingBlocked = !isMaxed && ceiling < targetLevel;
   const activeSlotsCount = researchState.activeSlots.length;
-  const noFreeSlot = activeSlotsCount >= maxSlots;
+  // R-RES-QUEUE-01: лимит слотов SUPERSEDED — циклическая очередь не
+  // ограничивается (docs/60 v1.1 §9.5); «Начать» при активном проекте
+  // ставит технологию в ГОЛОВУ очереди (store.startResearch).
   const alreadyInQueue = researchState.researchQueue.includes(techId);
   const hasActiveSlot = researchState.activeSlots.some((s) => s.techId === techId);
 
@@ -1234,7 +1191,8 @@ function ResearchDetailDialog({
     !isMaxed &&
     !ceilingBlocked &&
     allPrereqMet &&
-    !noFreeSlot &&
+    !alreadyInQueue &&
+    !hasActiveSlot &&
     status !== 'in_progress';
 
   // R-RES §B: queue eligibility — prerequisites must be met (or tech will
@@ -1374,9 +1332,6 @@ function ResearchDetailDialog({
                   </div>
                 )}
                 {!allPrereqMet && <div>• Не выполнены все прекурсоры.</div>}
-                {noFreeSlot && !alreadyInQueue && (
-                  <div>• Нет свободного слота. Постройте больше лабораторий (1 слот на 10 лаб).</div>
-                )}
                 {status === 'in_progress' && <div>• Уже в активном слоте.</div>}
                 {alreadyInQueue && <div>• Уже в очереди.</div>}
               </div>
@@ -1384,9 +1339,9 @@ function ResearchDetailDialog({
           </div>
         </ScrollArea>
 
-        {/* R-RES §B: action buttons — prefer "Add to queue" (works without
-            a free slot, queues up). "Начать" is immediate-start (needs a
-            free active slot). Both close the dialog on success. */}
+        {/* R-RES-QUEUE-01: «Начать» — старт при простое ИЛИ первым в очередь
+            (следующий ход после завершения текущего уровня); «В очередь» —
+            в хвост циклической очереди. Оба закрывают диалог при успехе. */}
         <div className="flex gap-2 pt-2">
           <Button
             variant="outline"
@@ -1400,7 +1355,7 @@ function ResearchDetailDialog({
               className="flex-1"
               variant="secondary"
               onClick={() => onAddToQueue(tech.id)}
-              title="Поставить технологию в очередь. Если активного слота нет — начнётся немедленно."
+              title="Поставить технологию в хвост очереди. Если активного проекта нет — начнётся немедленно."
             >
               <Plus className="size-4 mr-1" />
               В очередь
@@ -1410,10 +1365,12 @@ function ResearchDetailDialog({
             <Button
               className="flex-1"
               onClick={() => onStartResearch(tech.id, targetLevel)}
-              title="Начать немедленно (требуется свободный слот)"
+              title={activeSlotsCount > 0
+                ? 'Первым в очередь: ход перейдёт к технологии после завершения текущего уровня активного проекта'
+                : 'Начать немедленно (активного проекта нет)'}
             >
               <Plus className="size-4 mr-1" />
-              Начать (ур. {targetLevel})
+              {activeSlotsCount > 0 ? 'Следующим (ур. ' + targetLevel + ')' : 'Начать (ур. ' + targetLevel + ')'}
             </Button>
           )}
         </div>

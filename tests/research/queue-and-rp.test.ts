@@ -142,6 +142,12 @@ describe('R-RES — advanceQueue', () => {
 
 describe('R-RES — tickResearch auto-advance from queue', () => {
   test('when active slot completes, queue advances automatically', () => {
+    // R-RES-QUEUE-01 (docs/60 v1.1 §3.4): после завершения уровня fusion
+    // (maxLevel — покидает цикл) ход передаётся microelectronics, и ОСТАТОК
+    // RP тика детерминированно проходит в него — в том же тике завершает
+    // ВСЕ его уровни до maxLevel (монополизация потока первой технологией
+    // больше не блокирует очередь). Прежняя модель (слот создаётся «холодным»
+    // с rpInvested=0) — SUPERSEDED решением владельца 2026-10-27.
     const state = createDefaultResearchState();
     // Set up: fusion_reactor at level 9, target 10, queue has microelectronics.
     state.researched['fusion_reactor'] = 9;
@@ -153,14 +159,14 @@ describe('R-RES — tickResearch auto-advance from queue', () => {
       rpInvested: 0,
     });
     state.researchQueue = ['microelectronics'];
-    // Big RP injection: completes fusion_reactor level 10 (cost 19221),
-    // then targetLevel becomes 11 → slot removed.
-    // Then queue advances: microelectronics → slot_q_microelectronics_1.
+    // Big RP injection (fundamentals=0 → 50/50 → дерево 5000 × фокус 1.2
+    // = 6000/сек × 10 = 60000): completes fusion L10 (cost 19221), остаток
+    // 40779 передаётся microelectronics → завершает все 10 уровней
+    // (кумулятивно 33996) в этом же тике → оба проекта покидают цикл.
     tickResearch(state, 10000, 10);
     expect(state.researched['fusion_reactor']).toBe(10);
-    expect(state.activeSlots.length).toBe(1);
-    expect(state.activeSlots[0]!.techId).toBe('microelectronics');
-    expect(state.activeSlots[0]!.slotId).toBe('slot_q_microelectronics_1');
+    expect(state.researched['microelectronics']).toBe(10);
+    expect(state.activeSlots.length).toBe(0);
     expect(state.researchQueue.length).toBe(0);
   });
 

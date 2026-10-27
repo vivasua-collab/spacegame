@@ -718,19 +718,30 @@ export function getResearchInflowSplit(
 }
 
 /**
- * Обработка тика исследований — основная функция (R3 → R-SPLIT).
+ * R-RES-QUEUE-01 (Issue #15, решение владельца 2026-10-27): обработка тика
+ * исследований — единый поток RP империи + циклическая очередь.
  *
- * Алгоритм (R-SPLIT, Задача 22 — две ПАРАЛЛЕЛЬНЫЕ ветки):
+ * Алгоритм (docs/60-research.md v1.1 §3.3–3.5):
  *   0. Миграция: гарантировать rpBank (старые сейвы до R-SPLIT).
  *   1. Разложить приток: getResearchInflowSplit → bankPerSec + techPerSec
- *      (все фундаменталы изучены → 100% в дерево; дерево простаивает →
- *      100% в банк; иначе параллельно 50/50).
- *   2. Слоты дерева: slot.rpInvested += techPerSec × allocation% ×
- *      focusBonus × partialBonus × dt. Банк НЕ трогается; завершение
- *      уровня ничего не «возвращает» (двойной учёт устранён).
- *   3. Банк фундаменталов: rpBank += bankPerSec × dt.
- *   4. totalRpGenerated += totalRPPerSec × dt (lifetime-счётчик для
- *      отладки/статистики; НЕ отображается в UI).
+ *      (R-SPLIT не изменился: все фундаменталы изучены → 100% в дерево;
+ *      дерево простаивает → 100% в банк; иначе параллельно 50/50).
+ *   2. Legacy-консолидация: параллельные слоты старых сейвов (до
+ *      R-RES-QUEUE-01) схлопываются в один активный (§3.4 «Legacy-миграция»):
+ *      первый слот остаётся (аллокация → 100%), techId остальных — в хвост
+ *      очереди, их rpInvested переносится активному (прогресс не теряется).
+ *   3. Автостарт: активных слотов нет → advanceQueue поднимает первый
+ *      готовый проект очереди (R-RES §B).
+ *   4. Начисление: активный проект получает 100% доли дерева
+ *      (нормализация аллокации → фокус ×1.2 всегда) × partialBonus × dt.
+ *   5. Циклический каскад (cyclicCascade): завершение ОДНОГО уровня
+ *      передаёт ход следующему готовому проекту; не достигший maxLevel
+ *      возвращается в хвост; достигший — покидает цикл; остаток RP
+ *      детерминированно переносится следующему активному (без потерь);
+ *      без других готовых проектов активный продолжает уровни.
+ *   6. Банк фундаменталов: rpBank += bankPerSec × dt (ветки разделены —
+ *      слоты дерева банк не трогают).
+ *   7. totalRpGenerated += totalRPPerSec × dt (lifetime-счётчик).
  *
  * Возвращает { completed: список завершённых уровней для эмита
  * tech:research-completed }.
@@ -751,79 +762,169 @@ export function tickResearch(
   // R-SPLIT: разложить приток на банк (фундаменталы) и дерево (слоты).
   const { bankPerSec, techPerSec } = getResearchInflowSplit(state, totalRPPerSec);
 
+  // R-RES-QUEUE-01: legacy-консолидация параллельных слотов (однократно
+  // за тик; инвариант новой модели — активный проект всегда один).
+  if (state.activeSlots.length > 1) {
+    consolidateLegacySlots(state);
+  }
+
+  // R-RES §B: автостарт из очереди при простое.
   if (state.activeSlots.length === 0) {
-    // Нет активных слотов — но если есть очередь, попытаемся стартануть
-    // первый элемент (R-RES §B auto-advance).
     advanceQueue(state);
-  } else {
-    const activeSlots = state.activeSlots.length;
+  }
 
-    // Обрабатываем слоты; удаляем finished из массива (reverse + splice).
-    for (let i = state.activeSlots.length - 1; i >= 0; i--) {
-      const slot = state.activeSlots[i];
-      if (!slot) continue;
-
-      const tech = TECH_MAP.get(slot.techId);
-      if (!tech) {
-        // Tech not in tree — drop slot
-        state.activeSlots.splice(i, 1);
-        continue;
-      }
-
-      // Эффективный RP/сек для этого слота (R-SPLIT: от techPerSec —
-      // доли притока дерева; банк фундаменталов не участвует).
+  // Начисление притока дерева активному проекту (нормализация аллокации:
+  // циклическая очередь всегда даёт активному 100% → фокус ×1.2, §9.7).
+  if (state.activeSlots.length > 0) {
+    const slot = state.activeSlots[0]!;
+    if (slot.allocationPercent !== 100) slot.allocationPercent = 100;
+    const tech = TECH_MAP.get(slot.techId);
+    if (tech) {
       const partialBonus = getPartialBonus(tech.branch, state.fundamentalLevels);
-      const effectiveRPPerSec = getEffectiveRPPerSec(
-        techPerSec,
-        slot.allocationPercent,
-        activeSlots,
-      ) * partialBonus;
-
-      // Накопить RP (прогресс слота — «постоянная ветка», без банка)
+      const effectiveRPPerSec =
+        getEffectiveRPPerSec(techPerSec, slot.allocationPercent, 1) * partialBonus;
       slot.rpInvested += effectiveRPPerSec * deltaSeconds;
-
-      // Завершать уровни, пока хватает RP
-      let levelFinished = false;
-      // Защита от бесконечного цикла (maxLevel ограничивает)
-      while (slot.rpInvested >= getTechCost(tech.baseCost, slot.targetLevel) && slot.targetLevel >= 1) {
-        const cost = getTechCost(tech.baseCost, slot.targetLevel);
-        const ceiling = getTechCeiling(tech, state);
-        if (slot.targetLevel > ceiling || slot.targetLevel > tech.maxLevel) {
-          // Слот достиг потолка — удалить
-          state.activeSlots.splice(i, 1);
-          levelFinished = true;
-          break;
-        }
-        // Завершить уровень
-        const newLevel = slot.targetLevel;
-        state.researched[slot.techId] = newLevel;
-        completed.push({ techId: slot.techId, level: newLevel });
-        slot.rpInvested -= cost;
-        slot.targetLevel = newLevel + 1;
-        // Если следующий уровень превышает потолок — удалить слот
-        if (slot.targetLevel > ceiling || slot.targetLevel > tech.maxLevel) {
-          state.activeSlots.splice(i, 1);
-          levelFinished = true;
-          break;
-        }
-      }
-      void levelFinished; // для будущего лога
     }
   }
 
-  // R-RES §B: если после тика активных слотов не осталось, а очередь
-  // непуста — продвигаем первый элемент в активный слот. Это позволяет
-  // игроку поставить цепочку технологий в очередь один раз, и они будут
-  // исследоваться автоматически без ручного старта каждого следующего.
-  if (state.activeSlots.length === 0) {
-    advanceQueue(state);
-  }
+  // R-RES-QUEUE-01: циклический каскад завершений уровней в пределах тика.
+  cyclicCascade(state, completed);
 
   // R-SPLIT: банк фундаменталов — накопительная параллельная ветка.
   state.rpBank += bankPerSec * deltaSeconds;
   // Lifetime-счётчик (debug/статистика; НЕ для UI — «Всего» удалено).
   state.totalRpGenerated += totalRPPerSec * deltaSeconds;
   return { completed };
+}
+
+/**
+ * R-RES-QUEUE-01: защита каскада от вырожденных данных (стоимость уровня
+ * ≤ 0 у сломанного каталога) — жёсткий потолок завершений на тик. При
+ * достижении лимита активный проект сохраняет ход и rpInvested; обработка
+ * продолжится на следующем тике (детерминированно).
+ */
+const MAX_LEVEL_COMPLETIONS_PER_TICK = 1000;
+
+/**
+ * R-RES-QUEUE-01: циклический каскад — обработка накопленных RP активного
+ * проекта с передачей хода по каждому завершённому уровню (docs/60 §3.4).
+ *
+ * Инварианты:
+ *   - за один «ход» активного проекта завершается не более ОДНОГО уровня,
+ *     затем (при наличии готовых проектов в очереди) ход передаётся;
+ *   - остаток RP после стоимости уровня переносится следующему активному
+ *     проекту (сырые очки — бонусы повторно не применяются);
+ *   - достигший maxLevel проект покидает цикл и НЕ возвращается в очередь;
+ *   - единственный/последний готовый проект продолжает уровни в том же тике;
+ *   -unknown/maxLevel/неготовые прекурсоры — тихая деградация (advanceQueue).
+ */
+function cyclicCascade(
+  state: ResearchState,
+  completed: Array<{ techId: string; level: number }>,
+): void {
+  let completions = 0;
+  while (state.activeSlots.length > 0 && completions < MAX_LEVEL_COMPLETIONS_PER_TICK) {
+    const slot = state.activeSlots[0]!;
+    const tech = TECH_MAP.get(slot.techId);
+    if (!tech) {
+      // Tech исчез из дерева (данные изменились) — тихо убрать слот.
+      state.activeSlots.shift();
+      advanceQueue(state);
+      continue;
+    }
+    const ceiling = getTechCeiling(tech, state);
+    // Цель за пределами потолка/maxLevel — проект покидает цикл.
+    if (slot.targetLevel > ceiling || slot.targetLevel > tech.maxLevel) {
+      state.activeSlots.shift();
+      advanceQueue(state);
+      continue;
+    }
+    const cost = getTechCost(tech.baseCost, slot.targetLevel);
+    if (cost <= 0) break; // вырожденные данные — не зацикливаемся
+    if (slot.rpInvested < cost) break; // уровень не завершён — ход остаётся у активного
+
+    // Завершить ОДИН уровень (передача хода — ниже).
+    state.researched[slot.techId] = slot.targetLevel;
+    completed.push({ techId: slot.techId, level: slot.targetLevel });
+    slot.rpInvested -= cost;
+    slot.targetLevel += 1;
+    completions += 1;
+
+    const maxed = slot.targetLevel > ceiling || slot.targetLevel > tech.maxLevel;
+    if (maxed) {
+      // Достигнут maxLevel — проект покидает цикл (в очередь НЕ возвращается).
+      state.activeSlots.shift();
+    } else if (hasStartableQueuedTech(state)) {
+      // Ход передаётся: активный возвращается в ХВОСТ очереди (без дублей),
+      // следующий готовый проект стартует из головы.
+      if (!state.researchQueue.includes(slot.techId)) {
+        state.researchQueue.push(slot.techId);
+      }
+      state.activeSlots.shift();
+    } else {
+      // Других готовых проектов нет — активный продолжает уровни
+      // (остаток rpInvested остаётся при нём).
+      continue;
+    }
+
+    // Ход передан/слот закрыт: остаток RP — следующему готовому проекту.
+    if (state.activeSlots.length === 0) {
+      advanceQueue(state);
+    }
+    if (state.activeSlots.length > 0) {
+      state.activeSlots[0]!.rpInvested += slot.rpInvested;
+    }
+    // Дерево опустело (все закрыты, готовых нет) — остаток перенести некому:
+    // не сохраняется и НЕ уходит в банк (инвариант R-SPLIT, docs/60 §3.4).
+  }
+}
+
+/**
+ * R-RES-QUEUE-01: есть ли в очереди проект, готовый к старту
+ * (известная технология, не на maxLevel, прекурсоры выполнены).
+ * Определяет, передавать ли ход после завершения уровня.
+ */
+function hasStartableQueuedTech(state: ResearchState): boolean {
+  for (const techId of state.researchQueue) {
+    const tech = TECH_MAP.get(techId);
+    if (!tech) continue;
+    if ((state.researched[techId] ?? 0) >= tech.maxLevel) continue;
+    if (!arePrerequisitesMet(tech, state.researched).met) continue;
+    return true;
+  }
+  return false;
+}
+
+/**
+ * R-RES-QUEUE-01: legacy-консолидация параллельных слотов (сейвы до
+ * циклической очереди) — docs/60-research.md v1.1 §3.4 «Legacy-миграция».
+ *
+ * Первый слот остаётся активным (аллокация нормализуется до 100%),
+ * каждый следующий: techId → хвост очереди (если валиден, не maxed и
+ * не дубликат), rpInvested суммируется с прогрессом активного слота
+ * (прогресс не теряется). Порядок очереди сохраняется, новые записи
+ * добавляются в хвост в порядке исходных слотов.
+ */
+function consolidateLegacySlots(state: ResearchState): void {
+  const kept = state.activeSlots[0]!;
+  let transferredRp = 0;
+  for (let i = state.activeSlots.length - 1; i >= 1; i--) {
+    const extra = state.activeSlots[i]!;
+    transferredRp += extra.rpInvested;
+    const tech = TECH_MAP.get(extra.techId);
+    const currentLevel = state.researched[extra.techId] ?? 0;
+    if (
+      tech &&
+      currentLevel < tech.maxLevel &&
+      extra.techId !== kept.techId &&
+      !state.researchQueue.includes(extra.techId)
+    ) {
+      state.researchQueue.push(extra.techId);
+    }
+    state.activeSlots.splice(i, 1);
+  }
+  kept.allocationPercent = 100;
+  kept.rpInvested += transferredRp;
 }
 
 /**

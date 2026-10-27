@@ -62,6 +62,7 @@ import {
   createResearchSlot as createResearchSlotFn,
   canStartResearch as canStartResearchFn,
   arePrerequisitesMet as arePrerequisitesMetFn,
+  advanceQueue as advanceQueueFn,
   levelUpFundamentalEngine as levelUpFundamentalEngineFn,
 } from '@/research'; // Block 03 R6/R7 — research engine helpers
 // Note: ResearchState type is already imported above from '@/core/types' (line 22).
@@ -1757,48 +1758,55 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
     // sees the new active slot / allocation / fundamental level.
     startResearch: (techId, targetLevel) => {
       let slotId: string | null = null;
+      let queued = false;
       set((state) => {
         if (!state.gameState) return;
-        const rs = state.gameState.researchState;
-        // Validation через canStartResearch:
-        // 1. Подсчитать totalLabCount по всем колонизированным планетам.
-        //    Для упрощения MVP — считаем все планеты с owner != null.
-        //    (Phase 3.7 ResearchModule будет кэшировать totalRPPerSec.)
-        const planets = state.gameState.galaxy.systems
-          .flatMap((s) => s.planets)
-          .filter((p) => p.owner != null);
-        const labCount = planets.reduce((acc, p) => {
-          let n = 0;
-          for (const h of p.hexes) if (h.buildingId === 'laboratory') n++;
-          for (const s of p.atmosphericSlots) if (s.buildingId === 'laboratory') n++;
-          for (const s of p.orbitSlots) if (s.buildingId === 'laboratory') n++;
-          return acc + n;
-        }, 0);
-        // 2. Найти технологию в TECH_MAP.
+        const gs = state.gameState;
+        const rs = gs.researchState;
+        // R-RES-QUEUE-01 (Issue #15, docs/60 v1.1 §3.4): циклическая очередь —
+        // активный проект всегда один. «Начать» = старт немедленно при простое;
+        // при активном проекте — встать В ГОЛОВУ очереди (следующий ход после
+        // завершения текущего уровня; [PROPOSED POLICY] приоритет над стоящими).
         const tech = TECH_MAP_FN.get(techId);
         if (!tech) return;
-        // 3. canStartResearch — composite check.
-        const check = canStartResearchFn(tech, targetLevel, rs, labCount);
-        if (!check.ok) return;
-        // 4. Создать слот.
-        slotId = `slot_${state.gameState.time.tick}_${researchSlotCounter++}`;
-        const newSlot = createResearchSlotFn(slotId, techId, targetLevel, 100);
-        // 5. Auto-allocate поровну если добавили второй+ слот.
+        const currentLevel = rs.researched[techId] ?? 0;
+        const alreadyInQueue = rs.researchQueue.includes(techId);
+        const hasActiveSlot = rs.activeSlots.some((s) => s.techId === techId);
+        if (currentLevel >= tech.maxLevel || alreadyInQueue || hasActiveSlot) return;
+
         if (rs.activeSlots.length === 0) {
-          newSlot.allocationPercent = 100; // first slot gets 100%
+          // Немедленный старт: валидация через canStartResearch (прекурсоры,
+          // потолок, targetLevel = currentLevel+1; слот всегда доступен —
+          // циклическая очередь не лимитируется, docs/60 §9.5 SUPERSEDED).
+          const planets = gs.galaxy.systems
+            .flatMap((s) => s.planets)
+            .filter((p) => p.owner === gs.playerFactionId);
+          const labCount = planets.reduce((acc, p) => {
+            let n = 0;
+            for (const h of p.hexes) if (h.buildingId === 'laboratory') n++;
+            for (const s of p.atmosphericSlots) if (s.buildingId === 'laboratory') n++;
+            for (const s of p.orbitSlots) if (s.buildingId === 'laboratory') n++;
+            return acc + n;
+          }, 0);
+          const check = canStartResearchFn(tech, targetLevel, rs, labCount);
+          if (!check.ok) return;
+          slotId = `slot_${gs.time.tick}_${researchSlotCounter++}`;
+          const newSlot = createResearchSlotFn(slotId, techId, targetLevel, 100);
+          newSlot.allocationPercent = 100; // циклическая очередь: всегда 100%
+          rs.activeSlots.push(newSlot);
         } else {
-          // Split equally — divide 100% across all (existing + new) slots.
-          const totalSlots = rs.activeSlots.length + 1;
-          const equal = Math.max(5, Math.floor(100 / totalSlots));
-          for (const s of rs.activeSlots) {
-            s.allocationPercent = equal;
-          }
-          newSlot.allocationPercent = 100 - equal * rs.activeSlots.length;
-          if (newSlot.allocationPercent < 5) newSlot.allocationPercent = 5;
+          // Активный проект есть → в ГОЛОВУ очереди (проверка прекурсоров —
+          // как в addToResearchQueue: неготовые молча не ставятся).
+          const prereq = arePrerequisitesMetFn(tech, rs.researched);
+          if (!prereq.met) return;
+          rs.researchQueue.unshift(techId);
+          queued = true;
         }
-        rs.activeSlots.push(newSlot);
       });
       syncMediatorState();
+      // «В очередь (первым)» — тоже успех для вызова (не null): UI различает
+      // по значению 'queued'.
+      if (queued) return 'queued';
       return slotId;
     },
 
@@ -1809,13 +1817,13 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
         const rs = state.gameState.researchState;
         const idx = rs.activeSlots.findIndex((s) => s.slotId === slotId);
         if (idx === -1) return;
+        // R-RES-QUEUE-01 (docs/60 v1.1 §3.4): отмена активного проекта —
+        // частичный прогресс уровня НЕ сохраняется ([PROPOSED POLICY] — как в
+        // предыдущей модели); следующий проект очереди стартует сразу
+        // (advanceQueue), не дожидаясь следующего тика.
         rs.activeSlots.splice(idx, 1);
-        // Re-balance allocation of remaining slots (split 100% across all).
-        if (rs.activeSlots.length === 1) {
-          rs.activeSlots[0]!.allocationPercent = 100;
-        } else if (rs.activeSlots.length > 1) {
-          const equal = Math.max(5, Math.floor(100 / rs.activeSlots.length));
-          for (const s of rs.activeSlots) s.allocationPercent = equal;
+        if (rs.activeSlots.length === 0) {
+          advanceQueueFn(rs);
         }
         ok = true;
       });

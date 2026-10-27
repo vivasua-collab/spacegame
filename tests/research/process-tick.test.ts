@@ -114,13 +114,20 @@ describe('Block 03 T-R7 — processResearchTick (tickResearch)', () => {
       expect(result.completed).toEqual([]);
     });
 
-    test('R-SPLIT × 50% allocation → half of tree share per slot', () => {
+    test('R-RES-QUEUE-01: аллокация < 100 нормализуется — активный слот получает всё дерево × фокус', () => {
+      // Прежняя проверка «50% allocation → половина доли дерева» —
+      // SUPERSEDED решением владельца 2026-10-27 (docs/60 v1.1 §3.4):
+      // активный проект циклической очереди всегда на 100% (фокус ×1.2);
+      // legacy-слот нормализуется при первом тике.
       const state = makeStateWithSlot('fusion_reactor', 50);
-      // Приток 200 → tree share 100 (R-SPLIT 50/50) × 50% allocation
-      // = 50 RP/сек × 10 = 500 RP — ровно стоимость уровня 1 → завершён.
+      // makeStateWithSlot ставит все фундаменталы на 10 → 100% притока
+      // в дерево: 200 × 1.2 = 240 RP/сек × 10 = 2400 → L1 (500) + L2 (750)
+      // + L3 (1125) = 2375 → завершены, остаток 25 (L4=1687 — нет).
       const result = tickResearch(state, 200, 10);
-      expect(state.researched['fusion_reactor']).toBe(1);
-      expect(result.completed.length).toBe(1);
+      expect(state.activeSlots[0]!.allocationPercent).toBe(100);
+      expect(state.researched['fusion_reactor']).toBe(3);
+      expect(result.completed.length).toBe(3);
+      expect(state.activeSlots[0]!.rpInvested).toBeCloseTo(25, 5);
     });
 
     test('Multiple levels in one tick — big RP injection', () => {

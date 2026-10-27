@@ -172,10 +172,14 @@ export class ResearchModule implements IGameModule {
     if (!currentState) return;
     if (currentState.phase !== 'playing') return; // only tick during active play
 
-    // Подсчитать totalRPPerSec из всех колонизированных планет
+    // R-RES-QUEUE-01 (Issue #15, docs/60-research.md v1.1 §3.3): единый поток
+    // RP ИМПЕРИИ — лаборатории только планет игрока (owner === playerFactionId).
+    // Планеты чужих фракций в поток игрока НЕ смешиваются; per-planet пулов
+    // нет; требования технологии связи для объединения — нет.
+    const playerFactionId = currentState.playerFactionId;
     const planets = currentState.galaxy.systems
       .flatMap((s) => s.planets)
-      .filter((p) => p.owner != null);
+      .filter((p) => p.owner === playerFactionId);
     // R-RES §E: применяем research_rate bonus (от лабораторий и других
     // источников). resolveBonuses чистая функция; если state не ready —
     // множитель = 1 (нет бонусов).
@@ -220,7 +224,6 @@ export class ResearchModule implements IGameModule {
     // R-RES §B: detect queue auto-advancements (compare before/after).
     // If we started a new active slot from the queue (slotId starts with
     // "slot_q_"), emit tech:queue-advanced so UI can react.
-    const playerFactionId = currentState.playerFactionId;
     const newActiveSlots = newState.researchState.activeSlots;
     const oldActiveSlots = currentState.researchState.activeSlots;
     const oldSlotIds = new Set(oldActiveSlots.map((s) => s.slotId));

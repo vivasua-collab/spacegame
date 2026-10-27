@@ -101,13 +101,20 @@ describe('R-SPLIT — getResearchInflowSplit', () => {
 });
 
 describe('R-SPLIT — tickResearch (банк)', () => {
-  test('банк копит bankPerSec × dt; слот — techPerSec × allocation', () => {
+  test('банк копит bankPerSec × dt; активный слот — 100% дерева × фокус (аллокация SUPERSEDED)', () => {
+    // R-RES-QUEUE-01 (docs/60 v1.1 §3.4/§9.7): слот с аллокацией < 100
+    // (legacy) нормализуется до 100 при первом тике — активный проект
+    // циклической очереди получает 100% доли дерева × фокус 1.2.
+    // Прежняя проверка «50% allocation → 25 RP/сек» — SUPERSEDED.
     const state = createDefaultResearchState();
     state.activeSlots.push(createResearchSlot('s1', 'fusion_reactor', 1, 50));
-    // 100 RP/s → 50/50: банк 50/сек, дерево 50/сек × 50% = 25 RP/сек.
+    // 100 RP/s → 50/50: банк 50/сек (не изменился), дерево 50/сек × 1.2
+    // = 60 RP/сек × 10 = 600 → L1 (500) завершён, остаток 100 (L2=750).
     tickResearch(state, 100, 10);
-    expect(state.rpBank).toBeCloseTo(500, 5); // 50 × 10
-    expect(state.activeSlots[0]!.rpInvested).toBeCloseTo(250, 5); // 25 × 10
+    expect(state.rpBank).toBeCloseTo(500, 5); // 50 × 10 — банк не изменился
+    expect(state.activeSlots[0]!.allocationPercent).toBe(100); // нормализация
+    expect(state.researched['fusion_reactor']).toBe(1);
+    expect(state.activeSlots[0]!.rpInvested).toBeCloseTo(100, 5); // 600 − 500
   });
 
   test('простой дерева → банк получает 100% притока', () => {
