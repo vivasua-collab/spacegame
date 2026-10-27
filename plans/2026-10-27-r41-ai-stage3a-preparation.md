@@ -126,8 +126,8 @@ GOAP/utility-поиск, стратегические решения, сериа
 - [x] CI: .github/workflows отсутствуют, check-runs не заявляются
 - [x] git diff --check / --stat / полный diff / clean status; worklog (append-only), STATUS,
       README, ROADMAP; чекпоинт checkpoints/10_27_r41_ai_stage3a.md
-- [ ] Отдельный commit + push без force; SHA в чекпоинт §0 отдельным docs-коммитом
-- [ ] Отчёт владельцу самодостаточный (SHA, таблица, файлы, тесты, exit codes, вердикт)
+- [x] Отдельный commit + push без force; SHA в чекпоинт §0 отдельным docs-коммитом (R-41 = bbc05836b0a9637f0cd537414390f94411e7688b)
+- [x] Отчёт владельцу самодостаточный (SHA, таблица, файлы, тесты, exit codes, вердикт) — отправлен в чат
 
 ## Открытые вопросы / решения
 
