@@ -216,6 +216,7 @@ function makeMockGameState(galaxy: Galaxy = makeMockGalaxy()): GameState {
     // Block 03 (R7): researchState required by GameState type — default empty.
     // R-RES §B: researchQueue field is now required on ResearchState.
     // R-SPLIT (Задача 22): rpBank field is now required on ResearchState.
+    // R-RES-QUEUE-01 (f242121): researchProgressByTech обязателен в ResearchState.
     researchState: {
       fundamentalLevels: {
         chemistry: 0, physics: 0, engineering: 0,
@@ -226,6 +227,7 @@ function makeMockGameState(galaxy: Galaxy = makeMockGalaxy()): GameState {
       researched: {},
       activeSlots: [],
       researchQueue: [],
+      researchProgressByTech: {},
       totalRpGenerated: 0,
     },
   };

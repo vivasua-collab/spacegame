@@ -98,6 +98,8 @@ function makeGameStateWithBuildings(buildings: Array<{ hexIdx: number; buildingI
       researched: {},
       activeSlots: [],
       researchQueue: [],
+      // R-RES-QUEUE-01 (f242121): researchProgressByTech обязателен в ResearchState.
+      researchProgressByTech: {},
       totalRpGenerated: 0,
     },
   };

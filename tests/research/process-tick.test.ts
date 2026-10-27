@@ -206,23 +206,34 @@ describe('Block 03 T-R7 — processResearchTick (tickResearch)', () => {
   });
 
   describe('tickResearch — multiple slots', () => {
-    test('R-SPLIT: Two slots, 50% each — tree share splits between them', () => {
+    test('R-SPLIT → циклическая модель (SUPERSEDED решением владельца 2026-10-27, docs/60 §3.4 v1.1; контракт activeSlots ≤ 1 — deserializeGameState отклоняет параллельные слоты, коммит f242121): обе готовые технологии получают RP и завершают уровень без starvation', () => {
       const state = createDefaultResearchState();
-      // Set fundamentals high enough for both techs (power needs physics,
-      // materials needs chemistry + engineering) — но НЕ все 6 веток,
-      // поэтому действует split 50/50 (не «100% в дерево»).
+      // Фундаменталы как в исходном тесте (power/materials готовы) — но НЕ все
+      // 6 веток: tree share = 100 из 200 (разделение R-SPLIT дерево/банк сохранено).
       state.fundamentalLevels.physics = 10;
       state.fundamentalLevels.chemistry = 10;
       state.fundamentalLevels.engineering = 10;
-      state.activeSlots.push(createResearchSlot('s1', 'fusion_reactor', 1, 50));
-      state.activeSlots.push(createResearchSlot('s2', 'steel_processing', 1, 50));
-      // Приток 200 → tree share = 100 → × 0.5 (no focus, 2 slots) = 50 RP/сек
-      // each × 10 = 500 RP each → fusion_reactor (cost 500) completes впритык,
-      // steel_processing (cost 300) completes (+200 в остаток, L2 cost 450)
+      // Новый контракт: ОДИН активный слот 100% (не 50/50 — старое требование
+      // процентного распределения SUPERSEDED), вторая готовая технология — в
+      // FIFO-очереди cyclicCascade.
+      state.activeSlots.push(createResearchSlot('s1', 'fusion_reactor', 1, 100));
+      state.researchQueue.push('steel_processing');
+      // Приток 200/тик × 10 тиков → tree share 100 × фокус 1.2 = 120/тик:
+      // fusion_reactor (cost 500) завершает L1 → ход steel_processing (cost 300)
+      // → L1 → ход снова fusion_reactor (возврат в хвост после L1). Сумма
+      // 500 + 300 + 400(в L2) = 1200 = 10 × 120 — RP не теряется.
       const result = tickResearch(state, 200, 10);
+      // Инвариант исходного теста сохранён: обе технологии завершили уровень.
       expect(state.researched['fusion_reactor']).toBe(1);
       expect(state.researched['steel_processing']).toBe(1);
       expect(result.completed.length).toBe(2);
+      // Ротация: активен fusion_reactor на пути к L2, прогресс сохранён точно.
+      expect(state.activeSlots).toHaveLength(1);
+      expect(state.activeSlots[0]!.techId).toBe('fusion_reactor');
+      expect(state.activeSlots[0]!.targetLevel).toBe(2);
+      expect(state.activeSlots[0]!.rpInvested).toBe(400);
+      // steel_processing (не maxed) вернулся в хвост очереди — дождётся хода.
+      expect(state.researchQueue).toContain('steel_processing');
     });
   });
 

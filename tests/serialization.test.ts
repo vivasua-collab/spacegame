@@ -205,6 +205,9 @@ describe('Block 01 T5: Serialization round-trip', () => {
       galaxy: { id: 'galaxy_1', seed: 42, systems: [] },
       productionQueues: [],
       fleets: [],
+      // R-RES-QUEUE-01 (f242121): контракт исследований обязателен в сейве —
+      // guard deserializeGameState отклоняет сейвы без researchProgressByTech.
+      researchState: { researchProgressByTech: {}, activeSlots: [] },
       playerFactionId: 'player',
     });
 
@@ -224,6 +227,9 @@ describe('Block 01 T5: Serialization round-trip', () => {
       galaxy: { id: 'galaxy_1', seed: 42, systems: [] },
       productionQueues: [],
       fleets: [],
+      // researchState валиден — отклонение должно прийти от СХЕМЫ (v0 `time.day`),
+      // а не от research-guard (инвариант теста: строгий reject формата v0).
+      researchState: { researchProgressByTech: {}, activeSlots: [] },
       playerFactionId: 'player',
     });
 
@@ -327,6 +333,9 @@ describe('Block 01 T5: Serialization round-trip', () => {
       galaxy: { id: 'galaxy_x', seed: 42, systems: [] },
       productionQueues: [],
       fleets: [],
+      // researchState валиден — отклонение должно прийти от СХЕМЫ (невалидный
+      // phase), не от research-guard (инвариант теста: строгий reject схемы).
+      researchState: { researchProgressByTech: {}, activeSlots: [] },
       playerFactionId: 'player',
     });
 

@@ -99,6 +99,8 @@ function makeState(planet: Planet): GameState {
       researched: {},
       activeSlots: [],
       researchQueue: [],
+      // R-RES-QUEUE-01 (f242121): researchProgressByTech обязателен в ResearchState.
+      researchProgressByTech: {},
       totalRpGenerated: 0,
     },
   } as GameState;
