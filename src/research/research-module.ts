@@ -186,8 +186,15 @@ export class ResearchModule implements IGameModule {
     const researchMultiplier = resolveBonuses(currentState, 'research_rate');
     const totalRPPerSec = getTotalRPPerSec(planets, researchMultiplier);
 
-    // deltaSeconds = speed (1 tick = 1 sec at speed=1; ×5 at speed=5; etc.)
-    const deltaSeconds = currentState.speed;
+    // 1 тик = 1 день при ЛЮБОЙ скорости: GameTime.tick — «количество
+    // прошедших дней» (src/core/types.ts), game-loop реализует speed как
+    // тиков/сек (интервал 1000/speed мс + ticksDue = elapsed×speed, R-42).
+    // Прежде здесь было deltaSeconds = currentState.speed — speed входил
+    // в расчёт ДВАЖДЫ (тот же исторический speed²-дефект, что чинился в
+    // game-loop): на x5/x15/x50 исследования шли в 5/15/50 раз быстрее
+    // положенного (уровень L1 закрывался с одного тика на x50, банк
+    // раздувался до миллионов RP). Приток за тик от скорости НЕ зависит.
+    const deltaSeconds = 1;
 
     // Process tick — mutate researchState via immer draft.
     // tickResearch returns list of completed levels for emitting.
