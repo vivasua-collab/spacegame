@@ -114,7 +114,6 @@ const FUNDAMENTAL_COLORS: Record<FundamentalBranchId, string> = {
 
 export function ResearchView() {
   const gameState = useGameStore((s) => s.gameState);
-  const startResearch = useGameStore((s) => s.startResearch);
   const cancelResearch = useGameStore((s) => s.cancelResearch);
   const levelUpFundamental = useGameStore((s) => s.levelUpFundamental);
   const addToResearchQueue = useGameStore((s) => s.addToResearchQueue);
@@ -275,31 +274,6 @@ export function ResearchView() {
           researchState={researchState}
           techRPPerSec={techPerSec}
           onClose={() => setSelectedTechId(null)}
-          onStartResearch={(techId, targetLevel) => {
-            const result = startResearch(techId, targetLevel);
-            const tech = TECH_MAP.get(techId);
-            if (result === 'queued') {
-              // R-RES-QUEUE-01: активный проект есть → «первым в очередь»;
-              // ход перейдёт к технологии после завершения текущего уровня.
-              toast({
-                title: 'Поставлен первым в очередь',
-                description: `${tech?.name} → ур.${targetLevel} — следующим ходом после текущего уровня.`,
-              });
-              setSelectedTechId(null);
-            } else if (result) {
-              toast({
-                title: 'Исследование запущено',
-                description: `${tech?.name} → ур.${targetLevel}`,
-              });
-              setSelectedTechId(null);
-            } else {
-              toast({
-                title: 'Нельзя начать исследование',
-                description: `${tech?.name}: уже в очереди/слоте, исследован или прекурсоры не готовы.`,
-                variant: 'destructive',
-              });
-            }
-          }}
           onAddToQueue={(techId) => {
             const ok = addToResearchQueue(techId);
             const tech = TECH_MAP.get(techId);
@@ -1143,7 +1117,6 @@ function ResearchDetailDialog({
   researchState,
   techRPPerSec,
   onClose,
-  onStartResearch,
   onAddToQueue,
 }: {
   techId: string;
@@ -1151,7 +1124,6 @@ function ResearchDetailDialog({
   /** R-SPLIT: RP/сек, доступные ветке дерева (доля притока после split). */
   techRPPerSec: number;
   onClose: () => void;
-  onStartResearch: (techId: string, targetLevel: number) => void;
   onAddToQueue: (techId: string) => void;
 }) {
   const tech = TECH_MAP.get(techId);
@@ -1167,10 +1139,7 @@ function ResearchDetailDialog({
   // R-RES §A: ceiling is now always = tech.maxLevel, so this never blocks
   // for non-maxed techs. Kept for safety.
   const ceilingBlocked = !isMaxed && ceiling < targetLevel;
-  const activeSlotsCount = researchState.activeSlots.length;
-  // R-RES-QUEUE-01: лимит слотов SUPERSEDED — циклическая очередь не
-  // ограничивается (docs/60 v1.1 §9.5); «Начать» при активном проекте
-  // ставит технологию в ГОЛОВУ очереди (store.startResearch).
+  // FIFO queue: add actions append to the normal queue tail.
   const alreadyInQueue = researchState.researchQueue.includes(techId);
   const hasActiveSlot = researchState.activeSlots.some((s) => s.techId === techId);
 
@@ -1187,19 +1156,8 @@ function ResearchDetailDialog({
   });
   const allPrereqMet = prereq.every((p) => p.met);
 
-  const canStart =
-    !isMaxed &&
-    !ceilingBlocked &&
-    allPrereqMet &&
-    !alreadyInQueue &&
-    !hasActiveSlot &&
-    status !== 'in_progress';
-
-  // R-RES §B: queue eligibility — prerequisites must be met (or tech will
-  // wait at the front of the queue until prerequisites are researched).
-  // Disable button if tech is already maxed, already in queue, or has
-  // an active slot.
-  const canAddToQueue = !isMaxed && !alreadyInQueue && !hasActiveSlot && allPrereqMet;
+  // Only expose the owner-approved FIFO-tail queue action.
+  const canAddToQueue = !isMaxed && !ceilingBlocked && !alreadyInQueue && !hasActiveSlot && allPrereqMet;
 
   const effectiveRP = getEffectiveRPPerSec(techRPPerSec, 100, 1) * partialBonus;
   const etaSec = effectiveRP > 0 ? cost / effectiveRP : Infinity;
@@ -1271,7 +1229,7 @@ function ResearchDetailDialog({
             </div>
 
             {/* ETA */}
-            {(canStart || canAddToQueue) && effectiveRP > 0 && (
+            {canAddToQueue && effectiveRP > 0 && (
               <div className="text-xs text-slate-300">
                 <span className="text-slate-500">ETA на 100% аллокации:</span>{' '}
                 <span className="text-cyan-300 font-mono">
@@ -1318,11 +1276,11 @@ function ResearchDetailDialog({
             )}
 
             {/* Block reasons */}
-            {!canStart && !canAddToQueue && (
+            {!canAddToQueue && (
               <div className="rounded border border-amber-500/30 bg-amber-950/20 p-2 text-xs text-amber-300 space-y-1">
                 <div className="font-medium flex items-center gap-1">
                   <AlertTriangle className="size-3" />
-                  Нельзя начать / добавить в очередь:
+                  Нельзя добавить в очередь:
                 </div>
                 {isMaxed && <div>• Достигнут максимальный уровень ({tech.maxLevel}).</div>}
                 {ceilingBlocked && (
@@ -1339,9 +1297,7 @@ function ResearchDetailDialog({
           </div>
         </ScrollArea>
 
-        {/* R-RES-QUEUE-01: «Начать» — старт при простое ИЛИ первым в очередь
-            (следующий ход после завершения текущего уровня); «В очередь» —
-            в хвост циклической очереди. Оба закрывают диалог при успехе. */}
+        {/* R-RES-QUEUE-01 v1.2: пользовательское действие — FIFO-добавление в хвост. */}
         <div className="flex gap-2 pt-2">
           <Button
             variant="outline"
@@ -1359,18 +1315,6 @@ function ResearchDetailDialog({
             >
               <Plus className="size-4 mr-1" />
               В очередь
-            </Button>
-          )}
-          {canStart && (
-            <Button
-              className="flex-1"
-              onClick={() => onStartResearch(tech.id, targetLevel)}
-              title={activeSlotsCount > 0
-                ? 'Первым в очередь: ход перейдёт к технологии после завершения текущего уровня активного проекта'
-                : 'Начать немедленно (активного проекта нет)'}
-            >
-              <Plus className="size-4 mr-1" />
-              {activeSlotsCount > 0 ? 'Следующим (ур. ' + targetLevel + ')' : 'Начать (ур. ' + targetLevel + ')'}
             </Button>
           )}
         </div>

@@ -196,38 +196,24 @@ describe('R-RES-QUEUE-01 — единый пул RP империи (реальн
     // гейта нет: обе планеты суммированы.
   });
 
-  test('INT-4. Циклическое переключение после завершения уровня (A → B → C)', () => {
+  test('INT-4. Длинный плейтест: очередь многократно ротируется, все проекты получают RP', () => {
     const { planetIds } = startGame(1);
-    placeLab(planetIds[0]!, 10); // 50 RP/сек
-
+    placeLab(planetIds[0]!, 10);
     const store = useGameStore.getState();
-    expect(store.startResearch('fusion_reactor', 1)).not.toBeNull(); // A
-    expect(store.addToResearchQueue('microelectronics')).toBe(true); // B
-    expect(store.addToResearchQueue('steel_processing')).toBe(true); // C
+    expect(store.startResearch('fusion_reactor', 1)).not.toBeNull();
+    expect(store.addToResearchQueue('microelectronics')).toBe(true);
+    expect(store.addToResearchQueue('steel_processing')).toBe(true);
 
-    // Окно скорости 50: за один тик дерево 25 × 1.2 = 30 RP/сек × 50 = 1500.
-    // fusion L1 (500) завершится → ход B; при достаточном бюджете B и C
-    // тоже завершат уровни в этом же тике (остаток идёт по очереди).
-    let sawFusionActive = true;
-    let switched = false;
     const mediator = getGameMediator();
-    mediator.setSpeed(50);
-    for (let i = 0; i < 200 && !switched; i++) {
-      mediator.tick();
-      const state = rs();
-      const activeTech = state.activeSlots[0]?.techId;
-      if (state.researched['fusion_reactor'] !== undefined && activeTech !== 'fusion_reactor') {
-        switched = true;
-      }
-    }
+    mediator.setSpeed(1);
+    for (let i = 0; i < 300; i++) mediator.tick();
     mediator.setSpeed(0);
 
-    expect(sawFusionActive).toBe(true);
-    expect(switched, 'после завершения уровня fusion ход передан следующему проекту').toBe(true);
     const state = rs();
-    // Все три проекта получили уровни (цикл работает через реальный конвейер).
-    expect(state.researched['fusion_reactor']).toBeGreaterThanOrEqual(1);
-    // Активен один из проектов очереди; очередь не пуста (цикл).
+    expect(state.researched['fusion_reactor'] ?? 0).toBeGreaterThan(0);
+    expect(state.researched['microelectronics'] ?? 0).toBeGreaterThan(0);
+    expect(state.researched['steel_processing'] ?? 0).toBeGreaterThan(0);
+    expect(state.researched['fusion_reactor'] ?? 0).toBeLessThan(8);
     expect(state.activeSlots.length).toBe(1);
     expect(state.researchQueue.length).toBeGreaterThan(0);
   });
@@ -268,37 +254,42 @@ describe('R-RES-QUEUE-01 — единый пул RP империи (реальн
     expect(switchedAfterLevel, 'B стал активным сразу после завершения уровня A').toBe(true);
   });
 
-  test('INT-6. startResearch при активном проекте — в ГОЛОВУ очереди; addToResearchQueue — в хвост', () => {
+  test('INT-6. Служебный startResearch не обходит FIFO-хвост очереди', () => {
     const { planetIds } = startGame(1);
     placeLab(planetIds[0]!, 5);
 
     const store = useGameStore.getState();
     expect(store.startResearch('fusion_reactor', 1)).not.toBeNull(); // активный
     expect(store.addToResearchQueue('steel_processing')).toBe(true); // хвост: [steel]
-    const result = store.startResearch('microelectronics', 1); // голова
+    const result = store.startResearch('microelectronics', 1); // хвост
     expect(result).toBe('queued');
-    expect(rs().researchQueue).toEqual(['microelectronics', 'steel_processing']);
+    expect(rs().researchQueue).toEqual(['steel_processing', 'microelectronics']);
 
     // Дубликаты отклоняются.
     expect(store.startResearch('microelectronics', 1)).toBeNull();
     expect(store.addToResearchQueue('steel_processing')).toBe(false);
   });
 
-  test('INT-7. cancelResearch: активный закрыт, следующий стартует сразу', () => {
+  test('INT-7. cancel → re-add/resume восстанавливает частичный прогресс технологии', () => {
     const { planetIds } = startGame(1);
     placeLab(planetIds[0]!, 5);
-
     const store = useGameStore.getState();
     const slotId = store.startResearch('fusion_reactor', 1);
     expect(slotId).not.toBeNull();
+    runTicks(5, 1);
+    const investedBeforeCancel = rs().activeSlots[0]!.rpInvested;
+    expect(investedBeforeCancel).toBeGreaterThan(0);
     expect(store.addToResearchQueue('microelectronics')).toBe(true);
 
-    const ok = store.cancelResearch(slotId!);
-    expect(ok).toBe(true);
-    // Следующий проект стартовал НЕМЕДЛЕННО (не ждёт тика).
-    expect(rs().activeSlots.length).toBe(1);
+    expect(store.cancelResearch(slotId!)).toBe(true);
     expect(rs().activeSlots[0]!.techId).toBe('microelectronics');
-    expect(rs().researchQueue).toEqual([]);
+    expect(rs().researchProgressByTech['fusion_reactor']).toBeCloseTo(investedBeforeCancel, 5);
+    expect(store.addToResearchQueue('fusion_reactor')).toBe(true);
+    const microSlotId = rs().activeSlots[0]!.slotId;
+    expect(store.cancelResearch(microSlotId)).toBe(true);
+    expect(rs().activeSlots[0]!.techId).toBe('fusion_reactor');
+    expect(rs().activeSlots[0]!.rpInvested).toBeCloseTo(investedBeforeCancel, 5);
+    expect(rs().researchProgressByTech['fusion_reactor']).toBeUndefined();
   });
 
   test('INT-8. Save/load round-trip: очередь, порядок и частичный прогресс переживают сериализацию', () => {
@@ -310,27 +301,45 @@ describe('R-RES-QUEUE-01 — единый пул RP империи (реальн
     expect(store.startResearch('fusion_reactor', 1)).not.toBeNull();
     expect(store.addToResearchQueue('microelectronics')).toBe(true);
     expect(store.addToResearchQueue('steel_processing')).toBe(true);
-    // Частичный прогресс активного проекта.
     runTicks(2, 1);
-    const before = rs();
-    const activeBefore = before.activeSlots[0]!;
+    const firstSlot = rs().activeSlots[0]!;
+    const pausedRp = firstSlot.rpInvested;
+    expect(pausedRp).toBeGreaterThan(0);
+    expect(store.cancelResearch(firstSlot.slotId)).toBe(true);
+    expect(rs().researchProgressByTech['fusion_reactor']).toBeCloseTo(pausedRp, 5);
+
+    runTicks(2, 1);
+    const activeBefore = rs().activeSlots[0]!;
+    expect(activeBefore.techId).toBe('microelectronics');
     expect(activeBefore.rpInvested).toBeGreaterThan(0);
 
-    // Round-trip через реальный сериализатор (новых полей сейва нет).
     const saved = serializeGameState(useGameStore.getState().gameState!);
     const loaded = deserializeGameState(saved);
-
-    expect(loaded.researchState.researchQueue).toEqual(['microelectronics', 'steel_processing']);
+    expect(loaded.researchState.researchQueue).toEqual(['steel_processing']);
     expect(loaded.researchState.activeSlots.length).toBe(1);
-    expect(loaded.researchState.activeSlots[0]!.techId).toBe('fusion_reactor');
+    expect(loaded.researchState.activeSlots[0]!.techId).toBe('microelectronics');
     expect(loaded.researchState.activeSlots[0]!.targetLevel).toBe(activeBefore.targetLevel);
     expect(loaded.researchState.activeSlots[0]!.rpInvested).toBeCloseTo(activeBefore.rpInvested, 5);
     expect(loaded.researchState.activeSlots[0]!.allocationPercent).toBe(100);
+    expect(loaded.researchState.researchProgressByTech['fusion_reactor']).toBeCloseTo(pausedRp, 5);
 
-    // Повторный round-trip идемпотентен.
     const saved2 = serializeGameState(loaded);
     const loaded2 = deserializeGameState(saved2);
-    expect(loaded2.researchState.researchQueue).toEqual(['microelectronics', 'steel_processing']);
+    expect(loaded2.researchState.researchQueue).toEqual(['steel_processing']);
     expect(loaded2.researchState.activeSlots[0]!.rpInvested).toBeCloseTo(activeBefore.rpInvested, 5);
+    expect(loaded2.researchState.researchProgressByTech['fusion_reactor']).toBeCloseTo(pausedRp, 5);
   });
+  test('INT-9. Старые сейвы без progress map и параллельные слоты отклоняются', () => {
+    const { planetIds } = startGame(1);
+    placeLab(planetIds[0]!, 5);
+    expect(useGameStore.getState().startResearch('fusion_reactor', 1)).not.toBeNull();
+    const saved = serializeGameState(useGameStore.getState().gameState!);
+    const missingProgress = JSON.parse(saved) as { researchState: { researchProgressByTech?: Record<string, number> } };
+    delete missingProgress.researchState.researchProgressByTech;
+    expect(() => deserializeGameState(JSON.stringify(missingProgress))).toThrow('несовместимый контракт исследований');
+    const parallelSlots = JSON.parse(saved) as { researchState: { activeSlots: Array<Record<string, unknown>> } };
+    parallelSlots.researchState.activeSlots.push({ ...parallelSlots.researchState.activeSlots[0]! });
+    expect(() => deserializeGameState(JSON.stringify(parallelSlots))).toThrow('несовместимый контракт исследований');
+  });
+
 });

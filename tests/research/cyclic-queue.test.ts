@@ -271,49 +271,10 @@ describe('R-RES-QUEUE-01 — валидация и деградация', () => 
   });
 });
 
-// ─── Legacy-консолидация параллельных слотов + нормализация ──────────
-
-describe('R-RES-QUEUE-01 — legacy-миграция (docs/60 §3.4)', () => {
-  test('T10. Параллельные слоты консолидируются: первый активен, остальные в хвост, RP переносится', () => {
-    const state = createDefaultResearchState();
-    // Два «старых» параллельных слота (до R-RES-QUEUE-01) + очередь.
-    const s1 = createResearchSlot('s1', 'fusion_reactor', 1, 50);
-    s1.rpInvested = 300;
-    const s2 = createResearchSlot('s2', 'steel_processing', 1, 60);
-    s2.rpInvested = 200;
-    state.activeSlots.push(s1, s2);
-    state.researchQueue = ['microelectronics'];
-
-    cascadeTick(state);
-
-    // Консолидация: остался ОДИН слот; аллокация нормализована до 100.
-    expect(state.activeSlots.length).toBe(1);
-    // rpInvested перенесён: 300 + 200 = 500 → fusion L1 (500) завершён
-    // в том же тике, остаток 0; ход передан (очередь не пуста).
-    expect(state.researched['fusion_reactor']).toBe(1);
-    // steel_processing вернулся в хвост очереди; microelectronics получил ход.
-    expect(state.activeSlots[0]!.techId).toBe('microelectronics');
-    expect(state.researchQueue).toEqual(['steel_processing', 'fusion_reactor']);
-  });
-
-  test('T11. Одиночный legacy-слот с аллокацией < 100 нормализуется до 100 (фокус)', () => {
-    const state = makeState(
-      { techId: 'fusion_reactor', targetLevel: 1, rpInvested: 0, allocationPercent: 50 },
-      [],
-    );
-    // Приток 200: дерево 50% = 100; после нормализации 100% × фокус 1.2
-    // = 120/сек × 10 = 1200 → L1 (500) завершён, остаток 700 < L2 (750).
-    tickResearch(state, 200, 10);
-    expect(state.activeSlots[0]!.allocationPercent).toBe(100);
-    expect(state.researched['fusion_reactor']).toBe(1);
-    expect(state.activeSlots[0]!.rpInvested).toBeCloseTo(700, 5);
-  });
-});
-
 // ─── Граничный случай «все закрыты» ──────────────────────────────────
 
 describe('R-RES-QUEUE-01 — граничные случаи остатка', () => {
-  test('T12. Все проекты цикла закрыты в тике → остаток не сохраняется, банк не тронут', () => {
+  test('T12. После последнего проекта неиспользованный остаток зачисляется в rpBank', () => {
     // fusion L10 (последний уровень) + огромный остаток; очередь пуста.
     const state = makeState(
       { techId: 'fusion_reactor', targetLevel: 10, rpInvested: 19221 + 99999 },
@@ -325,9 +286,8 @@ describe('R-RES-QUEUE-01 — граничные случаи остатка', ()
     expect(state.researched['fusion_reactor']).toBe(10);
     expect(state.activeSlots.length).toBe(0);
     expect(state.researchQueue).toEqual([]);
-    // Инвариант R-SPLIT: слоты дерева НЕ трогают банк (даже «потерянный»
-    // остаток НЕ уходит в банк).
-    expect(state.rpBank).toBe(bankBefore);
+    // Only residual after the final level is credited; test inflow is zero.
+    expect(state.rpBank).toBeCloseTo(bankBefore + 99999, 5);
   });
 
   test('T13. Каскад не зацикливается на дешёвых уровнях (guard завершается)', () => {
@@ -363,6 +323,16 @@ describe('R-RES-QUEUE-01 — advanceQueue (инварианты R-RES §B)', () 
     );
     expect(advanceQueue(state)).toBe(false);
     expect(state.researchQueue.length).toBe(1);
+  });
+
+  test('восстанавливает сохранённый частичный прогресс при старте из очереди', () => {
+    const state = createDefaultResearchState();
+    state.researchProgressByTech['microelectronics'] = 123.5;
+    state.researchQueue = ['microelectronics'];
+    expect(advanceQueue(state)).toBe(true);
+    expect(state.activeSlots[0]!.techId).toBe('microelectronics');
+    expect(state.activeSlots[0]!.rpInvested).toBeCloseTo(123.5, 5);
+    expect(state.researchProgressByTech['microelectronics']).toBeUndefined();
   });
 
   test('детерминированный slotId slot_q_* при старте из очереди', () => {

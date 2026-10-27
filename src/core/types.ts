@@ -1134,7 +1134,9 @@ export interface ResearchState {
   rpBank: number;
   researched: Record<string, number>;
   activeSlots: ResearchSlot[];
-  /** R-RES §B: ordered queue of techIds waiting to become active research. */
+  /** Ordered FIFO queue of technologies waiting to become active. */
   researchQueue: string[];
+  /** Partial RP for temporarily suspended projects, keyed by technology ID. */
+  researchProgressByTech: Record<string, number>;
   totalRpGenerated: number;
 }

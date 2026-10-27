@@ -580,6 +580,26 @@ export function deserializeGameState(json: string): GameState {
   // (декодеры v1/v2 удалены в R-30 — старые сейвы стёрты владельцем).
   expandSaveV3(raw);
 
+  // R-RES-QUEUE-01 v1.2: incompatible research save contracts are not migrated.
+  const savedResearchState = raw.researchState as {
+    activeSlots?: unknown;
+    researchProgressByTech?: unknown;
+  } | undefined;
+  const savedProgress = savedResearchState?.researchProgressByTech;
+  const savedActiveSlots = savedResearchState?.activeSlots;
+  const validProgressMap = typeof savedProgress === 'object' && savedProgress !== null &&
+    !Array.isArray(savedProgress) && Object.values(savedProgress).every(
+      (value) => typeof value === 'number' && Number.isFinite(value) && value >= 0,
+    );
+  const validActiveSlots = Array.isArray(savedActiveSlots) && savedActiveSlots.length <= 1;
+  if (!validProgressMap || !validActiveSlots) {
+    throw new Error(
+      'deserializeGameState: несовместимый контракт исследований. ' +
+      'Требуются researchProgressByTech и не более одного activeSlot. ' +
+      'Сейвы предыдущих версий игры не поддерживаются — начните новую игру.',
+    );
+  }
+
   // ─── Block 08 gap-9: top-level schema validation ──────────────────
   // R-26: строгая проверка — невалидный формат сейва бросает ошибку
   // (fallback-ветка на unvalidated parse удалена как мёртвый слой
@@ -1763,10 +1783,9 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
         if (!state.gameState) return;
         const gs = state.gameState;
         const rs = gs.researchState;
-        // R-RES-QUEUE-01 (Issue #15, docs/60 v1.1 §3.4): циклическая очередь —
-        // активный проект всегда один. «Начать» = старт немедленно при простое;
-        // при активном проекте — встать В ГОЛОВУ очереди (следующий ход после
-        // завершения текущего уровня; [PROPOSED POLICY] приоритет над стоящими).
+        // R-RES-QUEUE-01 (docs/60 v1.2 §3.4): FIFO-очередь. Немедленный старт
+        // возможен только при пустых activeSlots и researchQueue; иначе проект
+        // добавляется в хвост без скрытого приоритета.
         const tech = TECH_MAP_FN.get(techId);
         if (!tech) return;
         const currentLevel = rs.researched[techId] ?? 0;
@@ -1774,10 +1793,8 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
         const hasActiveSlot = rs.activeSlots.some((s) => s.techId === techId);
         if (currentLevel >= tech.maxLevel || alreadyInQueue || hasActiveSlot) return;
 
-        if (rs.activeSlots.length === 0) {
-          // Немедленный старт: валидация через canStartResearch (прекурсоры,
-          // потолок, targetLevel = currentLevel+1; слот всегда доступен —
-          // циклическая очередь не лимитируется, docs/60 §9.5 SUPERSEDED).
+        if (rs.activeSlots.length === 0 && rs.researchQueue.length === 0) {
+          // Немедленный старт только при полностью пустой очереди.
           const planets = gs.galaxy.systems
             .flatMap((s) => s.planets)
             .filter((p) => p.owner === gs.playerFactionId);
@@ -1792,20 +1809,22 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
           if (!check.ok) return;
           slotId = `slot_${gs.time.tick}_${researchSlotCounter++}`;
           const newSlot = createResearchSlotFn(slotId, techId, targetLevel, 100);
-          newSlot.allocationPercent = 100; // циклическая очередь: всегда 100%
+          newSlot.allocationPercent = 100;
+          const suspendedProgress = rs.researchProgressByTech[techId];
+          if (suspendedProgress !== undefined) {
+            newSlot.rpInvested = Math.max(0, suspendedProgress);
+            delete rs.researchProgressByTech[techId];
+          }
           rs.activeSlots.push(newSlot);
         } else {
-          // Активный проект есть → в ГОЛОВУ очереди (проверка прекурсоров —
-          // как в addToResearchQueue: неготовые молча не ставятся).
           const prereq = arePrerequisitesMetFn(tech, rs.researched);
           if (!prereq.met) return;
-          rs.researchQueue.unshift(techId);
+          rs.researchQueue.push(techId);
           queued = true;
         }
       });
       syncMediatorState();
-      // «В очередь (первым)» — тоже успех для вызова (не null): UI различает
-      // по значению 'queued'.
+      // Возвращаем 'queued', если проект добавлен в хвост очереди.
       if (queued) return 'queued';
       return slotId;
     },
@@ -1817,11 +1836,12 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
         const rs = state.gameState.researchState;
         const idx = rs.activeSlots.findIndex((s) => s.slotId === slotId);
         if (idx === -1) return;
-        // R-RES-QUEUE-01 (docs/60 v1.1 §3.4): отмена активного проекта —
-        // частичный прогресс уровня НЕ сохраняется ([PROPOSED POLICY] — как в
-        // предыдущей модели); следующий проект очереди стартует сразу
-        // (advanceQueue), не дожидаясь следующего тика.
-        rs.activeSlots.splice(idx, 1);
+        // R-RES-QUEUE-01 (docs/60 v1.2 §3.4): снятие проекта сохраняет
+        // вложенные RP текущего уровня для последующего возобновления.
+        const [cancelled] = rs.activeSlots.splice(idx, 1);
+        if (cancelled && cancelled.rpInvested > 0) {
+          rs.researchProgressByTech[cancelled.techId] = cancelled.rpInvested;
+        }
         if (rs.activeSlots.length === 0) {
           advanceQueueFn(rs);
         }
@@ -1918,6 +1938,11 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
         if (rs.activeSlots.length === 0 && rs.researchQueue.length === 0) {
           const slotId = `slot_${state.gameState.time.tick}_${researchSlotCounter++}`;
           const newSlot = createResearchSlotFn(slotId, techId, currentLevel + 1, 100);
+          const suspendedProgress = rs.researchProgressByTech[techId];
+          if (suspendedProgress !== undefined) {
+            newSlot.rpInvested = Math.max(0, suspendedProgress);
+            delete rs.researchProgressByTech[techId];
+          }
           rs.activeSlots.push(newSlot);
         } else {
           rs.researchQueue.push(techId);
