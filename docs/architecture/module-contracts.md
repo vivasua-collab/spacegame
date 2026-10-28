@@ -81,7 +81,7 @@ runtime-использование — разные сущности. Событ
 
 Замечания:
 - Emit-вызовы engine-функций (`src/economy/engine.ts`, `src/ships/fleet-engine.ts`, `src/data/ships/shipyard-queue.ts`) через импортированный синглтон `gameBus` — факты публикуются как есть (file:line двигателя). Атрибуция «это события СИСТЕМЫ economy» — интерпретация манифеста (комментарий `src/economy/economy-module.ts:54-58`), в карте различается полями, не смешивается.
-- `core:*` lifecycle-события публикует ядро-инфраструктура (GameLoop/GameMediator), которая НЕ является зарегистрированным модулем реестра — поэтому для них честен статус 4 (`observed_but_not_declared`), кроме `core:tick`/`core:game-created`/`core:state-changed`, заявленных манифестами модулей.
+- `core:*` lifecycle-события публикует ядро-инфраструктура (GameLoop/GameMediator), которая НЕ является зарегистрированным модулем реестра — для них честен статус 4 (`observed_but_not_declared`), кроме `core:tick`/`core:game-created`/`core:game-loaded`/`core:state-changed`, заявленных манифестами модулей (в подписочной роли).
 - Статус 2 покрывает только подписочную сторону и несогласованность подписок; emit-сторона «декларировано, но не эмитится» — это статус 6 (резерв/намерение), не mismatch.
 
 ### 2.2. Статусы запросов
@@ -145,7 +145,7 @@ economy, research, ships, fleet, ai])` (:338-345), подписка стора �
 |---|---|---|---|
 | Файл/манифест | `src/research/research-module.ts:46-70` | — | — |
 | dependencies | `['economy']` (:51) | — | ✅ |
-| emits | `tech:research-completed`, `tech:unlocked`, `tech:fundamental-leveled`, `tech:tree-validated`, `tech:queue-advanced`, `tech:queue-added`, `tech:queue-removed`, `core:state-changed` (:52-61) | фактические emit-вызовы модуля: `tech:tree-validated` (:103), `tech:queue-advanced` (:233), `tech:research-completed` (:248), `tech:unlocked` (:255) — 4 из 8; `tech:fundamental-leveled` эмитит store (`src/stores/game-store.ts:1872`), `core:state-changed` — медиатор (F-06); `tech:queue-added`/`queue-removed` не эмитятся никем (F-09) | ⚠️ F-09 |
+| emits | `tech:research-completed`, `tech:unlocked`, `tech:fundamental-leveled`, `tech:tree-validated`, `tech:queue-advanced`, `tech:queue-added`, `tech:queue-removed`, `core:state-changed` (:52-61) | фактические emit-вызовы модуля: `tech:tree-validated` (:103), `tech:queue-advanced` (:240), `tech:research-completed` (:255), `tech:unlocked` (:262) — 4 из 8; `tech:fundamental-leveled` эмитит store (`src/stores/game-store.ts:1892`), `core:state-changed` — медиатор (F-06); `tech:queue-added`/`queue-removed` не эмитятся никем (F-09) | ⚠️ F-09 |
 | subscribes | `core:tick` (SIMULATION+5) (:62-64) | фактическая :109-112 → `onTick` no-op (:155-157, «tick() called via ModuleRegistry.tickAll()») | ✅ (F-01) |
 | handlesQueries | `research:state`, `research:tech-status` (:65-68) | зарегистрированы :116-117, снятие :140-141 | ✅ |
 | requiresQueries | `[]` (:69) | — | ✅ |
@@ -198,17 +198,17 @@ economy, research, ships, fleet, ai])` (:338-345), подписка стора �
 
 | Статус | Кол-во | События |
 |---|---|---|
-| `declared_and_published` | 10 | `core:tick`, `core:game-created`, `core:state-changed`, `economy:build`, `economy:upgrade`, `economy:enqueue`, `economy:colonize`, `economy:specialize`, `economy:upgrade-specialization`, `tech:fundamental-leveled` |
+| `declared_and_published` | 10 | `core:tick`, `core:game-created`, `core:game-loaded`, `core:state-changed`, `economy:build`, `economy:upgrade`, `economy:enqueue`, `economy:colonize`, `economy:specialize`, `economy:upgrade-specialization` |
 | `manifest_vs_runtime_mismatch` | 2 | `economy:downgrade`, `economy:demolish` (F-02) |
-| `observed_but_not_declared` | 8 | `core:year`, `core:started`, `core:paused`, `core:resumed`, `core:speed-changed`, `core:game-loaded`, `economy:production-cancelled` (F-03), `combat:engaged` |
-| `published_without_observed_consumer` | 23 | `galaxy:generated`; `economy:building-constructed/-upgraded/-downgraded/-demolished`, `economy:production-complete`, `economy:planet-colonized`, `economy:building-specialized`, `economy:specialization-upgraded`, `economy:processor-output-changed` (9); `ships:constructed`, `ships:construction-progress`, `ships:arrived`, `ships:fuel-consumed` (4); `fleet:movement-started`, `fleet:order-completed`, `fleet:arrived`, `fleet:fuel-low`, `fleet:stranded` (5); `tech:research-completed`, `tech:unlocked`, `tech:tree-validated`, `tech:queue-advanced` (4) |
+| `observed_but_not_declared` | 7 | `core:year`, `core:started`, `core:paused`, `core:resumed`, `core:speed-changed`, `economy:production-cancelled` (F-03), `combat:engaged` |
+| `published_without_observed_consumer` | 24 | `galaxy:generated`; `economy:building-constructed/-upgraded/-downgraded/-demolished`, `economy:production-complete`, `economy:planet-colonized`, `economy:building-specialized`, `economy:specialization-upgraded`, `economy:processor-output-changed` (9); `ships:constructed`, `ships:construction-progress`, `ships:arrived`, `ships:fuel-consumed` (4); `fleet:movement-started`, `fleet:order-completed`, `fleet:arrived`, `fleet:fuel-low`, `fleet:stranded` (5); `tech:research-completed`, `tech:unlocked`, `tech:tree-validated`, `tech:queue-advanced`, `tech:fundamental-leveled` (5) |
 | `declared_but_not_observed_published` | 43 | полный список в §5 и карте; исторически задокументированный резерв этапов 3б/4 (§2.4) |
 | `consumer_without_observed_publisher` | 0 | — |
 | `dynamic_or_unresolved` | 0 | на уровне событий; динамические формы механизмов — §8 |
 
-Сверка: 10+2+8+23+43 = **86** = |EventMap|. Историческая оценка в комментарии
+Сверка: 10+2+7+24+43 = **86** = |EventMap|. Историческая оценка в комментарии
 `src/core/events.ts:16` («эмитятся ~42 из объявленных») уточняется фактом:
-эмитятся **43 из 86**, у 23 из них нет production-потребителей (F-08).
+эмитятся **43 из 86**, у 24 из них нет production-потребителей (F-08).
 
 ## 5. Полная таблица событий (evidence — краткая; поимённо с file:line — в `module-bus-map.json`)
 
@@ -224,10 +224,8 @@ economy, research, ships, fleet, ai])` (:338-345), подписка стора �
 | `core:resumed` | :34 | — | game-loop:112 | — | observed_but_not_declared |
 | `core:speed-changed` | :35 | — | game-loop:97 | — | observed_but_not_declared |
 | `core:game-created` | :36 | galaxy:s, ai:s | game-mediator:153 | galaxy-module:73, ai-module:140 | declared_and_published |
-| `core:game-loaded` | :37 | ai:s | game-mediator:196 | ai-module:145 | observed_but_not_declared* |
+| `core:game-loaded` | :37 | ai:s | game-mediator:196 | ai-module:145 | declared_and_published |
 | `core:state-changed` | :44 | economy:e, tech:e, ships:e, fleet:e | game-mediator:208,:227 | game-store:350 | declared_and_published (F-06) |
-
-\* `core:game-loaded` потребляется ai (манифест ai:s), но не заявлен издателем-модулем — издатель ядро; по правилу §2.1(4) статус 4, потребление зафиксировано.
 
 ### Galaxy (3)
 | Событие | events.ts | М | Изд | Потр | Статус |
@@ -239,25 +237,25 @@ economy, research, ships, fleet, ai])` (:338-345), подписка стора �
 ### Economy (23)
 | Событие | events.ts | М | Изд | Потр | Статус |
 |---|---|---|---|---|---|
-| `economy:build` | :71 | economy:s | game-store:810,:926,:950 | economy-module:137 | declared_and_published |
+| `economy:build` | :71 | economy:s | game-store:830,:946,:970 | economy-module:137 | declared_and_published |
 | `economy:building-constructed` | :72 | economy:e | engine:1186,:1244,:1296 | — | published_without_observed_consumer |
-| `economy:upgrade` | :73 | economy:s | game-store:827 | economy-module:138 | declared_and_published |
+| `economy:upgrade` | :73 | economy:s | game-store:847 | economy-module:138 | declared_and_published |
 | `economy:building-upgraded` | :74 | economy:e | engine:1342 | — | published_without_observed_consumer |
-| `economy:downgrade` | :81 | — (НЕ в манифесте) | game-store:847,:886 | economy-module:140 | **manifest_vs_runtime_mismatch** (F-02) |
+| `economy:downgrade` | :81 | — (НЕ в манифесте) | game-store:867,:906 | economy-module:140 | **manifest_vs_runtime_mismatch** (F-02) |
 | `economy:building-downgraded` | :83 | economy:e | engine:1448 | — | published_without_observed_consumer |
-| `economy:demolish` | :88 | — (НЕ в манифесте) | game-store:868,:907 | economy-module:141 | **manifest_vs_runtime_mismatch** (F-02) |
+| `economy:demolish` | :88 | — (НЕ в манифесте) | game-store:888,:927 | economy-module:141 | **manifest_vs_runtime_mismatch** (F-02) |
 | `economy:building-demolished` | :90 | economy:e | engine:1495 | — | published_without_observed_consumer |
-| `economy:enqueue` | :91 | economy:s | game-store:971 | economy-module:142 | declared_and_published |
+| `economy:enqueue` | :91 | economy:s | game-store:991 | economy-module:142 | declared_and_published |
 | `economy:production-complete` | :92 | economy:e | engine:679 | — | published_without_observed_consumer |
 | `economy:production-cancelled` | :93 | — | engine:592,:682,:1803 | — | observed_but_not_declared (F-03) |
-| `economy:colonize` | :94 | economy:s | game-store:1059 | economy-module:143 | declared_and_published |
+| `economy:colonize` | :94 | economy:s | game-store:1079 | economy-module:143 | declared_and_published |
 | `economy:planet-colonized` | :95 | economy:e | engine:1877 | — | published_without_observed_consumer |
 | `economy:energy-recalced` | :96 | economy:e | — | — | declared_but_not_observed_published |
 | `economy:resource-depleted` | :97 | economy:e | — | — | declared_but_not_observed_published |
 | `economy:warehouse-full` | :98 | economy:e | — | — | declared_but_not_observed_published |
 | `economy:warehouse-updated` | :99 | economy:e | — | — | declared_but_not_observed_published |
-| `economy:specialize` | :102 | economy:s | game-store:1016 | economy-module:145 | declared_and_published |
-| `economy:upgrade-specialization` | :108 | economy:s | game-store:1041 | economy-module:146 | declared_and_published |
+| `economy:specialize` | :102 | economy:s | game-store:1036 | economy-module:145 | declared_and_published |
+| `economy:upgrade-specialization` | :108 | economy:s | game-store:1061 | economy-module:146 | declared_and_published |
 | `economy:building-specialized` | :111 | economy:e | engine:1638,:1695 | — | published_without_observed_consumer |
 | `economy:specialization-upgraded` | :118 | economy:e | engine:1761 | — | published_without_observed_consumer |
 | `economy:processor-output-changed` | :128 | economy:e | engine:1646,:1703,:1767 | — | published_without_observed_consumer |
@@ -304,15 +302,15 @@ economy, research, ships, fleet, ai])` (:338-345), подписка стора �
 | Событие | events.ts | М | Изд | Потр | Статус |
 |---|---|---|---|---|---|
 | `tech:research-started` | :211 | — | — | — | declared_but_not_observed_published |
-| `tech:research-completed` | :213 | tech:e | research-module:248 | — | published_without_observed_consumer |
-| `tech:unlocked` | :215 | tech:e | research-module:255 | — | published_without_observed_consumer |
+| `tech:research-completed` | :213 | tech:e | research-module:255 | — | published_without_observed_consumer |
+| `tech:unlocked` | :215 | tech:e | research-module:262 | — | published_without_observed_consumer |
 | `tech:research-cancelled` | :218 | — | — | — | declared_but_not_observed_published |
 | `tech:allocation-changed` | :220 | — | — | — | declared_but_not_observed_published |
-| `tech:fundamental-leveled` | :222 | tech:e | game-store:1872 | — | declared_and_published (F-07) |
+| `tech:fundamental-leveled` | :222 | tech:e | game-store:1892 | — | published_without_observed_consumer (F-07) |
 | `tech:prerequisites-met` | :224 | — | — | — | declared_but_not_observed_published |
 | `tech:tree-validated` | :226 | tech:e | research-module:103 | — | published_without_observed_consumer |
 | `tech:research-rejected` | :228 | — | — | — | declared_but_not_observed_published |
-| `tech:queue-advanced` | :233 | tech:e | research-module:233 | — | published_without_observed_consumer |
+| `tech:queue-advanced` | :233 | tech:e | research-module:240 | — | published_without_observed_consumer |
 | `tech:queue-added` | :235 | tech:e | — | — | declared_but_not_observed_published (F-09) |
 | `tech:queue-removed` | :237 | tech:e | — | — | declared_but_not_observed_published (F-09) |
 
@@ -383,10 +381,10 @@ economy, research, ships, fleet, ai])` (:338-345), подписка стора �
   Комментарий манифеста economy (:54-58) честно описывает эту конвенцию. Шаг: None
   (конвенция зафиксирована), либо перенести декларации в engine-контракты.
 - **F-07 · info · издатель вне подсистемы · доказано.** `tech:fundamental-leveled`
-  заявлен в tech-манифесте, но фактический emit — `game-store.ts:1872`
+  заявлен в tech-манифесте, но фактический emit — `game-store.ts:1892`
   (`levelUpFundamental`), т.е. publisher — store, не ResearchModule. Шаг: перенести
   emit в ResearchModule/engine или задокументировать.
-- **F-08 · medium · события «в пустоту» · доказано.** 23 события имеют
+- **F-08 · medium · события «в пустоту» · доказано.** 24 события имеют
   production-издателей и ноль production-потребителей (полный список §4). Их
   слушают только тесты. Это не баг сам по себе (события — API для будущих
   подписчиков, напр. AI этапа 3б/4), но объём «непроведённой» шины стоит знать.

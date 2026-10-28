@@ -1,0 +1,4043 @@
+{
+  "note": "Инвентаризация ФАКТИЧЕСКОЙ реализации модульной шины SpaceGame. Сгенерировано scripts/gen-module-bus-map.ts; не редактировать вручную — перегенерация перезапишет. Инвентаризация НЕ заменяет канонические контракты (docs/architecture/modular-bus.md, src/core/events.ts). Схема полей и статусы: docs/architecture/module-contracts.md.",
+  "tool": {
+    "script": "scripts/gen-module-bus-map.ts",
+    "regenerate": "bun run audit:module-bus",
+    "check": "bun run audit:module-bus --check"
+  },
+  "analyzer": {
+    "formsCovered": [
+      "emit/on/once с первым аргументом-строковым литералом и получателем из busReceivers",
+      "условное выражение (тернарник) с двумя строковыми литералами в первом аргументе — разрешаются оба имени",
+      "import-алиасы синглтона шины: import { gameBus as X } — X добавляется к получателям этого файла",
+      "registerQuery/unregisterQuery/query с именем-литералом и получателем из registryReceivers",
+      "манифесты: id/name/version/description (включая конкатенацию литералов), dependencies, emits, subscribes (event/priority/once), handlesQueries/requiresQueries",
+      "регистрация модулей: new XxxModule(...) + registerAndInit([...]) / registerModule(...) с резолвом локальных переменных",
+      "порядок init/tick воспроизводит ModuleRegistry.recalculateInitOrder (DFS по dependencies в порядке вставки)"
+    ],
+    "busReceivers": [
+      "bus",
+      "gameBus",
+      "loop.bus",
+      "registry.bus",
+      "this.bus",
+      "this.loop.bus",
+      "this.registry.bus",
+      "<import-алиасы gameBus>",
+      "*.getBus()"
+    ],
+    "limitations": [
+      "проводкой считаются только вызовы со СТРОКОВЫМ ЛИТЕРАЛОМ (или тернарником литералов) в первом аргументе; переменные и вычисляемые имена фиксируются в analyzer.unresolvedForms и не создают фактов",
+      "получатель вызова должен распознаваться как шина/реестр (см. busReceivers); иные .emit/.on (стриймы, UI-библиотеки) игнорируются по получателю; нераспознанный получатель с не-литеральным аргументом фиксируется как unresolved (recognized=false) — для прозрачности, статусы событий не меняет",
+      "нераспознанные формы на РАСПОЗНАННОМ получателе (recognized=true) означают, что потенциальный издатель/потребитель события не доказуем: события без наблюдаемых production-фактов помечаются статусом dynamic_or_unresolved",
+      "call-graph не строится: emit внутри GameMediator.commitState/emitStateChanged атрибутируется файлу медиатора, а не вызывающему модулю (см. module-contracts.md F-06)",
+      "query-имена не типизированы (Map<string, QueryHandler>) — связь декларация↔регистрация↔вызов устанавливается по совпадению строк",
+      "test-only потребители (tests/, scripts/) фиксируются отдельно и НЕ маскируют отсутствие production-потребителя",
+      "регистрация модулей распознаётся по формам new XxxModule( + registerAndInit([...]) / registerModule(...); иные (будущие) способы потребуют расширения анализатора",
+      "анализ синтаксический (без type-checker): типы payload записываются как текст декларации"
+    ],
+    "unresolvedForms": [
+      {
+        "file": "src/core/typed-event-bus.ts",
+        "line": 115,
+        "receiver": "this",
+        "recognized": false,
+        "kind": "on",
+        "detail": "механизменный вызов шины с не-литеральным именем: event"
+      },
+      {
+        "file": "src/core/typed-event-bus.ts",
+        "line": 200,
+        "receiver": "this",
+        "recognized": false,
+        "kind": "emit",
+        "detail": "механизменный вызов шины с не-литеральным именем: event"
+      },
+      {
+        "file": "tests/ships/shipyard-integration.test.ts",
+        "line": 190,
+        "receiver": "gameBus",
+        "recognized": true,
+        "kind": "on",
+        "detail": "имя события/запроса не строковый литерал: event"
+      }
+    ]
+  },
+  "wiring": {
+    "busSingleton": [
+      {
+        "file": "src/core/game-mediator.ts",
+        "line": 53,
+        "note": "this.bus = gameBus (единая шина, R-39)"
+      },
+      {
+        "file": "src/core/typed-event-bus.ts",
+        "line": 268,
+        "note": "объявление синглтона gameBus = new TypedEventBus()"
+      }
+    ],
+    "replayEnabled": [
+      {
+        "event": "core:tick",
+        "file": "src/core/game-mediator.ts",
+        "line": 58
+      },
+      {
+        "event": "core:game-created",
+        "file": "src/core/game-mediator.ts",
+        "line": 59
+      },
+      {
+        "event": "core:game-created",
+        "file": "tests/r42-stage01-reaudit.test.ts",
+        "line": 111
+      },
+      {
+        "event": "core:game-created",
+        "file": "tests/r42-stage01-reaudit.test.ts",
+        "line": 128
+      },
+      {
+        "event": "core:tick",
+        "file": "tests/r42-stage01-reaudit.test.ts",
+        "line": 152
+      },
+      {
+        "event": "core:game-created",
+        "file": "tests/r42-stage01-reaudit.test.ts",
+        "line": 172
+      },
+      {
+        "event": "core:game-created",
+        "file": "tests/r42-stage01-reaudit.test.ts",
+        "line": 762
+      },
+      {
+        "event": "core:game-created",
+        "file": "tests/r42-stage01-reaudit.test.ts",
+        "line": 858
+      }
+    ],
+    "registrationOrder": [
+      "galaxy",
+      "economy",
+      "tech",
+      "ships",
+      "fleet",
+      "ai"
+    ],
+    "initOrder": [
+      "galaxy",
+      "economy",
+      "tech",
+      "ships",
+      "fleet",
+      "ai"
+    ],
+    "tickOrderNote": "registry.tickAll() обходит initOrder и вызывает tick() каждого started-модуля — это действующий канал тиков; bus-подписки модулей на 'core:tick' — no-op (см. module-contracts.md F-01)"
+  },
+  "modules": {
+    "galaxy": {
+      "id": "galaxy",
+      "className": "GalaxyModule",
+      "file": "src/galaxy/galaxy-module.ts",
+      "name": "Галактика",
+      "version": "1.0.0",
+      "description": "Генерация галактики, звёздные системы, планеты",
+      "manifest": {
+        "dependencies": [],
+        "emits": [
+          {
+            "name": "galaxy:generated",
+            "line": 25
+          },
+          {
+            "name": "galaxy:system-discovered",
+            "line": 26
+          },
+          {
+            "name": "galaxy:system-surveyed",
+            "line": 27
+          }
+        ],
+        "subscribes": [
+          {
+            "event": "core:tick",
+            "priority": "PRIORITY.SIMULATION",
+            "line": 30
+          },
+          {
+            "event": "core:game-created",
+            "line": 31
+          }
+        ],
+        "handlesQueries": [
+          {
+            "queryName": "galaxy:system-by-id",
+            "line": 34,
+            "description": "Получить звёздную систему по ID",
+            "requestType": "EntityId",
+            "responseType": "StarSystem | undefined"
+          },
+          {
+            "queryName": "galaxy:planet-by-id",
+            "line": 35,
+            "description": "Получить планету по ID",
+            "requestType": "EntityId",
+            "responseType": "Planet | undefined"
+          },
+          {
+            "queryName": "galaxy:colonized-planets",
+            "line": 36,
+            "description": "Список колонизированных планет",
+            "requestType": "void",
+            "responseType": "Planet[]"
+          }
+        ],
+        "requiresQueries": []
+      },
+      "observed": {
+        "emits": [
+          {
+            "file": "src/galaxy/galaxy-module.ts",
+            "line": 121,
+            "event": "galaxy:generated",
+            "publisher": "GalaxyModule.onGameCreated",
+            "receiver": "this.bus"
+          }
+        ],
+        "subscriptions": [
+          {
+            "file": "src/galaxy/galaxy-module.ts",
+            "line": 72,
+            "event": "core:tick",
+            "subscriber": "GalaxyModule.init",
+            "receiver": "bus"
+          },
+          {
+            "file": "src/galaxy/galaxy-module.ts",
+            "line": 73,
+            "event": "core:game-created",
+            "subscriber": "GalaxyModule.init",
+            "receiver": "bus"
+          }
+        ],
+        "queriesRegistered": [
+          {
+            "file": "src/galaxy/galaxy-module.ts",
+            "line": 76,
+            "query": "galaxy:system-by-id",
+            "moduleContext": "GalaxyModule.init"
+          },
+          {
+            "file": "src/galaxy/galaxy-module.ts",
+            "line": 77,
+            "query": "galaxy:planet-by-id",
+            "moduleContext": "GalaxyModule.init"
+          },
+          {
+            "file": "src/galaxy/galaxy-module.ts",
+            "line": 78,
+            "query": "galaxy:colonized-planets",
+            "moduleContext": "GalaxyModule.init"
+          }
+        ],
+        "queriesUnregistered": [
+          {
+            "file": "src/galaxy/galaxy-module.ts",
+            "line": 99,
+            "query": "galaxy:system-by-id"
+          },
+          {
+            "file": "src/galaxy/galaxy-module.ts",
+            "line": 100,
+            "query": "galaxy:planet-by-id"
+          },
+          {
+            "file": "src/galaxy/galaxy-module.ts",
+            "line": 101,
+            "query": "galaxy:colonized-planets"
+          }
+        ],
+        "queriesCalled": []
+      },
+      "registration": [
+        {
+          "file": "src/stores/game-store.ts",
+          "line": 338,
+          "order": 1
+        }
+      ],
+      "tick": {
+        "positionInInitOrder": 1
+      },
+      "status": "active"
+    },
+    "economy": {
+      "id": "economy",
+      "className": "EconomyModule",
+      "file": "src/economy/economy-module.ts",
+      "name": "Экономика",
+      "version": "1.0.0",
+      "description": "Добыча ресурсов, производство, энергетика, склады",
+      "manifest": {
+        "dependencies": [
+          "galaxy"
+        ],
+        "emits": [
+          {
+            "name": "economy:building-constructed",
+            "line": 58
+          },
+          {
+            "name": "economy:building-upgraded",
+            "line": 59
+          },
+          {
+            "name": "economy:building-downgraded",
+            "line": 60
+          },
+          {
+            "name": "economy:building-demolished",
+            "line": 61
+          },
+          {
+            "name": "economy:production-complete",
+            "line": 62
+          },
+          {
+            "name": "economy:planet-colonized",
+            "line": 63
+          },
+          {
+            "name": "economy:energy-recalced",
+            "line": 64
+          },
+          {
+            "name": "economy:resource-depleted",
+            "line": 65
+          },
+          {
+            "name": "economy:warehouse-full",
+            "line": 66
+          },
+          {
+            "name": "economy:warehouse-updated",
+            "line": 67
+          },
+          {
+            "name": "economy:building-specialized",
+            "line": 69
+          },
+          {
+            "name": "economy:specialization-upgraded",
+            "line": 70
+          },
+          {
+            "name": "economy:processor-output-changed",
+            "line": 71
+          },
+          {
+            "name": "core:state-changed",
+            "line": 72
+          }
+        ],
+        "subscribes": [
+          {
+            "event": "core:tick",
+            "priority": "PRIORITY.SIMULATION",
+            "line": 75
+          },
+          {
+            "event": "economy:build",
+            "line": 76
+          },
+          {
+            "event": "economy:upgrade",
+            "line": 77
+          },
+          {
+            "event": "economy:enqueue",
+            "line": 78
+          },
+          {
+            "event": "economy:colonize",
+            "line": 79
+          },
+          {
+            "event": "economy:specialize",
+            "line": 82
+          },
+          {
+            "event": "economy:upgrade-specialization",
+            "line": 83
+          }
+        ],
+        "handlesQueries": [
+          {
+            "queryName": "economy:planet-resources",
+            "line": 86,
+            "description": "Ресурсы планеты",
+            "requestType": "EntityId",
+            "responseType": "Record<string, number>"
+          },
+          {
+            "queryName": "economy:planet-energy",
+            "line": 87,
+            "description": "Энергобаланс планеты",
+            "requestType": "EntityId",
+            "responseType": "{ balance: number }"
+          },
+          {
+            "queryName": "economy:production-queue",
+            "line": 88,
+            "description": "Очередь производства",
+            "requestType": "EntityId",
+            "responseType": "ProductionQueue | null"
+          }
+        ],
+        "requiresQueries": [
+          {
+            "queryName": "galaxy:system-by-id",
+            "line": 91,
+            "description": "Получить звёздную систему",
+            "requestType": "EntityId",
+            "responseType": "StarSystem | undefined"
+          }
+        ]
+      },
+      "observed": {
+        "emits": [
+          {
+            "file": "src/economy/engine.ts",
+            "line": 592,
+            "event": "economy:production-cancelled",
+            "publisher": "processProductionQueue",
+            "receiver": "gameBus"
+          },
+          {
+            "file": "src/economy/engine.ts",
+            "line": 679,
+            "event": "economy:production-complete",
+            "publisher": "processProductionQueue",
+            "receiver": "gameBus"
+          },
+          {
+            "file": "src/economy/engine.ts",
+            "line": 682,
+            "event": "economy:production-cancelled",
+            "publisher": "processProductionQueue",
+            "receiver": "gameBus"
+          },
+          {
+            "file": "src/economy/engine.ts",
+            "line": 1186,
+            "event": "economy:building-constructed",
+            "publisher": "buildOnHex",
+            "receiver": "gameBus"
+          },
+          {
+            "file": "src/economy/engine.ts",
+            "line": 1244,
+            "event": "economy:building-constructed",
+            "publisher": "buildOnAtmosphereSlot",
+            "receiver": "gameBus"
+          },
+          {
+            "file": "src/economy/engine.ts",
+            "line": 1296,
+            "event": "economy:building-constructed",
+            "publisher": "buildOnOrbitSlot",
+            "receiver": "gameBus"
+          },
+          {
+            "file": "src/economy/engine.ts",
+            "line": 1342,
+            "event": "economy:building-upgraded",
+            "publisher": "upgradeBuilding",
+            "receiver": "gameBus"
+          },
+          {
+            "file": "src/economy/engine.ts",
+            "line": 1448,
+            "event": "economy:building-downgraded",
+            "publisher": "downgradeBuilding",
+            "receiver": "gameBus"
+          },
+          {
+            "file": "src/economy/engine.ts",
+            "line": 1495,
+            "event": "economy:building-demolished",
+            "publisher": "demolishBuilding",
+            "receiver": "gameBus"
+          },
+          {
+            "file": "src/economy/engine.ts",
+            "line": 1638,
+            "event": "economy:building-specialized",
+            "publisher": "specializeBuilding",
+            "receiver": "gameBus"
+          },
+          {
+            "file": "src/economy/engine.ts",
+            "line": 1646,
+            "event": "economy:processor-output-changed",
+            "publisher": "specializeBuilding",
+            "receiver": "gameBus"
+          },
+          {
+            "file": "src/economy/engine.ts",
+            "line": 1695,
+            "event": "economy:building-specialized",
+            "publisher": "specializeBuilding",
+            "receiver": "gameBus"
+          },
+          {
+            "file": "src/economy/engine.ts",
+            "line": 1703,
+            "event": "economy:processor-output-changed",
+            "publisher": "specializeBuilding",
+            "receiver": "gameBus"
+          },
+          {
+            "file": "src/economy/engine.ts",
+            "line": 1761,
+            "event": "economy:specialization-upgraded",
+            "publisher": "upgradeSpecialization",
+            "receiver": "gameBus"
+          },
+          {
+            "file": "src/economy/engine.ts",
+            "line": 1767,
+            "event": "economy:processor-output-changed",
+            "publisher": "upgradeSpecialization",
+            "receiver": "gameBus"
+          },
+          {
+            "file": "src/economy/engine.ts",
+            "line": 1803,
+            "event": "economy:production-cancelled",
+            "publisher": "cancelProduction",
+            "receiver": "gameBus"
+          },
+          {
+            "file": "src/economy/engine.ts",
+            "line": 1877,
+            "event": "economy:planet-colonized",
+            "publisher": "colonizePlanet",
+            "receiver": "gameBus"
+          }
+        ],
+        "subscriptions": [
+          {
+            "file": "src/economy/economy-module.ts",
+            "line": 136,
+            "event": "core:tick",
+            "subscriber": "EconomyModule.init",
+            "receiver": "bus"
+          },
+          {
+            "file": "src/economy/economy-module.ts",
+            "line": 137,
+            "event": "economy:build",
+            "subscriber": "EconomyModule.init",
+            "receiver": "bus"
+          },
+          {
+            "file": "src/economy/economy-module.ts",
+            "line": 138,
+            "event": "economy:upgrade",
+            "subscriber": "EconomyModule.init",
+            "receiver": "bus"
+          },
+          {
+            "file": "src/economy/economy-module.ts",
+            "line": 140,
+            "event": "economy:downgrade",
+            "subscriber": "EconomyModule.init",
+            "receiver": "bus"
+          },
+          {
+            "file": "src/economy/economy-module.ts",
+            "line": 141,
+            "event": "economy:demolish",
+            "subscriber": "EconomyModule.init",
+            "receiver": "bus"
+          },
+          {
+            "file": "src/economy/economy-module.ts",
+            "line": 142,
+            "event": "economy:enqueue",
+            "subscriber": "EconomyModule.init",
+            "receiver": "bus"
+          },
+          {
+            "file": "src/economy/economy-module.ts",
+            "line": 143,
+            "event": "economy:colonize",
+            "subscriber": "EconomyModule.init",
+            "receiver": "bus"
+          },
+          {
+            "file": "src/economy/economy-module.ts",
+            "line": 145,
+            "event": "economy:specialize",
+            "subscriber": "EconomyModule.init",
+            "receiver": "bus"
+          },
+          {
+            "file": "src/economy/economy-module.ts",
+            "line": 146,
+            "event": "economy:upgrade-specialization",
+            "subscriber": "EconomyModule.init",
+            "receiver": "bus"
+          }
+        ],
+        "queriesRegistered": [
+          {
+            "file": "src/economy/economy-module.ts",
+            "line": 150,
+            "query": "economy:planet-resources",
+            "moduleContext": "EconomyModule.init"
+          },
+          {
+            "file": "src/economy/economy-module.ts",
+            "line": 151,
+            "query": "economy:planet-energy",
+            "moduleContext": "EconomyModule.init"
+          },
+          {
+            "file": "src/economy/economy-module.ts",
+            "line": 152,
+            "query": "economy:production-queue",
+            "moduleContext": "EconomyModule.init"
+          }
+        ],
+        "queriesUnregistered": [
+          {
+            "file": "src/economy/economy-module.ts",
+            "line": 174,
+            "query": "economy:planet-resources"
+          },
+          {
+            "file": "src/economy/economy-module.ts",
+            "line": 175,
+            "query": "economy:planet-energy"
+          },
+          {
+            "file": "src/economy/economy-module.ts",
+            "line": 176,
+            "query": "economy:production-queue"
+          }
+        ],
+        "queriesCalled": []
+      },
+      "registration": [
+        {
+          "file": "src/stores/game-store.ts",
+          "line": 338,
+          "order": 2
+        }
+      ],
+      "tick": {
+        "positionInInitOrder": 2
+      },
+      "status": "active"
+    },
+    "tech": {
+      "id": "tech",
+      "className": "ResearchModule",
+      "file": "src/research/research-module.ts",
+      "name": "Исследования",
+      "version": "1.0.0",
+      "description": "Накопление RP, обработка очереди исследований, разблокировки",
+      "manifest": {
+        "dependencies": [
+          "economy"
+        ],
+        "emits": [
+          {
+            "name": "tech:research-completed",
+            "line": 53
+          },
+          {
+            "name": "tech:unlocked",
+            "line": 54
+          },
+          {
+            "name": "tech:fundamental-leveled",
+            "line": 55
+          },
+          {
+            "name": "tech:tree-validated",
+            "line": 56
+          },
+          {
+            "name": "tech:queue-advanced",
+            "line": 57
+          },
+          {
+            "name": "tech:queue-added",
+            "line": 58
+          },
+          {
+            "name": "tech:queue-removed",
+            "line": 59
+          },
+          {
+            "name": "core:state-changed",
+            "line": 60
+          }
+        ],
+        "subscribes": [
+          {
+            "event": "core:tick",
+            "priority": "PRIORITY.SIMULATION + 5",
+            "line": 63
+          }
+        ],
+        "handlesQueries": [
+          {
+            "queryName": "research:state",
+            "line": 66,
+            "description": "Текущее ResearchState",
+            "requestType": "void",
+            "responseType": "ResearchState"
+          },
+          {
+            "queryName": "research:tech-status",
+            "line": 67,
+            "description": "Статус технологии по techId",
+            "requestType": "string",
+            "responseType": "{ status: string; currentLevel: number; ceiling: number }"
+          }
+        ],
+        "requiresQueries": []
+      },
+      "observed": {
+        "emits": [
+          {
+            "file": "src/research/research-module.ts",
+            "line": 103,
+            "event": "tech:tree-validated",
+            "publisher": "ResearchModule.init",
+            "receiver": "this.bus"
+          },
+          {
+            "file": "src/research/research-module.ts",
+            "line": 240,
+            "event": "tech:queue-advanced",
+            "publisher": "ResearchModule.processResearchTick",
+            "receiver": "this.bus"
+          },
+          {
+            "file": "src/research/research-module.ts",
+            "line": 255,
+            "event": "tech:research-completed",
+            "publisher": "ResearchModule.processResearchTick",
+            "receiver": "this.bus"
+          },
+          {
+            "file": "src/research/research-module.ts",
+            "line": 262,
+            "event": "tech:unlocked",
+            "publisher": "ResearchModule.processResearchTick",
+            "receiver": "this.bus"
+          }
+        ],
+        "subscriptions": [
+          {
+            "file": "src/research/research-module.ts",
+            "line": 109,
+            "event": "core:tick",
+            "subscriber": "ResearchModule.init",
+            "receiver": "bus"
+          }
+        ],
+        "queriesRegistered": [
+          {
+            "file": "src/research/research-module.ts",
+            "line": 116,
+            "query": "research:state",
+            "moduleContext": "ResearchModule.init"
+          },
+          {
+            "file": "src/research/research-module.ts",
+            "line": 117,
+            "query": "research:tech-status",
+            "moduleContext": "ResearchModule.init"
+          }
+        ],
+        "queriesUnregistered": [
+          {
+            "file": "src/research/research-module.ts",
+            "line": 140,
+            "query": "research:state"
+          },
+          {
+            "file": "src/research/research-module.ts",
+            "line": 141,
+            "query": "research:tech-status"
+          }
+        ],
+        "queriesCalled": []
+      },
+      "registration": [
+        {
+          "file": "src/stores/game-store.ts",
+          "line": 338,
+          "order": 3
+        }
+      ],
+      "tick": {
+        "positionInInitOrder": 3
+      },
+      "status": "active"
+    },
+    "ships": {
+      "id": "ships",
+      "className": "ShipsModule",
+      "file": "src/ships/ships-module.ts",
+      "name": "Корабли",
+      "version": "1.0.0",
+      "description": "Постройка кораблей на верфях (shipyard queue processing)",
+      "manifest": {
+        "dependencies": [
+          "economy"
+        ],
+        "emits": [
+          {
+            "name": "ships:constructed",
+            "line": 48
+          },
+          {
+            "name": "ships:construction-progress",
+            "line": 49
+          },
+          {
+            "name": "ships:construction-started",
+            "line": 50
+          },
+          {
+            "name": "ships:arrived",
+            "line": 51
+          },
+          {
+            "name": "ships:fuel-consumed",
+            "line": 52
+          },
+          {
+            "name": "core:state-changed",
+            "line": 53
+          }
+        ],
+        "subscribes": [
+          {
+            "event": "core:tick",
+            "priority": "PRIORITY.SIMULATION + 10",
+            "line": 56
+          }
+        ],
+        "handlesQueries": [],
+        "requiresQueries": []
+      },
+      "observed": {
+        "emits": [
+          {
+            "file": "src/ships/fleet-engine.ts",
+            "line": 296,
+            "event": "fleet:order-completed",
+            "publisher": "processFleetTick",
+            "receiver": "gameBus"
+          },
+          {
+            "file": "src/ships/fleet-engine.ts",
+            "line": 317,
+            "event": "fleet:movement-started",
+            "publisher": "processFleetTick",
+            "receiver": "gameBus"
+          },
+          {
+            "file": "src/ships/fleet-engine.ts",
+            "line": 346,
+            "event": "fleet:fuel-low",
+            "publisher": "processFleetTick",
+            "receiver": "gameBus"
+          },
+          {
+            "file": "src/ships/fleet-engine.ts",
+            "line": 351,
+            "event": "fleet:stranded",
+            "publisher": "processFleetTick",
+            "receiver": "gameBus"
+          },
+          {
+            "file": "src/ships/fleet-engine.ts",
+            "line": 389,
+            "event": "fleet:arrived",
+            "publisher": "processFleetTick",
+            "receiver": "gameBus"
+          },
+          {
+            "file": "src/ships/fleet-engine.ts",
+            "line": 391,
+            "event": "ships:arrived",
+            "publisher": "processFleetTick",
+            "receiver": "gameBus"
+          },
+          {
+            "file": "src/ships/fleet-engine.ts",
+            "line": 417,
+            "event": "ships:fuel-consumed",
+            "publisher": "consumeFuel",
+            "receiver": "gameBus"
+          },
+          {
+            "file": "src/ships/fleet-engine.ts",
+            "line": 495,
+            "event": "combat:engaged",
+            "publisher": "completeOrder",
+            "receiver": "gameBus"
+          },
+          {
+            "file": "src/ships/fleet-engine.ts",
+            "line": 509,
+            "event": "fleet:order-completed",
+            "publisher": "completeOrder",
+            "receiver": "gameBus"
+          }
+        ],
+        "subscriptions": [
+          {
+            "file": "src/ships/ships-module.ts",
+            "line": 88,
+            "event": "core:tick",
+            "subscriber": "ShipsModule.init",
+            "receiver": "bus"
+          }
+        ],
+        "queriesRegistered": [],
+        "queriesUnregistered": [],
+        "queriesCalled": []
+      },
+      "registration": [
+        {
+          "file": "src/stores/game-store.ts",
+          "line": 338,
+          "order": 4
+        }
+      ],
+      "tick": {
+        "positionInInitOrder": 4
+      },
+      "status": "active"
+    },
+    "fleet": {
+      "id": "fleet",
+      "className": "FleetModule",
+      "file": "src/ships/fleet-module.ts",
+      "name": "Флот",
+      "version": "1.0.0",
+      "description": "Движение флотов по Jump Points, обработка приказов",
+      "manifest": {
+        "dependencies": [
+          "ships",
+          "galaxy"
+        ],
+        "emits": [
+          {
+            "name": "fleet:arrived",
+            "line": 32
+          },
+          {
+            "name": "fleet:stranded",
+            "line": 33
+          },
+          {
+            "name": "fleet:order-completed",
+            "line": 34
+          },
+          {
+            "name": "fleet:movement-started",
+            "line": 35
+          },
+          {
+            "name": "fleet:fuel-low",
+            "line": 36
+          },
+          {
+            "name": "fleet:order-cancelled",
+            "line": 37
+          },
+          {
+            "name": "core:state-changed",
+            "line": 38
+          }
+        ],
+        "subscribes": [
+          {
+            "event": "core:tick",
+            "priority": "PRIORITY.SIMULATION + 20",
+            "line": 41
+          }
+        ],
+        "handlesQueries": [],
+        "requiresQueries": []
+      },
+      "observed": {
+        "emits": [
+          {
+            "file": "src/ships/fleet-engine.ts",
+            "line": 296,
+            "event": "fleet:order-completed",
+            "publisher": "processFleetTick",
+            "receiver": "gameBus"
+          },
+          {
+            "file": "src/ships/fleet-engine.ts",
+            "line": 317,
+            "event": "fleet:movement-started",
+            "publisher": "processFleetTick",
+            "receiver": "gameBus"
+          },
+          {
+            "file": "src/ships/fleet-engine.ts",
+            "line": 346,
+            "event": "fleet:fuel-low",
+            "publisher": "processFleetTick",
+            "receiver": "gameBus"
+          },
+          {
+            "file": "src/ships/fleet-engine.ts",
+            "line": 351,
+            "event": "fleet:stranded",
+            "publisher": "processFleetTick",
+            "receiver": "gameBus"
+          },
+          {
+            "file": "src/ships/fleet-engine.ts",
+            "line": 389,
+            "event": "fleet:arrived",
+            "publisher": "processFleetTick",
+            "receiver": "gameBus"
+          },
+          {
+            "file": "src/ships/fleet-engine.ts",
+            "line": 391,
+            "event": "ships:arrived",
+            "publisher": "processFleetTick",
+            "receiver": "gameBus"
+          },
+          {
+            "file": "src/ships/fleet-engine.ts",
+            "line": 417,
+            "event": "ships:fuel-consumed",
+            "publisher": "consumeFuel",
+            "receiver": "gameBus"
+          },
+          {
+            "file": "src/ships/fleet-engine.ts",
+            "line": 495,
+            "event": "combat:engaged",
+            "publisher": "completeOrder",
+            "receiver": "gameBus"
+          },
+          {
+            "file": "src/ships/fleet-engine.ts",
+            "line": 509,
+            "event": "fleet:order-completed",
+            "publisher": "completeOrder",
+            "receiver": "gameBus"
+          }
+        ],
+        "subscriptions": [
+          {
+            "file": "src/ships/fleet-module.ts",
+            "line": 70,
+            "event": "core:tick",
+            "subscriber": "FleetModule.init",
+            "receiver": "bus"
+          }
+        ],
+        "queriesRegistered": [],
+        "queriesUnregistered": [],
+        "queriesCalled": []
+      },
+      "registration": [
+        {
+          "file": "src/stores/game-store.ts",
+          "line": 338,
+          "order": 5
+        }
+      ],
+      "tick": {
+        "positionInInitOrder": 5
+      },
+      "status": "active"
+    },
+    "ai": {
+      "id": "ai",
+      "className": "AIModule",
+      "file": "src/ai/ai-module.ts",
+      "name": "AI-фракции (этап 3б.1: постоянное состояние)",
+      "version": "0.2.0",
+      "description": "Детерминированный AI: постоянный реестр фракций живёт в GameState (aiFactions, сериализуется в v3 с маркером aiFactionsV); контроллеры — вычисляемый кэш от реестра (syncControllersFromState), world model + perception — defensive copy, инертная очередь намерений. Без игровых действий (3б.3+) и без мутации GameState (мутатора нет).",
+      "manifest": {
+        "dependencies": [
+          "economy"
+        ],
+        "emits": [],
+        "subscribes": [
+          {
+            "event": "core:game-created",
+            "priority": "PRIORITY.NOTIFICATION",
+            "line": 87
+          },
+          {
+            "event": "core:game-loaded",
+            "priority": "PRIORITY.NOTIFICATION",
+            "line": 88
+          }
+        ],
+        "handlesQueries": [
+          {
+            "queryName": "ai:state",
+            "line": 91,
+            "description": "Сводка AI-контроллеров и world model (только чтение; 3а)",
+            "requestType": "void",
+            "responseType": "AIStateQueryResult"
+          }
+        ],
+        "requiresQueries": []
+      },
+      "observed": {
+        "emits": [],
+        "subscriptions": [
+          {
+            "file": "src/ai/ai-module.ts",
+            "line": 139,
+            "event": "core:game-created",
+            "subscriber": "AIModule.init",
+            "receiver": "bus"
+          },
+          {
+            "file": "src/ai/ai-module.ts",
+            "line": 144,
+            "event": "core:game-loaded",
+            "subscriber": "AIModule.init",
+            "receiver": "bus"
+          }
+        ],
+        "queriesRegistered": [
+          {
+            "file": "src/ai/ai-module.ts",
+            "line": 151,
+            "query": "ai:state",
+            "moduleContext": "AIModule.init"
+          }
+        ],
+        "queriesUnregistered": [
+          {
+            "file": "src/ai/ai-module.ts",
+            "line": 167,
+            "query": "ai:state"
+          }
+        ],
+        "queriesCalled": []
+      },
+      "registration": [
+        {
+          "file": "src/stores/game-store.ts",
+          "line": 338,
+          "order": 6
+        }
+      ],
+      "tick": {
+        "positionInInitOrder": 6
+      },
+      "status": "active"
+    },
+    "core": {
+      "id": "core",
+      "className": null,
+      "file": "src/core/module-types.ts",
+      "name": null,
+      "version": null,
+      "description": "идентификатор объявлен в ModuleId (src/core/module-types.ts:16), класс не найден — зарезервирован",
+      "manifest": {
+        "dependencies": [],
+        "emits": [],
+        "subscribes": [],
+        "handlesQueries": [],
+        "requiresQueries": []
+      },
+      "observed": {
+        "emits": [],
+        "subscriptions": [],
+        "queriesRegistered": [],
+        "queriesUnregistered": [],
+        "queriesCalled": []
+      },
+      "registration": [],
+      "tick": {
+        "positionInInitOrder": null
+      },
+      "status": "reserved"
+    },
+    "combat": {
+      "id": "combat",
+      "className": null,
+      "file": "src/core/module-types.ts",
+      "name": null,
+      "version": null,
+      "description": "идентификатор объявлен в ModuleId (src/core/module-types.ts:21), класс не найден — зарезервирован",
+      "manifest": {
+        "dependencies": [],
+        "emits": [],
+        "subscribes": [],
+        "handlesQueries": [],
+        "requiresQueries": []
+      },
+      "observed": {
+        "emits": [],
+        "subscriptions": [],
+        "queriesRegistered": [],
+        "queriesUnregistered": [],
+        "queriesCalled": []
+      },
+      "registration": [],
+      "tick": {
+        "positionInInitOrder": null
+      },
+      "status": "reserved"
+    },
+    "diplomacy": {
+      "id": "diplomacy",
+      "className": null,
+      "file": "src/core/module-types.ts",
+      "name": null,
+      "version": null,
+      "description": "идентификатор объявлен в ModuleId (src/core/module-types.ts:23), класс не найден — зарезервирован",
+      "manifest": {
+        "dependencies": [],
+        "emits": [],
+        "subscribes": [],
+        "handlesQueries": [],
+        "requiresQueries": []
+      },
+      "observed": {
+        "emits": [],
+        "subscriptions": [],
+        "queriesRegistered": [],
+        "queriesUnregistered": [],
+        "queriesCalled": []
+      },
+      "registration": [],
+      "tick": {
+        "positionInInitOrder": null
+      },
+      "status": "reserved"
+    },
+    "trade": {
+      "id": "trade",
+      "className": null,
+      "file": "src/core/module-types.ts",
+      "name": null,
+      "version": null,
+      "description": "идентификатор объявлен в ModuleId (src/core/module-types.ts:24), класс не найден — зарезервирован",
+      "manifest": {
+        "dependencies": [],
+        "emits": [],
+        "subscribes": [],
+        "handlesQueries": [],
+        "requiresQueries": []
+      },
+      "observed": {
+        "emits": [],
+        "subscriptions": [],
+        "queriesRegistered": [],
+        "queriesUnregistered": [],
+        "queriesCalled": []
+      },
+      "registration": [],
+      "tick": {
+        "positionInInitOrder": null
+      },
+      "status": "reserved"
+    }
+  },
+  "events": {
+    "ai:colony-founded": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 265,
+        "payloadType": "{ factionId: EntityId; planetId: EntityId }",
+        "interfaceName": "AIEvents"
+      },
+      "manifestEmittedBy": [],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [],
+      "status": "declared_but_not_observed_published"
+    },
+    "ai:decision": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 264,
+        "payloadType": "{ factionId: EntityId; action: string; targetId?: EntityId }",
+        "interfaceName": "AIEvents"
+      },
+      "manifestEmittedBy": [],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [],
+      "status": "declared_but_not_observed_published"
+    },
+    "ai:fleet-sent": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 266,
+        "payloadType": "{ factionId: EntityId; fleetId: EntityId; purpose: string }",
+        "interfaceName": "AIEvents"
+      },
+      "manifestEmittedBy": [],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [],
+      "status": "declared_but_not_observed_published"
+    },
+    "combat:engaged": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 187,
+        "payloadType": "{ systemId: EntityId; attackerFactionId: EntityId; defenderFactionId: EntityId }",
+        "interfaceName": "CombatEvents"
+      },
+      "manifestEmittedBy": [],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [
+        {
+          "file": "src/ships/fleet-engine.ts",
+          "line": 495,
+          "event": "combat:engaged",
+          "publisher": "completeOrder",
+          "receiver": "gameBus"
+        }
+      ],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [],
+      "status": "observed_but_not_declared"
+    },
+    "combat:planet-bombarded": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 190,
+        "payloadType": "{ planetId: EntityId; damage: number; buildingsDestroyed: number }",
+        "interfaceName": "CombatEvents"
+      },
+      "manifestEmittedBy": [],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [],
+      "status": "declared_but_not_observed_published"
+    },
+    "combat:resolved": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 189,
+        "payloadType": "{ systemId: EntityId; winnerFactionId: EntityId; losses: { factionId: EntityId; shipCount: number }[] }",
+        "interfaceName": "CombatEvents"
+      },
+      "manifestEmittedBy": [],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [],
+      "status": "declared_but_not_observed_published"
+    },
+    "combat:round": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 188,
+        "payloadType": "{ systemId: EntityId; round: number; attackerDmg: number; defenderDmg: number }",
+        "interfaceName": "CombatEvents"
+      },
+      "manifestEmittedBy": [],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [],
+      "status": "declared_but_not_observed_published"
+    },
+    "core:game-created": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 36,
+        "payloadType": "{ galaxyId: EntityId; seed: number }",
+        "interfaceName": "CoreEvents"
+      },
+      "manifestEmittedBy": [],
+      "manifestSubscribedBy": [
+        {
+          "module": "ai",
+          "line": 87,
+          "priority": "PRIORITY.NOTIFICATION"
+        },
+        {
+          "module": "galaxy",
+          "line": 31
+        }
+      ],
+      "productionEmitters": [
+        {
+          "file": "src/core/game-mediator.ts",
+          "line": 153,
+          "event": "core:game-created",
+          "publisher": "GameMediator.newGame",
+          "receiver": "this.bus"
+        }
+      ],
+      "productionConsumers": [
+        {
+          "file": "src/ai/ai-module.ts",
+          "line": 139,
+          "event": "core:game-created",
+          "subscriber": "AIModule.init",
+          "receiver": "bus"
+        },
+        {
+          "file": "src/galaxy/galaxy-module.ts",
+          "line": 73,
+          "event": "core:game-created",
+          "subscriber": "GalaxyModule.init",
+          "receiver": "bus"
+        }
+      ],
+      "testEmitters": [
+        {
+          "file": "tests/r42-stage01-reaudit.test.ts",
+          "lines": [
+            112,
+            122,
+            129,
+            135,
+            144,
+            146,
+            173,
+            763,
+            772,
+            859,
+            872
+          ]
+        }
+      ],
+      "testConsumers": [
+        {
+          "file": "tests/r42-stage01-reaudit.test.ts",
+          "lines": [
+            115,
+            132,
+            142,
+            181,
+            186,
+            766,
+            863
+          ]
+        }
+      ],
+      "status": "declared_and_published"
+    },
+    "core:game-loaded": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 37,
+        "payloadType": "{ saveId: string }",
+        "interfaceName": "CoreEvents"
+      },
+      "manifestEmittedBy": [],
+      "manifestSubscribedBy": [
+        {
+          "module": "ai",
+          "line": 88,
+          "priority": "PRIORITY.NOTIFICATION"
+        }
+      ],
+      "productionEmitters": [
+        {
+          "file": "src/core/game-mediator.ts",
+          "line": 196,
+          "event": "core:game-loaded",
+          "publisher": "GameMediator.setLoadedState",
+          "receiver": "this.bus"
+        }
+      ],
+      "productionConsumers": [
+        {
+          "file": "src/ai/ai-module.ts",
+          "line": 144,
+          "event": "core:game-loaded",
+          "subscriber": "AIModule.init",
+          "receiver": "bus"
+        }
+      ],
+      "testEmitters": [
+        {
+          "file": "tests/ai/ai-module.test.ts",
+          "lines": [
+            203
+          ]
+        }
+      ],
+      "testConsumers": [],
+      "status": "declared_and_published"
+    },
+    "core:paused": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 33,
+        "payloadType": "void",
+        "interfaceName": "CoreEvents"
+      },
+      "manifestEmittedBy": [],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [
+        {
+          "file": "src/core/game-loop.ts",
+          "line": 119,
+          "event": "core:paused",
+          "publisher": "GameLoop.pause",
+          "receiver": "this.bus"
+        }
+      ],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [
+        {
+          "file": "tests/r42-stage01-reaudit.test.ts",
+          "lines": [
+            264,
+            277,
+            294,
+            315,
+            359,
+            381,
+            392,
+            452,
+            717
+          ]
+        }
+      ],
+      "status": "observed_but_not_declared"
+    },
+    "core:resumed": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 34,
+        "payloadType": "void",
+        "interfaceName": "CoreEvents"
+      },
+      "manifestEmittedBy": [],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [
+        {
+          "file": "src/core/game-loop.ts",
+          "line": 112,
+          "event": "core:resumed",
+          "publisher": "GameLoop.start",
+          "receiver": "this.bus"
+        }
+      ],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [
+        {
+          "file": "tests/r42-stage01-reaudit.test.ts",
+          "lines": [
+            425
+          ]
+        }
+      ],
+      "status": "observed_but_not_declared"
+    },
+    "core:speed-changed": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 35,
+        "payloadType": "GameSpeed",
+        "interfaceName": "CoreEvents"
+      },
+      "manifestEmittedBy": [],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [
+        {
+          "file": "src/core/game-loop.ts",
+          "line": 97,
+          "event": "core:speed-changed",
+          "publisher": "GameLoop.setSpeed",
+          "receiver": "this.bus"
+        }
+      ],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [
+        {
+          "file": "tests/modular-integration.test.ts",
+          "lines": [
+            271
+          ]
+        },
+        {
+          "file": "tests/r42-stage01-reaudit.test.ts",
+          "lines": [
+            360,
+            393
+          ]
+        }
+      ],
+      "status": "observed_but_not_declared"
+    },
+    "core:started": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 32,
+        "payloadType": "void",
+        "interfaceName": "CoreEvents"
+      },
+      "manifestEmittedBy": [],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [
+        {
+          "file": "src/core/game-loop.ts",
+          "line": 112,
+          "event": "core:started",
+          "publisher": "GameLoop.start",
+          "receiver": "this.bus"
+        }
+      ],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [
+        {
+          "file": "tests/r42-stage01-reaudit.test.ts",
+          "lines": [
+            265,
+            319,
+            424
+          ]
+        }
+      ],
+      "status": "observed_but_not_declared"
+    },
+    "core:state-changed": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 44,
+        "payloadType": "GameState",
+        "interfaceName": "CoreEvents"
+      },
+      "manifestEmittedBy": [
+        {
+          "module": "economy",
+          "line": 72
+        },
+        {
+          "module": "fleet",
+          "line": 38
+        },
+        {
+          "module": "ships",
+          "line": 53
+        },
+        {
+          "module": "tech",
+          "line": 60
+        }
+      ],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [
+        {
+          "file": "src/core/game-mediator.ts",
+          "line": 208,
+          "event": "core:state-changed",
+          "publisher": "GameMediator.emitStateChanged",
+          "receiver": "this.bus"
+        },
+        {
+          "file": "src/core/game-mediator.ts",
+          "line": 227,
+          "event": "core:state-changed",
+          "publisher": "GameMediator.commitState",
+          "receiver": "this.bus"
+        }
+      ],
+      "productionConsumers": [
+        {
+          "file": "src/stores/game-store.ts",
+          "line": 350,
+          "event": "core:state-changed",
+          "subscriber": "getMediatorWithModules",
+          "receiver": "mediator.getBus()"
+        }
+      ],
+      "testEmitters": [],
+      "testConsumers": [
+        {
+          "file": "tests/ai/ai-integration.test.ts",
+          "lines": [
+            152
+          ]
+        },
+        {
+          "file": "tests/immutability.test.ts",
+          "lines": [
+            258
+          ]
+        },
+        {
+          "file": "tests/modular-integration.test.ts",
+          "lines": [
+            96,
+            117,
+            170,
+            232
+          ]
+        },
+        {
+          "file": "tests/r39-store-mediator-sync.test.ts",
+          "lines": [
+            174,
+            244,
+            305,
+            372,
+            403,
+            435
+          ]
+        }
+      ],
+      "status": "declared_and_published"
+    },
+    "core:tick": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 30,
+        "payloadType": "GameTime",
+        "interfaceName": "CoreEvents"
+      },
+      "manifestEmittedBy": [],
+      "manifestSubscribedBy": [
+        {
+          "module": "economy",
+          "line": 75,
+          "priority": "PRIORITY.SIMULATION"
+        },
+        {
+          "module": "fleet",
+          "line": 41,
+          "priority": "PRIORITY.SIMULATION + 20"
+        },
+        {
+          "module": "galaxy",
+          "line": 30,
+          "priority": "PRIORITY.SIMULATION"
+        },
+        {
+          "module": "ships",
+          "line": 56,
+          "priority": "PRIORITY.SIMULATION + 10"
+        },
+        {
+          "module": "tech",
+          "line": 63,
+          "priority": "PRIORITY.SIMULATION + 5"
+        }
+      ],
+      "productionEmitters": [
+        {
+          "file": "src/core/game-loop.ts",
+          "line": 196,
+          "event": "core:tick",
+          "publisher": "GameLoop.processTick",
+          "receiver": "this.bus"
+        }
+      ],
+      "productionConsumers": [
+        {
+          "file": "src/core/game-mediator.ts",
+          "line": 78,
+          "event": "core:tick",
+          "subscriber": "GameMediator.constructor",
+          "receiver": "this.bus"
+        },
+        {
+          "file": "src/economy/economy-module.ts",
+          "line": 136,
+          "event": "core:tick",
+          "subscriber": "EconomyModule.init",
+          "receiver": "bus"
+        },
+        {
+          "file": "src/galaxy/galaxy-module.ts",
+          "line": 72,
+          "event": "core:tick",
+          "subscriber": "GalaxyModule.init",
+          "receiver": "bus"
+        },
+        {
+          "file": "src/research/research-module.ts",
+          "line": 109,
+          "event": "core:tick",
+          "subscriber": "ResearchModule.init",
+          "receiver": "bus"
+        },
+        {
+          "file": "src/ships/fleet-module.ts",
+          "line": 70,
+          "event": "core:tick",
+          "subscriber": "FleetModule.init",
+          "receiver": "bus"
+        },
+        {
+          "file": "src/ships/ships-module.ts",
+          "line": 88,
+          "event": "core:tick",
+          "subscriber": "ShipsModule.init",
+          "receiver": "bus"
+        }
+      ],
+      "testEmitters": [
+        {
+          "file": "tests/r42-stage01-reaudit.test.ts",
+          "lines": [
+            153,
+            166,
+            174,
+            208,
+            221,
+            224,
+            239,
+            242,
+            245,
+            258,
+            309,
+            785,
+            788,
+            807,
+            819,
+            845,
+            852,
+            881,
+            883,
+            894,
+            898
+          ]
+        }
+      ],
+      "testConsumers": [
+        {
+          "file": "tests/game-loop.test.ts",
+          "lines": [
+            73
+          ]
+        },
+        {
+          "file": "tests/r39-store-mediator-sync.test.ts",
+          "lines": [
+            451
+          ]
+        },
+        {
+          "file": "tests/r42-stage01-reaudit.test.ts",
+          "lines": [
+            158,
+            165,
+            177,
+            204,
+            205,
+            206,
+            207,
+            215,
+            219,
+            233,
+            236,
+            252,
+            307,
+            308,
+            344,
+            782,
+            801,
+            814,
+            838,
+            842,
+            879,
+            890
+          ]
+        }
+      ],
+      "status": "declared_and_published"
+    },
+    "core:year": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 31,
+        "payloadType": "GameTime",
+        "interfaceName": "CoreEvents"
+      },
+      "manifestEmittedBy": [],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [
+        {
+          "file": "src/core/game-loop.ts",
+          "line": 203,
+          "event": "core:year",
+          "publisher": "GameLoop.processTick",
+          "receiver": "this.bus"
+        }
+      ],
+      "productionConsumers": [],
+      "testEmitters": [
+        {
+          "file": "tests/r42-stage01-reaudit.test.ts",
+          "lines": [
+            254
+          ]
+        }
+      ],
+      "testConsumers": [
+        {
+          "file": "tests/r42-stage01-reaudit.test.ts",
+          "lines": [
+            257,
+            482
+          ]
+        }
+      ],
+      "status": "observed_but_not_declared"
+    },
+    "diplomacy:accepted": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 244,
+        "payloadType": "{ fromFactionId: EntityId; toFactionId: EntityId; type: string }",
+        "interfaceName": "DiplomacyEvents"
+      },
+      "manifestEmittedBy": [],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [],
+      "status": "declared_but_not_observed_published"
+    },
+    "diplomacy:peace-signed": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 248,
+        "payloadType": "{ factionA: EntityId; factionB: EntityId }",
+        "interfaceName": "DiplomacyEvents"
+      },
+      "manifestEmittedBy": [],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [],
+      "status": "declared_but_not_observed_published"
+    },
+    "diplomacy:proposal": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 243,
+        "payloadType": "{ fromFactionId: EntityId; toFactionId: EntityId; type: string }",
+        "interfaceName": "DiplomacyEvents"
+      },
+      "manifestEmittedBy": [],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [],
+      "status": "declared_but_not_observed_published"
+    },
+    "diplomacy:rejected": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 245,
+        "payloadType": "{ fromFactionId: EntityId; toFactionId: EntityId; type: string }",
+        "interfaceName": "DiplomacyEvents"
+      },
+      "manifestEmittedBy": [],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [],
+      "status": "declared_but_not_observed_published"
+    },
+    "diplomacy:relations-changed": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 246,
+        "payloadType": "{ factionA: EntityId; factionB: EntityId; delta: number; newScore: number }",
+        "interfaceName": "DiplomacyEvents"
+      },
+      "manifestEmittedBy": [],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [],
+      "status": "declared_but_not_observed_published"
+    },
+    "diplomacy:war-declared": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 247,
+        "payloadType": "{ attackerFactionId: EntityId; defenderFactionId: EntityId }",
+        "interfaceName": "DiplomacyEvents"
+      },
+      "manifestEmittedBy": [],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [],
+      "status": "declared_but_not_observed_published"
+    },
+    "economy:active-recipes-changed": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 135,
+        "payloadType": "{ planetId: EntityId; hexIndex: number; activeRecipes: string[]; }",
+        "interfaceName": "EconomyEvents"
+      },
+      "manifestEmittedBy": [],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [],
+      "status": "declared_but_not_observed_published"
+    },
+    "economy:build": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 71,
+        "payloadType": "{ planetId: EntityId; buildingId: string; hexIndex?: number; slotIndex?: number; layer?: BuildingLayer }",
+        "interfaceName": "EconomyEvents"
+      },
+      "manifestEmittedBy": [],
+      "manifestSubscribedBy": [
+        {
+          "module": "economy",
+          "line": 76
+        }
+      ],
+      "productionEmitters": [
+        {
+          "file": "src/stores/game-store.ts",
+          "line": 830,
+          "event": "economy:build",
+          "publisher": "buildOnHex",
+          "receiver": "mediator.getBus()"
+        },
+        {
+          "file": "src/stores/game-store.ts",
+          "line": 946,
+          "event": "economy:build",
+          "publisher": "buildOnAtmosphereSlot",
+          "receiver": "mediator.getBus()"
+        },
+        {
+          "file": "src/stores/game-store.ts",
+          "line": 970,
+          "event": "economy:build",
+          "publisher": "buildOnOrbitSlot",
+          "receiver": "mediator.getBus()"
+        }
+      ],
+      "productionConsumers": [
+        {
+          "file": "src/economy/economy-module.ts",
+          "line": 137,
+          "event": "economy:build",
+          "subscriber": "EconomyModule.init",
+          "receiver": "bus"
+        }
+      ],
+      "testEmitters": [
+        {
+          "file": "tests/immutability.test.ts",
+          "lines": [
+            108
+          ]
+        },
+        {
+          "file": "tests/modular-integration.test.ts",
+          "lines": [
+            139,
+            172
+          ]
+        },
+        {
+          "file": "tests/save-roundtrip-http.test.ts",
+          "lines": [
+            103,
+            109
+          ]
+        }
+      ],
+      "testConsumers": [
+        {
+          "file": "tests/r39-store-mediator-sync.test.ts",
+          "lines": [
+            331
+          ]
+        }
+      ],
+      "status": "declared_and_published"
+    },
+    "economy:building-constructed": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 72,
+        "payloadType": "{ planetId: EntityId; hexIndex: number; buildingId: string }",
+        "interfaceName": "EconomyEvents"
+      },
+      "manifestEmittedBy": [
+        {
+          "module": "economy",
+          "line": 58
+        }
+      ],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [
+        {
+          "file": "src/economy/engine.ts",
+          "line": 1186,
+          "event": "economy:building-constructed",
+          "publisher": "buildOnHex",
+          "receiver": "gameBus"
+        },
+        {
+          "file": "src/economy/engine.ts",
+          "line": 1244,
+          "event": "economy:building-constructed",
+          "publisher": "buildOnAtmosphereSlot",
+          "receiver": "gameBus"
+        },
+        {
+          "file": "src/economy/engine.ts",
+          "line": 1296,
+          "event": "economy:building-constructed",
+          "publisher": "buildOnOrbitSlot",
+          "receiver": "gameBus"
+        }
+      ],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [
+        {
+          "file": "tests/modular-integration.test.ts",
+          "lines": [
+            167
+          ]
+        },
+        {
+          "file": "tests/r39-store-mediator-sync.test.ts",
+          "lines": [
+            171
+          ]
+        }
+      ],
+      "status": "published_without_observed_consumer"
+    },
+    "economy:building-demolished": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 90,
+        "payloadType": "{ planetId: EntityId; hexIndex: number; buildingId: string }",
+        "interfaceName": "EconomyEvents"
+      },
+      "manifestEmittedBy": [
+        {
+          "module": "economy",
+          "line": 61
+        }
+      ],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [
+        {
+          "file": "src/economy/engine.ts",
+          "line": 1495,
+          "event": "economy:building-demolished",
+          "publisher": "demolishBuilding",
+          "receiver": "gameBus"
+        }
+      ],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [
+        {
+          "file": "tests/economy/downgrade-demolish.test.ts",
+          "lines": [
+            166
+          ]
+        },
+        {
+          "file": "tests/r39-store-mediator-sync.test.ts",
+          "lines": [
+            202
+          ]
+        }
+      ],
+      "status": "published_without_observed_consumer"
+    },
+    "economy:building-downgraded": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 83,
+        "payloadType": "{ planetId: EntityId; hexIndex: number; level: number }",
+        "interfaceName": "EconomyEvents"
+      },
+      "manifestEmittedBy": [
+        {
+          "module": "economy",
+          "line": 60
+        }
+      ],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [
+        {
+          "file": "src/economy/engine.ts",
+          "line": 1448,
+          "event": "economy:building-downgraded",
+          "publisher": "downgradeBuilding",
+          "receiver": "gameBus"
+        }
+      ],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [
+        {
+          "file": "tests/economy/downgrade-demolish.test.ts",
+          "lines": [
+            97,
+            123,
+            136
+          ]
+        },
+        {
+          "file": "tests/r39-store-mediator-sync.test.ts",
+          "lines": [
+            201
+          ]
+        }
+      ],
+      "status": "published_without_observed_consumer"
+    },
+    "economy:building-specialized": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 111,
+        "payloadType": "{ planetId: EntityId; hexIndex: number; specialization: ProcessorRecipeCategory | 'universal'; specializationLevel: number; }",
+        "interfaceName": "EconomyEvents"
+      },
+      "manifestEmittedBy": [
+        {
+          "module": "economy",
+          "line": 69
+        }
+      ],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [
+        {
+          "file": "src/economy/engine.ts",
+          "line": 1638,
+          "event": "economy:building-specialized",
+          "publisher": "specializeBuilding",
+          "receiver": "gameBus"
+        },
+        {
+          "file": "src/economy/engine.ts",
+          "line": 1695,
+          "event": "economy:building-specialized",
+          "publisher": "specializeBuilding",
+          "receiver": "gameBus"
+        }
+      ],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [
+        {
+          "file": "tests/economy/processors.test.ts",
+          "lines": [
+            198
+          ]
+        }
+      ],
+      "status": "published_without_observed_consumer"
+    },
+    "economy:building-upgraded": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 74,
+        "payloadType": "{ planetId: EntityId; hexIndex: number; level: number }",
+        "interfaceName": "EconomyEvents"
+      },
+      "manifestEmittedBy": [
+        {
+          "module": "economy",
+          "line": 59
+        }
+      ],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [
+        {
+          "file": "src/economy/engine.ts",
+          "line": 1342,
+          "event": "economy:building-upgraded",
+          "publisher": "upgradeBuilding",
+          "receiver": "gameBus"
+        }
+      ],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [
+        {
+          "file": "tests/r39-store-mediator-sync.test.ts",
+          "lines": [
+            200
+          ]
+        }
+      ],
+      "status": "published_without_observed_consumer"
+    },
+    "economy:colonize": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 94,
+        "payloadType": "{ planetId: EntityId }",
+        "interfaceName": "EconomyEvents"
+      },
+      "manifestEmittedBy": [],
+      "manifestSubscribedBy": [
+        {
+          "module": "economy",
+          "line": 79
+        }
+      ],
+      "productionEmitters": [
+        {
+          "file": "src/stores/game-store.ts",
+          "line": 1079,
+          "event": "economy:colonize",
+          "publisher": "colonizePlanet",
+          "receiver": "mediator.getBus()"
+        }
+      ],
+      "productionConsumers": [
+        {
+          "file": "src/economy/economy-module.ts",
+          "line": 143,
+          "event": "economy:colonize",
+          "subscriber": "EconomyModule.init",
+          "receiver": "bus"
+        }
+      ],
+      "testEmitters": [
+        {
+          "file": "tests/modular-integration.test.ts",
+          "lines": [
+            257
+          ]
+        },
+        {
+          "file": "tests/save-roundtrip-http.test.ts",
+          "lines": [
+            92
+          ]
+        }
+      ],
+      "testConsumers": [],
+      "status": "declared_and_published"
+    },
+    "economy:demolish": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 88,
+        "payloadType": "{ planetId: EntityId; hexIndex?: number; slotIndex?: number; layer?: BuildingLayer }",
+        "interfaceName": "EconomyEvents"
+      },
+      "manifestEmittedBy": [],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [
+        {
+          "file": "src/stores/game-store.ts",
+          "line": 888,
+          "event": "economy:demolish",
+          "publisher": "demolishBuildingOnHex",
+          "receiver": "mediator.getBus()"
+        },
+        {
+          "file": "src/stores/game-store.ts",
+          "line": 927,
+          "event": "economy:demolish",
+          "publisher": "demolishBuildingOnSlot",
+          "receiver": "mediator.getBus()"
+        }
+      ],
+      "productionConsumers": [
+        {
+          "file": "src/economy/economy-module.ts",
+          "line": 141,
+          "event": "economy:demolish",
+          "subscriber": "EconomyModule.init",
+          "receiver": "bus"
+        }
+      ],
+      "testEmitters": [],
+      "testConsumers": [],
+      "status": "manifest_vs_runtime_mismatch"
+    },
+    "economy:downgrade": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 81,
+        "payloadType": "{ planetId: EntityId; hexIndex?: number; slotIndex?: number; layer?: BuildingLayer }",
+        "interfaceName": "EconomyEvents"
+      },
+      "manifestEmittedBy": [],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [
+        {
+          "file": "src/stores/game-store.ts",
+          "line": 867,
+          "event": "economy:downgrade",
+          "publisher": "downgradeBuildingOnHex",
+          "receiver": "mediator.getBus()"
+        },
+        {
+          "file": "src/stores/game-store.ts",
+          "line": 906,
+          "event": "economy:downgrade",
+          "publisher": "downgradeBuildingOnSlot",
+          "receiver": "mediator.getBus()"
+        }
+      ],
+      "productionConsumers": [
+        {
+          "file": "src/economy/economy-module.ts",
+          "line": 140,
+          "event": "economy:downgrade",
+          "subscriber": "EconomyModule.init",
+          "receiver": "bus"
+        }
+      ],
+      "testEmitters": [],
+      "testConsumers": [],
+      "status": "manifest_vs_runtime_mismatch"
+    },
+    "economy:energy-recalced": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 96,
+        "payloadType": "{ planetId: EntityId; balance: number }",
+        "interfaceName": "EconomyEvents"
+      },
+      "manifestEmittedBy": [
+        {
+          "module": "economy",
+          "line": 64
+        }
+      ],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [],
+      "status": "declared_but_not_observed_published"
+    },
+    "economy:enqueue": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 91,
+        "payloadType": "{ planetId: EntityId; recipeId: string; repeat: boolean }",
+        "interfaceName": "EconomyEvents"
+      },
+      "manifestEmittedBy": [],
+      "manifestSubscribedBy": [
+        {
+          "module": "economy",
+          "line": 78
+        }
+      ],
+      "productionEmitters": [
+        {
+          "file": "src/stores/game-store.ts",
+          "line": 991,
+          "event": "economy:enqueue",
+          "publisher": "enqueueProduction",
+          "receiver": "mediator.getBus()"
+        }
+      ],
+      "productionConsumers": [
+        {
+          "file": "src/economy/economy-module.ts",
+          "line": 142,
+          "event": "economy:enqueue",
+          "subscriber": "EconomyModule.init",
+          "receiver": "bus"
+        }
+      ],
+      "testEmitters": [
+        {
+          "file": "tests/modular-integration.test.ts",
+          "lines": [
+            235
+          ]
+        },
+        {
+          "file": "tests/save-roundtrip-http.test.ts",
+          "lines": [
+            114
+          ]
+        }
+      ],
+      "testConsumers": [],
+      "status": "declared_and_published"
+    },
+    "economy:planet-colonized": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 95,
+        "payloadType": "{ planetId: EntityId; hexIndex: number }",
+        "interfaceName": "EconomyEvents"
+      },
+      "manifestEmittedBy": [
+        {
+          "module": "economy",
+          "line": 63
+        }
+      ],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [
+        {
+          "file": "src/economy/engine.ts",
+          "line": 1877,
+          "event": "economy:planet-colonized",
+          "publisher": "colonizePlanet",
+          "receiver": "gameBus"
+        }
+      ],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [
+        {
+          "file": "tests/modular-integration.test.ts",
+          "lines": [
+            252
+          ]
+        }
+      ],
+      "status": "published_without_observed_consumer"
+    },
+    "economy:processor-output-changed": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 128,
+        "payloadType": "{ planetId: EntityId; hexIndex: number; yieldMult: number; purity: number; }",
+        "interfaceName": "EconomyEvents"
+      },
+      "manifestEmittedBy": [
+        {
+          "module": "economy",
+          "line": 71
+        }
+      ],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [
+        {
+          "file": "src/economy/engine.ts",
+          "line": 1646,
+          "event": "economy:processor-output-changed",
+          "publisher": "specializeBuilding",
+          "receiver": "gameBus"
+        },
+        {
+          "file": "src/economy/engine.ts",
+          "line": 1703,
+          "event": "economy:processor-output-changed",
+          "publisher": "specializeBuilding",
+          "receiver": "gameBus"
+        },
+        {
+          "file": "src/economy/engine.ts",
+          "line": 1767,
+          "event": "economy:processor-output-changed",
+          "publisher": "upgradeSpecialization",
+          "receiver": "gameBus"
+        }
+      ],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [],
+      "status": "published_without_observed_consumer"
+    },
+    "economy:production-cancelled": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 93,
+        "payloadType": "{ planetId: EntityId; recipeId: string; queueItemId: string; reason: 'recipe_not_found' | 'insufficient_inputs' | 'manual' }",
+        "interfaceName": "EconomyEvents"
+      },
+      "manifestEmittedBy": [],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [
+        {
+          "file": "src/economy/engine.ts",
+          "line": 592,
+          "event": "economy:production-cancelled",
+          "publisher": "processProductionQueue",
+          "receiver": "gameBus"
+        },
+        {
+          "file": "src/economy/engine.ts",
+          "line": 682,
+          "event": "economy:production-cancelled",
+          "publisher": "processProductionQueue",
+          "receiver": "gameBus"
+        },
+        {
+          "file": "src/economy/engine.ts",
+          "line": 1803,
+          "event": "economy:production-cancelled",
+          "publisher": "cancelProduction",
+          "receiver": "gameBus"
+        }
+      ],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [],
+      "status": "observed_but_not_declared"
+    },
+    "economy:production-complete": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 92,
+        "payloadType": "{ planetId: EntityId; recipeId: string }",
+        "interfaceName": "EconomyEvents"
+      },
+      "manifestEmittedBy": [
+        {
+          "module": "economy",
+          "line": 62
+        }
+      ],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [
+        {
+          "file": "src/economy/engine.ts",
+          "line": 679,
+          "event": "economy:production-complete",
+          "publisher": "processProductionQueue",
+          "receiver": "gameBus"
+        }
+      ],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [],
+      "status": "published_without_observed_consumer"
+    },
+    "economy:resource-depleted": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 97,
+        "payloadType": "{ planetId: EntityId; elementId: string; hexIndex: number }",
+        "interfaceName": "EconomyEvents"
+      },
+      "manifestEmittedBy": [
+        {
+          "module": "economy",
+          "line": 65
+        }
+      ],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [],
+      "status": "declared_but_not_observed_published"
+    },
+    "economy:specialization-upgraded": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 118,
+        "payloadType": "{ planetId: EntityId; hexIndex: number; specializationLevel: number; }",
+        "interfaceName": "EconomyEvents"
+      },
+      "manifestEmittedBy": [
+        {
+          "module": "economy",
+          "line": 70
+        }
+      ],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [
+        {
+          "file": "src/economy/engine.ts",
+          "line": 1761,
+          "event": "economy:specialization-upgraded",
+          "publisher": "upgradeSpecialization",
+          "receiver": "gameBus"
+        }
+      ],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [
+        {
+          "file": "tests/economy/processors.test.ts",
+          "lines": [
+            473
+          ]
+        }
+      ],
+      "status": "published_without_observed_consumer"
+    },
+    "economy:specialize": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 102,
+        "payloadType": "{ planetId: EntityId; hexIndex: number; category: ProcessorRecipeCategory | 'universal'; }",
+        "interfaceName": "EconomyEvents"
+      },
+      "manifestEmittedBy": [],
+      "manifestSubscribedBy": [
+        {
+          "module": "economy",
+          "line": 82
+        }
+      ],
+      "productionEmitters": [
+        {
+          "file": "src/stores/game-store.ts",
+          "line": 1036,
+          "event": "economy:specialize",
+          "publisher": "specializeBuildingOnHex",
+          "receiver": "mediator.getBus()"
+        }
+      ],
+      "productionConsumers": [
+        {
+          "file": "src/economy/economy-module.ts",
+          "line": 145,
+          "event": "economy:specialize",
+          "subscriber": "EconomyModule.init",
+          "receiver": "bus"
+        }
+      ],
+      "testEmitters": [],
+      "testConsumers": [],
+      "status": "declared_and_published"
+    },
+    "economy:upgrade": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 73,
+        "payloadType": "{ planetId: EntityId; hexIndex: number }",
+        "interfaceName": "EconomyEvents"
+      },
+      "manifestEmittedBy": [],
+      "manifestSubscribedBy": [
+        {
+          "module": "economy",
+          "line": 77
+        }
+      ],
+      "productionEmitters": [
+        {
+          "file": "src/stores/game-store.ts",
+          "line": 847,
+          "event": "economy:upgrade",
+          "publisher": "upgradeBuildingOnHex",
+          "receiver": "mediator.getBus()"
+        }
+      ],
+      "productionConsumers": [
+        {
+          "file": "src/economy/economy-module.ts",
+          "line": 138,
+          "event": "economy:upgrade",
+          "subscriber": "EconomyModule.init",
+          "receiver": "bus"
+        }
+      ],
+      "testEmitters": [
+        {
+          "file": "tests/modular-integration.test.ts",
+          "lines": [
+            200
+          ]
+        }
+      ],
+      "testConsumers": [],
+      "status": "declared_and_published"
+    },
+    "economy:upgrade-specialization": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 108,
+        "payloadType": "{ planetId: EntityId; hexIndex: number }",
+        "interfaceName": "EconomyEvents"
+      },
+      "manifestEmittedBy": [],
+      "manifestSubscribedBy": [
+        {
+          "module": "economy",
+          "line": 83
+        }
+      ],
+      "productionEmitters": [
+        {
+          "file": "src/stores/game-store.ts",
+          "line": 1061,
+          "event": "economy:upgrade-specialization",
+          "publisher": "upgradeSpecializationOnHex",
+          "receiver": "mediator.getBus()"
+        }
+      ],
+      "productionConsumers": [
+        {
+          "file": "src/economy/economy-module.ts",
+          "line": 146,
+          "event": "economy:upgrade-specialization",
+          "subscriber": "EconomyModule.init",
+          "receiver": "bus"
+        }
+      ],
+      "testEmitters": [],
+      "testConsumers": [],
+      "status": "declared_and_published"
+    },
+    "economy:warehouse-full": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 98,
+        "payloadType": "{ planetId: EntityId }",
+        "interfaceName": "EconomyEvents"
+      },
+      "manifestEmittedBy": [
+        {
+          "module": "economy",
+          "line": 66
+        }
+      ],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [],
+      "status": "declared_but_not_observed_published"
+    },
+    "economy:warehouse-updated": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 99,
+        "payloadType": "{ planetId: EntityId; capacity: number; used: number }",
+        "interfaceName": "EconomyEvents"
+      },
+      "manifestEmittedBy": [
+        {
+          "module": "economy",
+          "line": 67
+        }
+      ],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [],
+      "status": "declared_but_not_observed_published"
+    },
+    "fleet:arrived": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 175,
+        "payloadType": "{ fleetId: EntityId; systemId: EntityId }",
+        "interfaceName": "FleetEvents"
+      },
+      "manifestEmittedBy": [
+        {
+          "module": "fleet",
+          "line": 32
+        }
+      ],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [
+        {
+          "file": "src/ships/fleet-engine.ts",
+          "line": 389,
+          "event": "fleet:arrived",
+          "publisher": "processFleetTick",
+          "receiver": "gameBus"
+        }
+      ],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [],
+      "status": "published_without_observed_consumer"
+    },
+    "fleet:created": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 166,
+        "payloadType": "{ fleetId: EntityId; owner: EntityId; shipCount: number }",
+        "interfaceName": "FleetEvents"
+      },
+      "manifestEmittedBy": [],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [],
+      "status": "declared_but_not_observed_published"
+    },
+    "fleet:fuel-low": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 179,
+        "payloadType": "{ fleetId: EntityId; remainingFuel: number; requiredFuel: number }",
+        "interfaceName": "FleetEvents"
+      },
+      "manifestEmittedBy": [
+        {
+          "module": "fleet",
+          "line": 36
+        }
+      ],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [
+        {
+          "file": "src/ships/fleet-engine.ts",
+          "line": 346,
+          "event": "fleet:fuel-low",
+          "publisher": "processFleetTick",
+          "receiver": "gameBus"
+        }
+      ],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [],
+      "status": "published_without_observed_consumer"
+    },
+    "fleet:merged": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 169,
+        "payloadType": "{ fleetId: EntityId; fromFleetIds: EntityId[] }",
+        "interfaceName": "FleetEvents"
+      },
+      "manifestEmittedBy": [],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [],
+      "status": "declared_but_not_observed_published"
+    },
+    "fleet:movement-started": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 173,
+        "payloadType": "{ fleetId: EntityId; fromSystemId: EntityId; toSystemId: EntityId; path: EntityId[]; etaTick: number }",
+        "interfaceName": "FleetEvents"
+      },
+      "manifestEmittedBy": [
+        {
+          "module": "fleet",
+          "line": 35
+        }
+      ],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [
+        {
+          "file": "src/ships/fleet-engine.ts",
+          "line": 317,
+          "event": "fleet:movement-started",
+          "publisher": "processFleetTick",
+          "receiver": "gameBus"
+        }
+      ],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [],
+      "status": "published_without_observed_consumer"
+    },
+    "fleet:order-cancelled": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 177,
+        "payloadType": "{ fleetId: EntityId; orderType: string; reason: 'manual' | 'impossible' | 'fuel' }",
+        "interfaceName": "FleetEvents"
+      },
+      "manifestEmittedBy": [
+        {
+          "module": "fleet",
+          "line": 37
+        }
+      ],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [],
+      "status": "declared_but_not_observed_published"
+    },
+    "fleet:order-completed": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 168,
+        "payloadType": "{ fleetId: EntityId; orderType: string; targetId: EntityId }",
+        "interfaceName": "FleetEvents"
+      },
+      "manifestEmittedBy": [
+        {
+          "module": "fleet",
+          "line": 34
+        }
+      ],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [
+        {
+          "file": "src/ships/fleet-engine.ts",
+          "line": 296,
+          "event": "fleet:order-completed",
+          "publisher": "processFleetTick",
+          "receiver": "gameBus"
+        },
+        {
+          "file": "src/ships/fleet-engine.ts",
+          "line": 509,
+          "event": "fleet:order-completed",
+          "publisher": "completeOrder",
+          "receiver": "gameBus"
+        }
+      ],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [],
+      "status": "published_without_observed_consumer"
+    },
+    "fleet:order-issued": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 167,
+        "payloadType": "{ fleetId: EntityId; orderType: string; targetId: EntityId }",
+        "interfaceName": "FleetEvents"
+      },
+      "manifestEmittedBy": [],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [],
+      "status": "declared_but_not_observed_published"
+    },
+    "fleet:split": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 170,
+        "payloadType": "{ fleetId: EntityId; newFleetId: EntityId }",
+        "interfaceName": "FleetEvents"
+      },
+      "manifestEmittedBy": [],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [],
+      "status": "declared_but_not_observed_published"
+    },
+    "fleet:stranded": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 181,
+        "payloadType": "{ fleetId: EntityId; systemId: EntityId }",
+        "interfaceName": "FleetEvents"
+      },
+      "manifestEmittedBy": [
+        {
+          "module": "fleet",
+          "line": 33
+        }
+      ],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [
+        {
+          "file": "src/ships/fleet-engine.ts",
+          "line": 351,
+          "event": "fleet:stranded",
+          "publisher": "processFleetTick",
+          "receiver": "gameBus"
+        }
+      ],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [
+        {
+          "file": "tests/ships/fleet-engine.test.ts",
+          "lines": [
+            408
+          ]
+        }
+      ],
+      "status": "published_without_observed_consumer"
+    },
+    "galaxy:generated": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 50,
+        "payloadType": "{ galaxyId: EntityId; systemCount: number; seed: number }",
+        "interfaceName": "GalaxyEvents"
+      },
+      "manifestEmittedBy": [
+        {
+          "module": "galaxy",
+          "line": 25
+        }
+      ],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [
+        {
+          "file": "src/galaxy/galaxy-module.ts",
+          "line": 121,
+          "event": "galaxy:generated",
+          "publisher": "GalaxyModule.onGameCreated",
+          "receiver": "this.bus"
+        }
+      ],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [],
+      "status": "published_without_observed_consumer"
+    },
+    "galaxy:system-discovered": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 51,
+        "payloadType": "{ systemId: EntityId; byFactionId: EntityId }",
+        "interfaceName": "GalaxyEvents"
+      },
+      "manifestEmittedBy": [
+        {
+          "module": "galaxy",
+          "line": 26
+        }
+      ],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [],
+      "status": "declared_but_not_observed_published"
+    },
+    "galaxy:system-surveyed": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 52,
+        "payloadType": "{ systemId: EntityId; byFactionId: EntityId }",
+        "interfaceName": "GalaxyEvents"
+      },
+      "manifestEmittedBy": [
+        {
+          "module": "galaxy",
+          "line": 27
+        }
+      ],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [],
+      "status": "declared_but_not_observed_published"
+    },
+    "ships:arrived": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 149,
+        "payloadType": "{ shipId: EntityId; systemId: EntityId }",
+        "interfaceName": "ShipsEvents"
+      },
+      "manifestEmittedBy": [
+        {
+          "module": "ships",
+          "line": 51
+        }
+      ],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [
+        {
+          "file": "src/ships/fleet-engine.ts",
+          "line": 391,
+          "event": "ships:arrived",
+          "publisher": "processFleetTick",
+          "receiver": "gameBus"
+        }
+      ],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [],
+      "status": "published_without_observed_consumer"
+    },
+    "ships:constructed": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 146,
+        "payloadType": "{ shipId: EntityId; designId: EntityId; owner: EntityId }",
+        "interfaceName": "ShipsEvents"
+      },
+      "manifestEmittedBy": [
+        {
+          "module": "ships",
+          "line": 48
+        }
+      ],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [
+        {
+          "file": "src/data/ships/shipyard-queue.ts",
+          "line": 234,
+          "event": "ships:constructed",
+          "publisher": "processShipyardTick",
+          "receiver": "gameBus"
+        }
+      ],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [
+        {
+          "file": "tests/ships/shipyard.test.ts",
+          "lines": [
+            183
+          ]
+        }
+      ],
+      "status": "published_without_observed_consumer"
+    },
+    "ships:construction-progress": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 158,
+        "payloadType": "{ planetId: EntityId; shipId: EntityId; progressTicks: number; totalTicks: number }",
+        "interfaceName": "ShipsEvents"
+      },
+      "manifestEmittedBy": [
+        {
+          "module": "ships",
+          "line": 49
+        }
+      ],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [
+        {
+          "file": "src/data/ships/shipyard-queue.ts",
+          "line": 175,
+          "event": "ships:construction-progress",
+          "publisher": "processShipyardTick",
+          "receiver": "gameBus"
+        }
+      ],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [
+        {
+          "file": "tests/ships/shipyard.test.ts",
+          "lines": [
+            207
+          ]
+        }
+      ],
+      "status": "published_without_observed_consumer"
+    },
+    "ships:construction-started": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 156,
+        "payloadType": "{ planetId: EntityId; designId: EntityId; shipId: EntityId; etaTick: number }",
+        "interfaceName": "ShipsEvents"
+      },
+      "manifestEmittedBy": [
+        {
+          "module": "ships",
+          "line": 50
+        }
+      ],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [],
+      "status": "declared_but_not_observed_published"
+    },
+    "ships:damaged": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 150,
+        "payloadType": "{ shipId: EntityId; hp: number; maxHp: number }",
+        "interfaceName": "ShipsEvents"
+      },
+      "manifestEmittedBy": [],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [],
+      "status": "declared_but_not_observed_published"
+    },
+    "ships:design-validated": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 154,
+        "payloadType": "{ designId: EntityId; valid: boolean; errors: string[] }",
+        "interfaceName": "ShipsEvents"
+      },
+      "manifestEmittedBy": [],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [],
+      "status": "declared_but_not_observed_published"
+    },
+    "ships:designed": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 145,
+        "payloadType": "{ designId: EntityId; hullId: string; moduleCount: number }",
+        "interfaceName": "ShipsEvents"
+      },
+      "manifestEmittedBy": [],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [],
+      "status": "declared_but_not_observed_published"
+    },
+    "ships:destroyed": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 147,
+        "payloadType": "{ shipId: EntityId; systemId: EntityId; byFactionId?: EntityId }",
+        "interfaceName": "ShipsEvents"
+      },
+      "manifestEmittedBy": [],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [],
+      "status": "declared_but_not_observed_published"
+    },
+    "ships:fuel-consumed": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 160,
+        "payloadType": "{ fleetId: EntityId; fuelType: string; amount: number; remaining: number }",
+        "interfaceName": "ShipsEvents"
+      },
+      "manifestEmittedBy": [
+        {
+          "module": "ships",
+          "line": 52
+        }
+      ],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [
+        {
+          "file": "src/ships/fleet-engine.ts",
+          "line": 417,
+          "event": "ships:fuel-consumed",
+          "publisher": "consumeFuel",
+          "receiver": "gameBus"
+        }
+      ],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [],
+      "status": "published_without_observed_consumer"
+    },
+    "ships:movement-started": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 148,
+        "payloadType": "{ shipId: EntityId; from: EntityId; to: EntityId; etaTick: number }",
+        "interfaceName": "ShipsEvents"
+      },
+      "manifestEmittedBy": [],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [],
+      "status": "declared_but_not_observed_published"
+    },
+    "ships:repaired": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 151,
+        "payloadType": "{ shipId: EntityId; hp: number }",
+        "interfaceName": "ShipsEvents"
+      },
+      "manifestEmittedBy": [],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [],
+      "status": "declared_but_not_observed_published"
+    },
+    "tech:allocation-changed": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 220,
+        "payloadType": "{ factionId: EntityId; slots: Array<{ slotId: string; percent: number }> }",
+        "interfaceName": "TechEvents"
+      },
+      "manifestEmittedBy": [],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [],
+      "status": "declared_but_not_observed_published"
+    },
+    "tech:fundamental-leveled": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 222,
+        "payloadType": "{ branchId: FundamentalBranchId; factionId: EntityId; newLevel: number }",
+        "interfaceName": "TechEvents"
+      },
+      "manifestEmittedBy": [
+        {
+          "module": "tech",
+          "line": 55
+        }
+      ],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [
+        {
+          "file": "src/stores/game-store.ts",
+          "line": 1892,
+          "event": "tech:fundamental-leveled",
+          "publisher": "levelUpFundamental",
+          "receiver": "getMediatorWithModules().getBus()"
+        }
+      ],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [
+        {
+          "file": "tests/r39-store-mediator-sync.test.ts",
+          "lines": [
+            580
+          ]
+        }
+      ],
+      "status": "published_without_observed_consumer"
+    },
+    "tech:prerequisites-met": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 224,
+        "payloadType": "{ techId: string; factionId: EntityId; met: boolean; missing: string[] }",
+        "interfaceName": "TechEvents"
+      },
+      "manifestEmittedBy": [],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [],
+      "status": "declared_but_not_observed_published"
+    },
+    "tech:queue-added": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 235,
+        "payloadType": "{ factionId: EntityId; techId: string; queueLength: number }",
+        "interfaceName": "TechEvents"
+      },
+      "manifestEmittedBy": [
+        {
+          "module": "tech",
+          "line": 58
+        }
+      ],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [],
+      "status": "declared_but_not_observed_published"
+    },
+    "tech:queue-advanced": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 233,
+        "payloadType": "{ factionId: EntityId; techId: string; targetLevel: number; remainingQueue: number }",
+        "interfaceName": "TechEvents"
+      },
+      "manifestEmittedBy": [
+        {
+          "module": "tech",
+          "line": 57
+        }
+      ],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [
+        {
+          "file": "src/research/research-module.ts",
+          "line": 240,
+          "event": "tech:queue-advanced",
+          "publisher": "ResearchModule.processResearchTick",
+          "receiver": "this.bus"
+        }
+      ],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [],
+      "status": "published_without_observed_consumer"
+    },
+    "tech:queue-removed": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 237,
+        "payloadType": "{ factionId: EntityId; index: number; techId?: string }",
+        "interfaceName": "TechEvents"
+      },
+      "manifestEmittedBy": [
+        {
+          "module": "tech",
+          "line": 59
+        }
+      ],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [],
+      "status": "declared_but_not_observed_published"
+    },
+    "tech:research-cancelled": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 218,
+        "payloadType": "{ slotId: string; factionId: EntityId; techId: string; rpRefunded: number }",
+        "interfaceName": "TechEvents"
+      },
+      "manifestEmittedBy": [],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [],
+      "status": "declared_but_not_observed_published"
+    },
+    "tech:research-completed": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 213,
+        "payloadType": "{ techId: string; factionId: EntityId; level: number; unlocks: string[] }",
+        "interfaceName": "TechEvents"
+      },
+      "manifestEmittedBy": [
+        {
+          "module": "tech",
+          "line": 53
+        }
+      ],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [
+        {
+          "file": "src/research/research-module.ts",
+          "line": 255,
+          "event": "tech:research-completed",
+          "publisher": "ResearchModule.processResearchTick",
+          "receiver": "this.bus"
+        }
+      ],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [],
+      "status": "published_without_observed_consumer"
+    },
+    "tech:research-rejected": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 228,
+        "payloadType": "{ techId: string; factionId: EntityId; reasons: string[] }",
+        "interfaceName": "TechEvents"
+      },
+      "manifestEmittedBy": [],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [],
+      "status": "declared_but_not_observed_published"
+    },
+    "tech:research-started": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 211,
+        "payloadType": "{ techId: string; factionId: EntityId; targetLevel: number; etaTick: number }",
+        "interfaceName": "TechEvents"
+      },
+      "manifestEmittedBy": [],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [],
+      "status": "declared_but_not_observed_published"
+    },
+    "tech:tree-validated": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 226,
+        "payloadType": "{ ok: boolean; errors: string[] }",
+        "interfaceName": "TechEvents"
+      },
+      "manifestEmittedBy": [
+        {
+          "module": "tech",
+          "line": 56
+        }
+      ],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [
+        {
+          "file": "src/research/research-module.ts",
+          "line": 103,
+          "event": "tech:tree-validated",
+          "publisher": "ResearchModule.init",
+          "receiver": "this.bus"
+        }
+      ],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [],
+      "status": "published_without_observed_consumer"
+    },
+    "tech:unlocked": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 215,
+        "payloadType": "{ techId: string; factionId: EntityId; unlocks: string[] }",
+        "interfaceName": "TechEvents"
+      },
+      "manifestEmittedBy": [
+        {
+          "module": "tech",
+          "line": 54
+        }
+      ],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [
+        {
+          "file": "src/research/research-module.ts",
+          "line": 262,
+          "event": "tech:unlocked",
+          "publisher": "ResearchModule.processResearchTick",
+          "receiver": "this.bus"
+        }
+      ],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [],
+      "status": "published_without_observed_consumer"
+    },
+    "trade:offer-accepted": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 255,
+        "payloadType": "{ offerId: EntityId; buyerFactionId: EntityId }",
+        "interfaceName": "TradeEvents"
+      },
+      "manifestEmittedBy": [],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [],
+      "status": "declared_but_not_observed_published"
+    },
+    "trade:offer-created": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 254,
+        "payloadType": "{ offerId: EntityId; factionId: EntityId; resourceId: string; amount: number; price: number }",
+        "interfaceName": "TradeEvents"
+      },
+      "manifestEmittedBy": [],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [],
+      "status": "declared_but_not_observed_published"
+    },
+    "trade:route-completed": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 257,
+        "payloadType": "{ routeId: EntityId; delivered: number }",
+        "interfaceName": "TradeEvents"
+      },
+      "manifestEmittedBy": [],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [],
+      "status": "declared_but_not_observed_published"
+    },
+    "trade:route-established": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 256,
+        "payloadType": "{ routeId: EntityId; fromPlanetId: EntityId; toPlanetId: EntityId; resourceId: string }",
+        "interfaceName": "TradeEvents"
+      },
+      "manifestEmittedBy": [],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [],
+      "status": "declared_but_not_observed_published"
+    },
+    "trade:route-raided": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 258,
+        "payloadType": "{ routeId: EntityId; raiderFactionId: EntityId; stolen: number }",
+        "interfaceName": "TradeEvents"
+      },
+      "manifestEmittedBy": [],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [],
+      "status": "declared_but_not_observed_published"
+    }
+  },
+  "queries": {
+    "ai:state": {
+      "declaredHandles": [
+        {
+          "module": "ai",
+          "line": 91
+        }
+      ],
+      "declaredRequires": [],
+      "registeredBy": [
+        {
+          "file": "src/ai/ai-module.ts",
+          "line": 151,
+          "query": "ai:state",
+          "moduleContext": "AIModule.init"
+        }
+      ],
+      "unregisteredBy": [
+        {
+          "file": "src/ai/ai-module.ts",
+          "line": 167,
+          "query": "ai:state"
+        }
+      ],
+      "productionCallers": [],
+      "testCallers": [
+        {
+          "file": "tests/ai/ai-module.test.ts",
+          "lines": [
+            322,
+            333
+          ]
+        }
+      ],
+      "status": "declared_and_registered"
+    },
+    "economy:planet-energy": {
+      "declaredHandles": [
+        {
+          "module": "economy",
+          "line": 87
+        }
+      ],
+      "declaredRequires": [],
+      "registeredBy": [
+        {
+          "file": "src/economy/economy-module.ts",
+          "line": 151,
+          "query": "economy:planet-energy",
+          "moduleContext": "EconomyModule.init"
+        }
+      ],
+      "unregisteredBy": [
+        {
+          "file": "src/economy/economy-module.ts",
+          "line": 175,
+          "query": "economy:planet-energy"
+        }
+      ],
+      "productionCallers": [],
+      "testCallers": [],
+      "status": "declared_and_registered"
+    },
+    "economy:planet-resources": {
+      "declaredHandles": [
+        {
+          "module": "economy",
+          "line": 86
+        }
+      ],
+      "declaredRequires": [],
+      "registeredBy": [
+        {
+          "file": "src/economy/economy-module.ts",
+          "line": 150,
+          "query": "economy:planet-resources",
+          "moduleContext": "EconomyModule.init"
+        }
+      ],
+      "unregisteredBy": [
+        {
+          "file": "src/economy/economy-module.ts",
+          "line": 174,
+          "query": "economy:planet-resources"
+        }
+      ],
+      "productionCallers": [],
+      "testCallers": [],
+      "status": "declared_and_registered"
+    },
+    "economy:production-queue": {
+      "declaredHandles": [
+        {
+          "module": "economy",
+          "line": 88
+        }
+      ],
+      "declaredRequires": [],
+      "registeredBy": [
+        {
+          "file": "src/economy/economy-module.ts",
+          "line": 152,
+          "query": "economy:production-queue",
+          "moduleContext": "EconomyModule.init"
+        }
+      ],
+      "unregisteredBy": [
+        {
+          "file": "src/economy/economy-module.ts",
+          "line": 176,
+          "query": "economy:production-queue"
+        }
+      ],
+      "productionCallers": [],
+      "testCallers": [],
+      "status": "declared_and_registered"
+    },
+    "galaxy:colonized-planets": {
+      "declaredHandles": [
+        {
+          "module": "galaxy",
+          "line": 36
+        }
+      ],
+      "declaredRequires": [],
+      "registeredBy": [
+        {
+          "file": "src/galaxy/galaxy-module.ts",
+          "line": 78,
+          "query": "galaxy:colonized-planets",
+          "moduleContext": "GalaxyModule.init"
+        }
+      ],
+      "unregisteredBy": [
+        {
+          "file": "src/galaxy/galaxy-module.ts",
+          "line": 101,
+          "query": "galaxy:colonized-planets"
+        }
+      ],
+      "productionCallers": [],
+      "testCallers": [],
+      "status": "declared_and_registered"
+    },
+    "galaxy:planet-by-id": {
+      "declaredHandles": [
+        {
+          "module": "galaxy",
+          "line": 35
+        }
+      ],
+      "declaredRequires": [],
+      "registeredBy": [
+        {
+          "file": "src/galaxy/galaxy-module.ts",
+          "line": 77,
+          "query": "galaxy:planet-by-id",
+          "moduleContext": "GalaxyModule.init"
+        }
+      ],
+      "unregisteredBy": [
+        {
+          "file": "src/galaxy/galaxy-module.ts",
+          "line": 100,
+          "query": "galaxy:planet-by-id"
+        }
+      ],
+      "productionCallers": [],
+      "testCallers": [],
+      "status": "declared_and_registered"
+    },
+    "galaxy:system-by-id": {
+      "declaredHandles": [
+        {
+          "module": "galaxy",
+          "line": 34
+        }
+      ],
+      "declaredRequires": [
+        {
+          "module": "economy",
+          "line": 91
+        }
+      ],
+      "registeredBy": [
+        {
+          "file": "src/galaxy/galaxy-module.ts",
+          "line": 76,
+          "query": "galaxy:system-by-id",
+          "moduleContext": "GalaxyModule.init"
+        },
+        {
+          "file": "tests/r42-stage01-reaudit.test.ts",
+          "line": 678,
+          "query": "galaxy:system-by-id",
+          "moduleContext": "<module scope>"
+        },
+        {
+          "file": "tests/r42-stage01-reaudit.test.ts",
+          "line": 681,
+          "query": "galaxy:system-by-id",
+          "moduleContext": "<module scope>"
+        }
+      ],
+      "unregisteredBy": [
+        {
+          "file": "src/galaxy/galaxy-module.ts",
+          "line": 99,
+          "query": "galaxy:system-by-id"
+        },
+        {
+          "file": "tests/r42-stage01-reaudit.test.ts",
+          "line": 684,
+          "query": "galaxy:system-by-id"
+        }
+      ],
+      "productionCallers": [],
+      "testCallers": [
+        {
+          "file": "tests/r42-stage01-reaudit.test.ts",
+          "lines": [
+            679,
+            682,
+            685
+          ]
+        }
+      ],
+      "status": "declared_and_registered"
+    },
+    "research:state": {
+      "declaredHandles": [
+        {
+          "module": "tech",
+          "line": 66
+        }
+      ],
+      "declaredRequires": [],
+      "registeredBy": [
+        {
+          "file": "src/research/research-module.ts",
+          "line": 116,
+          "query": "research:state",
+          "moduleContext": "ResearchModule.init"
+        }
+      ],
+      "unregisteredBy": [
+        {
+          "file": "src/research/research-module.ts",
+          "line": 140,
+          "query": "research:state"
+        }
+      ],
+      "productionCallers": [],
+      "testCallers": [],
+      "status": "declared_and_registered"
+    },
+    "research:tech-status": {
+      "declaredHandles": [
+        {
+          "module": "tech",
+          "line": 67
+        }
+      ],
+      "declaredRequires": [],
+      "registeredBy": [
+        {
+          "file": "src/research/research-module.ts",
+          "line": 117,
+          "query": "research:tech-status",
+          "moduleContext": "ResearchModule.init"
+        }
+      ],
+      "unregisteredBy": [
+        {
+          "file": "src/research/research-module.ts",
+          "line": 141,
+          "query": "research:tech-status"
+        }
+      ],
+      "productionCallers": [],
+      "testCallers": [],
+      "status": "declared_and_registered"
+    }
+  },
+  "summary": {
+    "events": {
+      "declared_but_not_observed_published": 43,
+      "observed_but_not_declared": 7,
+      "declared_and_published": 10,
+      "published_without_observed_consumer": 24,
+      "manifest_vs_runtime_mismatch": 2
+    },
+    "modules": 10,
+    "queries": 9
+  }
+}
