@@ -39,6 +39,7 @@ import {
   Ship,
   FlaskConical,
   BookOpen,
+  Home,
 } from 'lucide-react';
 import { ReferenceDialog } from './reference-dialog';
 
@@ -127,6 +128,13 @@ export function GameLayout() {
 
         {/* Save button */}
         <SaveButton />
+
+        {/* GAME-SESSION-UI-01 (Issue #21): возврат в главное меню с
+            приостановкой сессии — gameState сохраняется в памяти,
+            Continue на главном экране возвращает ту же сессию. Это НЕ
+            победа/поражение и не удаление прогресса — подтверждение не
+            требуется (не деструктивно). */}
+        <MainMenuButton />
 
         {/* R-BLD-REF: Reference / help dialog — справочное меню рядом с Save */}
         <ReferenceButton />
@@ -424,6 +432,29 @@ function ColoniesSection({
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * GAME-SESSION-UI-01 (Issue #21): кнопка «В главное меню» — приостанавливает
+ * сессию (вместе с интервалом тиков) и показывает стартовый экран с кнопкой
+ * «Продолжить игру». Сессия, выделение и currentSaveId сохраняются в
+ * памяти; серверные сейвы не трогаются.
+ */
+function MainMenuButton() {
+  const returnToMainMenu = useGameStore((s) => s.returnToMainMenu);
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      className="h-7 text-xs text-slate-400 hover:text-white"
+      onClick={returnToMainMenu}
+      aria-label="В главное меню (приостановить сессию)"
+      title="В главное меню: сессия приостанавливается и доступна через «Продолжить игру»"
+    >
+      <Home className="size-3 mr-1" />
+      В меню
+    </Button>
   );
 }
 

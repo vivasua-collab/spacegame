@@ -137,11 +137,33 @@ export interface GameStore {
    * игре). Теперь seed стабилен до явного roll.
    */
   galaxySeed: number;
+  /**
+   * GAME-SESSION-UI-01 (Issue #21): скорость, с которой сессия была
+   * приостановлена возвратом в главное меню (для честного Continue —
+   * «тот же seed/tick/состояние», включая скорость). null — нет
+   * suspended-сессии (или она была на паузе: speed 0).
+   */
+  suspendedSpeed: GameSpeed | null;
 
   // === Действия ===
   /** Сгенерировать новый случайный seed (для кнопки «кости» в главном меню). */
   rollGalaxySeed: () => void;
   newGame: (config?: Partial<import('@/galaxy').GalaxyGenConfig>) => void;
+  /**
+   * GAME-SESSION-UI-01 (Issue #21): приостановить сессию и вернуться в
+   * главное меню. НЕ удаляет gameState/currentSaveId/выделение — Continue
+   * возвращает ту же сессию без newGame(). Останавливает интервал тиков
+   * (паттерн R-39 saveGame: фаза → paused + sync + loop.pause()).
+   */
+  returnToMainMenu: () => void;
+  /**
+   * GAME-SESSION-UI-01 (Issue #21): продолжить приостановленную сессию.
+   * Возвращает true, только если есть suspended-сессия (gameState при
+   * неактивном isInitialized). Возобновляет ровно один game loop
+   * (setSpeed — идемпотентный mediator-путь; стартует только если сессия
+   * была играющей). Пауза остаётся паузой — loop не запускается.
+   */
+  continueGame: () => boolean;
   setSpeed: (speed: GameSpeed) => void;
   togglePause: () => void;
   tick: () => void;
@@ -758,6 +780,8 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
     // Audit 2026-08-28: стабильный seed в store (не прыгает при перемонтировании).
     // Ленивая инициализация один раз при загрузке страницы.
     galaxySeed: Math.floor(Math.random() * 1_000_000) + 1,
+    // GAME-SESSION-UI-01 (Issue #21): нет suspended-сессии на старте.
+    suspendedSpeed: null,
 
     rollGalaxySeed: () => {
       set({ galaxySeed: Math.floor(Math.random() * 1_000_000) + 1 });
@@ -802,6 +826,51 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
       if (!gameState) return;
       // Делегируем медиатору: он обновит state + loop + эмитнет state-changed
       mediator.setSpeed(speed);
+    },
+
+    // GAME-SESSION-UI-01 (Issue #21): возврат в главное меню с сохранением
+    // сессии. Паттерн идентичен R-39 saveGame (проверен тестами): фазу
+    // мутируем через immer-черновик, синхронизируем медиатор, останавливаем
+    // САМ интервал. colonization-фаза не мутируется (её интервал и не запущен;
+    // семантика «баннер колонизации переживёт Continue» — как в сейвах).
+    returnToMainMenu: () => {
+      const gs = get().gameState;
+      if (!gs) return; // нет сессии — просто показываем меню (no-op)
+      // Скорость для честного восстановления при Continue.
+      const resumeSpeed: GameSpeed = gs.phase === 'playing' ? (gs.speed || 1) : 0;
+      if (gs.phase === 'playing') {
+        set((state) => {
+          if (!state.gameState) return;
+          state.gameState.phase = 'paused';
+          state.gameState.speed = 0;
+        });
+        syncMediatorState();
+      }
+      // Гарантированно остановить интервал независимо от исходной фазы
+      // (colonization: интервал не запущен; paused: уже остановлен —
+      // loop.pause() идемпотентен).
+      const mediator = getMediatorWithModules();
+      mediator.loop.pause();
+      // Навигация в меню: gameState/currentSaveId/выделение НЕ трогаем.
+      set({ isInitialized: false, suspendedSpeed: resumeSpeed });
+    },
+
+    // GAME-SESSION-UI-01 (Issue #21): продолжение приостановленной сессии.
+    continueGame: () => {
+      const state = get();
+      if (!state.gameState || state.isInitialized) return false;
+      const resumeSpeed: GameSpeed = state.suspendedSpeed ?? 0;
+      set({ isInitialized: true, suspendedSpeed: null });
+      if (resumeSpeed > 0) {
+        // Тот же типизированный путь, что и кнопка Play: mediator.setSpeed
+        // восстановит phase='playing' и запустит РОВНО ОДИН интервал
+        // (loop.start идемпотентен; повторный Continue невозможен —
+        // isInitialized уже true → guard выше).
+        get().setSpeed(resumeSpeed);
+      }
+      // Сессия была на паузе — остаёмся на паузе; модули запустит
+      // React-эффект page.tsx (mediator.start(), идемпотентно).
+      return true;
     },
 
     togglePause: () => {

@@ -4,7 +4,7 @@ import { useEffect, useState, useMemo, useCallback } from 'react';
 import { useGameStore, type SaveInfo } from '@/stores/game-store';
 import { GameLayout } from '@/components/game/game-layout';
 import { Button } from '@/components/ui/button';
-import { Rocket, Save, Trash2, Loader2, FolderOpen, Dices } from 'lucide-react';
+import { Rocket, Save, Trash2, Loader2, FolderOpen, Dices, Play } from 'lucide-react';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -42,6 +42,17 @@ export default function Home() {
   const loadGame = useGameStore((s) => s.loadGame);
   const loadSaveList = useGameStore((s) => s.loadSaveList);
   const deleteSave = useGameStore((s) => s.deleteSave);
+  // GAME-SESSION-UI-01 (Issue #21): продолжение приостановленной сессии.
+  // Селектор возвращает БУЛЕВО (стабильное значение — компонент не перерисовывается
+  // на каждый тик, паттерн R-31): suspended-сессия = gameState есть,
+  // но игра не активна.
+  const continueGame = useGameStore((s) => s.continueGame);
+  const hasSuspendedSession = useGameStore((s) => s.gameState !== null && !s.isInitialized);
+  const suspendedInfo = useGameStore((s) =>
+    !s.isInitialized && s.gameState
+      ? `${s.gameState.galaxy.seed} · тик ${s.gameState.time.tick}`
+      : null,
+  );
   // Audit 2026-08-28: seed живёт в Zustand store (а не в локальном useState).
   // Прежний `useState(() => Math.random()...)` перевычислялся при каждом
   // перемонтировании Home (выход в главное меню и обратно), из-за чего seed
@@ -73,8 +84,22 @@ export default function Home() {
   // Mediator.stop() очищает интервал при размонтировании компонента.
   // Подписка на `core:state-changed` (в game-store.getMediatorWithModules)
   // обновляет Zustand-state после каждого тика.
+  //
+  // GAME-SESSION-UI-01 (Issue #21): медиатор запускается ТОЛЬКО при активной
+  // инициализированной сессии. Прежний безусловный start() при
+  // isInitialized=false был безвреден без игры (guard !gameState), но С
+  // suspended-сессией (возврат в меню, gameState сохранён в памяти) он
+  // перезапустил бы интервал — игра тикала бы в фоне под меню. Теперь:
+  // меню → гарантированный stop(); активная сессия → start() на mount и
+  // stop() на unmount; Continue — ровно один loop (start идемпотентен,
+  // continueGame уже привёл loop в соответствие фазе).
   useEffect(() => {
     const mediator = getGameMediator();
+    if (!isInitialized) {
+      // В меню симуляция не тикает — даже если suspended-сессия в памяти.
+      mediator.stop();
+      return;
+    }
     mediator.start();
     return () => {
       mediator.stop();
@@ -179,6 +204,41 @@ export default function Home() {
           <p className="text-slate-500 text-sm">A 4X Space Strategy Game</p>
         </div>
 
+        {/* GAME-SESSION-UI-01 (Issue #21): карточка продолжения приостановленной
+            сессии — над табами, заметнее переключателя New/Load. */}
+        {hasSuspendedSession && (
+          <div
+            className="bg-[#0d1a30] border border-cyan-500/30 rounded-xl p-4 w-full"
+            role="region"
+            aria-label="Приостановленная сессия"
+          >
+            <div className="flex items-center gap-3">
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-medium text-cyan-200">Текущая игра приостановлена</div>
+                <div className="text-[10px] text-slate-500 mt-0.5 font-mono">
+                  Seed {suspendedInfo} — прогресс в памяти этой вкладки
+                </div>
+              </div>
+              <Button
+                className="shrink-0 bg-cyan-600 hover:bg-cyan-500 text-white"
+                onClick={() => {
+                  const ok = continueGame();
+                  if (!ok) {
+                    toast({
+                      title: 'Не удалось продолжить',
+                      description: 'Приостановленная сессия недоступна.',
+                      variant: 'destructive',
+                    });
+                  }
+                }}
+              >
+                <Play className="size-4 mr-2" />
+                Продолжить игру
+              </Button>
+            </div>
+          </div>
+        )}
+
         {/* Tab switcher */}
         <div className="flex w-full bg-[#0d0d24] border border-white/10 rounded-xl overflow-hidden">
           <button
@@ -257,17 +317,15 @@ export default function Home() {
               </p>
             </div>
 
-            <Button
-              className="w-full"
-              onClick={() => {
+            <LaunchGameButton
+              galaxySeed={galaxySeed}
+              hasSuspendedSession={hasSuspendedSession}
+              onLaunch={() => {
                 // Используем стабильный galaxySeed из store (а не
                 // локальный seed, который раньше прыгал).
                 if (galaxySeed > 0) newGame({ seed: galaxySeed });
               }}
-            >
-              <Rocket className="size-4 mr-2" />
-              Launch Game
-            </Button>
+            />
           </div>
         )}
 
@@ -292,19 +350,12 @@ export default function Home() {
                         Seed: {save.seed} • {formatTick(save.tick)} • {formatDate(save.updatedAt)}
                       </div>
                     </div>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-7 text-xs text-cyan-400 hover:text-cyan-300 hover:bg-cyan-400/10 shrink-0"
-                      disabled={loadingSaveId === save.id}
-                      onClick={() => handleLoad(save.id)}
-                    >
-                      {loadingSaveId === save.id ? (
-                        <Loader2 className="size-3.5 animate-spin" />
-                      ) : (
-                        'Load'
-                      )}
-                    </Button>
+                    <LoadSaveButton
+                      saveId={save.id}
+                      loading={loadingSaveId === save.id}
+                      hasSuspendedSession={hasSuspendedSession}
+                      onConfirmLoad={() => handleLoad(save.id)}
+                    />
                     <DeleteSaveButton
                       saveId={save.id}
                       saveName={save.name}
@@ -322,6 +373,116 @@ export default function Home() {
       {/* Sticky footer */}
       <footer className="mt-auto pt-4 text-[10px] text-slate-700">SpaceGame v0.1</footer>
     </div>
+  );
+}
+
+/**
+ * GAME-SESSION-UI-01 (Issue #21): кнопка Launch Game.
+ *
+ * Без приостановленной сессии — обычная кнопка. При наличии suspended-сессии
+ * (возврат в меню с сохранённым gameState) запуск новой галактики ЗАМЕНЯЕТ
+ * её — требуется явное подтверждение (AlertDialog, паттерн C9 как у
+ * «Начать новую игру» в game-layout и удаления сейва). Отмена ничего
+ * не меняет; подтверждение использует штатный newGame().
+ */
+function LaunchGameButton({
+  galaxySeed,
+  hasSuspendedSession,
+  onLaunch,
+}: {
+  galaxySeed: number;
+  hasSuspendedSession: boolean;
+  onLaunch: () => void;
+}) {
+  const launchContent = (
+    <>
+      <Rocket className="size-4 mr-2" />
+      Launch Game
+    </>
+  );
+  if (!hasSuspendedSession) {
+    return (
+      <Button className="w-full" disabled={!(galaxySeed > 0)} onClick={onLaunch}>
+        {launchContent}
+      </Button>
+    );
+  }
+  return (
+    <AlertDialog>
+      <AlertDialogTrigger asChild>
+        <Button className="w-full" disabled={!(galaxySeed > 0)}>
+          {launchContent}
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Заменить текущую игру?</AlertDialogTitle>
+          <AlertDialogDescription>
+            Приостановленная сессия (не сохранённая на сервер) будет потеряна —
+            новая галактика заменит её. Серверные сохранения не удаляются.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Отмена</AlertDialogCancel>
+          <AlertDialogAction onClick={onLaunch}>Начать новую игру</AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
+/**
+ * GAME-SESSION-UI-01 (Issue #21): кнопка Load конкретного сейва.
+ *
+ * Загрузка сейва поверх приостановленной сессии заменяет её — при наличии
+ * suspended-сессии требуется подтверждение (см. LaunchGameButton).
+ */
+function LoadSaveButton({
+  saveId,
+  loading,
+  hasSuspendedSession,
+  onConfirmLoad,
+}: {
+  saveId: string;
+  loading: boolean;
+  hasSuspendedSession: boolean;
+  onConfirmLoad: () => void;
+}) {
+  const loadContent = loading
+    ? <Loader2 className="size-3.5 animate-spin" />
+    : 'Load';
+  const loadClassName = 'h-7 text-xs text-cyan-400 hover:text-cyan-300 hover:bg-cyan-400/10 shrink-0';
+  if (!hasSuspendedSession) {
+    return (
+      <Button size="sm" variant="ghost" className={loadClassName} disabled={loading} onClick={onConfirmLoad}>
+        {loadContent}
+      </Button>
+    );
+  }
+  return (
+    <AlertDialog>
+      <AlertDialogTrigger asChild>
+        <Button size="sm" variant="ghost" className={loadClassName} disabled={loading}>
+          {loadContent}
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>
+            Загрузить сейв вместо текущей игры?
+            <span className="sr-only">Сейв {saveId}</span>
+          </AlertDialogTitle>
+          <AlertDialogDescription>
+            Приостановленная сессия (не сохранённая на сервер) будет потеряна —
+            её заменит загружаемый сейв. Серверные сохранения не удаляются.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Отмена</AlertDialogCancel>
+          <AlertDialogAction onClick={onConfirmLoad}>Загрузить</AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
 
