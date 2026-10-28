@@ -1,65 +1,59 @@
 /// <reference types="bun-types" />
 /**
- * R-27 tests: авто-переработка базовых строительных ресурсов.
+ * PROC-WORKSHOPS-01 (Issue #23): авто-режим R-27 через цеха завода
+ * строительных материалов — детерминированный планировщик строительного
+ * пула заменяет старый processAutoProcessing (вторая исполнительная
+ * дорога удалена).
  *
- * Жалоба владельца 2026-08-31 №2/№3/№4: «при наличии 3-х переработчиков не
- * меняется количество кремния, железа» — переработка была только ручной
- * очередью. processAutoProcessing: universal processor автоматически
- * перерабатывает руды Fe/Si/Al/C/Cu/Ti в элементы.
- *
- * Проверяется:
- *   1. Universal L1: 1 тик = 2 ед. руды → элементы ×0.75 (yield), чистота 0.78.
- *   2. Резервный пол: руда НЕ расходуется ниже reserves.minimum.
- *   3. Все базовые рецепты (Si-ore → Si и т.д.).
- *   4. 3 переработчика = 3× скорость (жалоба «при наличии 3-х»).
- *   5. Уровень: L2 = ×1.15.
- *   6. Синергия mine_processor (R-27): смежная шахта = ×1.15.
- *   7. Специализация metal_smelting: только металлы, буст выхода (×1.0).
- *   8. Специализация gas_processing: НЕ участвует в авто-режиме.
- *   9. Энергогейт: energyBalance ≤ 0 → авто-переработка стоит.
- *  10. Ёмкость склада processed ограничивает выходы.
+ * Проверяется (docs/40-buildings.md §11.4 v3.0):
+ *  A1. Свободный цех завода автоматически берёт базовую руду (Fe → Si →
+ *      Al → C → Cu → Ti): smelt_fe завершается через recipe.time тиков,
+ *      выход ×0.75 (baseYield), чистота 0.78 (basePurity).
+ *  A2. Резервный пол: авто-кандидат не стартует, если входы только до
+ *      reserves.minimum (player-задача при этом не блокируется полем).
+ *  A3. Приоритет равноприоритетного выбора: Fe → Si → Al → … (первый
+ *      runnable кандидат).
+ *  A4. Пропускная способность ограничена числом цехов: L1 = 1 партия
+ *      за раз; число завершённых партий ≤ вместимость цехов.
+ *  A5. Энергогейт: energyBalance < per-tick → авто-партия стоит.
+ *  A6. Отсутствующий вход не блокирует готовые задачи (skip кандидата).
+ *  A7. Множественные player-заказы одного рецепта исполняются по
+ *      отдельности (каждая партия — свои входные ресурсы).
+ *  A8. Специалист на заводе получает профильного авто-кандидата.
+ *  A9. Авто-режим НЕ работает на processor (продвинутый пул — без
+ *      авто-кандидатов; изоляция пулов).
  *
  * Run: bun test tests/economy/auto-processing.test.ts
  */
 
 import { test, expect, describe, beforeEach } from 'bun:test';
-import { processEconomyTick, recalcEnergyBalance, buildOnHex } from '@/economy/engine';
+import { processEconomyTick, buildOnHex, enqueueProduction } from '@/economy/engine';
 import { setCurrentLookups } from '@/data/baked-lookups';
 import { bakeGalaxyModel } from '@/data/chemistry-generator';
 import { ELEMENTS } from '@/data/elements';
 import { createDefaultWarehouse } from '@/data/warehouse';
-import type { Planet, EntityId, ProductionQueue, HexCell, HexTerrain, ProcessorRecipeCategory } from '@/core/types';
+import type { Planet, EntityId, ProductionQueue, HexCell, HexTerrain, WorkshopState } from '@/core/types';
 
 // Initialize baked lookups once for all tests (deterministic seed).
 setCurrentLookups(bakeGalaxyModel(42, ELEMENTS));
 
 /**
- * Планета с гексами и опциональными зданиями/ресурсами.
- * hexDefs: список {q, r, id?, level?, processorType?, specialization?}.
+ * Планета с гексами; цеховое здание construction_materials_plant можно
+ * поднять через buildPlant(). hexDefs: q/r координаты (геки пустые).
  */
-function makePlanet(
-  hexDefs: Array<{
-    q: number; r: number; id?: string; level?: number;
-    processorType?: 'universal' | 'specialized';
-    specialization?: ProcessorRecipeCategory; specializationLevel?: number;
-  }>,
-  resources: Record<string, number> = {},
-  reserves: Record<string, { minimum: number; priority: number }> = {},
-): Planet {
-  const hexes: HexCell[] = hexDefs.map((h) => ({
-    coord: { q: h.q, r: h.r },
+function makePlanet(resources: Record<string, number> = {}): Planet {
+  const hexes: HexCell[] = Array.from({ length: 6 }, (_, i) => ({
+    coord: { q: i, r: 0 },
     terrain: 'plains' as HexTerrain,
-    buildingId: h.id ?? null,
-    buildingLevel: h.id ? (h.level ?? 1) : 0,
+    buildingId: null,
+    buildingLevel: 0,
     deposits: [],
-    processorType: h.processorType,
-    specialization: h.specialization,
-    specializationLevel: h.specializationLevel,
   }));
+  // Стартовые стройресурсы (стоимость постройки завода {Fe:8, Si:5, C:3}).
   return {
     id: 'auto-planet' as EntityId,
     systemId: 'sys-1' as EntityId,
-    name: 'Auto Processing Test',
+    name: 'Auto Workshops Test',
     type: 'rocky',
     size: 'medium',
     radiusKm: 6371,
@@ -76,176 +70,155 @@ function makePlanet(
     orbitSlots: [],
     moons: [],
     resourceDeposits: [],
-    resources: { ...resources },
-    warehouse: {
-      ...createDefaultWarehouse(),
-      reserves: Object.fromEntries(
-        Object.entries(reserves).map(([id, r]) => [
-          id,
-          { resourceId: id, minimum: r.minimum, priority: r.priority },
-        ]),
-      ),
-    },
-    energyBalance: 100,
-    owner: 'player' as EntityId,
+    resources: { Fe: 200, Si: 100, C: 100, Ti: 50, U: 10, ...resources },
+    warehouse: createDefaultWarehouse(),
+    energyBalance: 1000,
+    owner: 'player',
   };
 }
 
-const queues = () => new Map<EntityId, ProductionQueue>();
+/**
+ * Поднять завод стройматериалов уровня level на гексе hexIndex.
+ * withReactor: добавить ядерный реактор (гекс 5) — иначе recalcEnergyBalance
+ * в конце каждого тика сбрасывает баланс в минус (потребление завода без
+ * генераторов) и все партии встают по энергогейту.
+ */
+function buildPlant(planet: Planet, hexIndex: number, level: number, withReactor = true): void {
+  const ok = buildOnHex(planet, hexIndex, 'construction_materials_plant');
+  expect(ok).toBe(true);
+  const hex = planet.hexes[hexIndex]!;
+  hex.buildingLevel = level;
+  const workshops: WorkshopState[] = [];
+  for (let i = 0; i < level; i++) workshops.push(hex.workshops?.[i] ?? {});
+  hex.workshops = workshops;
+  if (withReactor) {
+    expect(buildOnHex(planet, 5, 'nuclear_reactor')).toBe(true);
+  }
+}
 
-describe('R-27: авто-переработка базовых строительных ресурсов', () => {
-  test('1. Universal L1: 2 ед. Fe-ore за тик → Fe 1.05 + O 0.45 (×0.75)', () => {
-    const planet = makePlanet(
-      [{ q: 0, r: 0, id: 'processor', level: 1 }],
-      { 'Fe-ore': 100 },
-    );
-    processEconomyTick([planet], queues());
-    // fraction = (10/time=5)/10 = 0.2; Fe = 0.2 × 7 × 0.75 = 1.05; O = 0.2 × 3 × 0.75 = 0.45
-    expect(planet.resources['Fe-ore']).toBeCloseTo(98, 6);
-    expect(planet.resources['Fe']).toBeCloseTo(1.05, 6);
-    expect(planet.resources['O']).toBeCloseTo(0.45, 6);
-    expect(planet.resourcePurity?.['Fe']).toBeCloseTo(0.78, 6);
+const queues = new Map<EntityId, ProductionQueue>();
+
+describe('R-27 авто-режим через цеха завода (PROC-WORKSHOPS-01)', () => {
+  beforeEach(() => {
+    queues.clear();
   });
 
-  test('2. Резервный пол: руда НЕ расходуется ниже reserves.minimum', () => {
-    const planet = makePlanet(
-      [{ q: 0, r: 0, id: 'processor', level: 1 }],
-      { 'Si-ore': 50 },
-      { 'Si-ore': { minimum: 50, priority: 8 } },
-    );
-    processEconomyTick([planet], queues());
-    expect(planet.resources['Si-ore']).toBeCloseTo(50, 6);
-    expect(planet.resources['Si']).toBeUndefined();
+  test('A1. Свободный цех автоматически берёт базовую руду: smelt_fe за 5 тиков, ×0.75/0.78', () => {
+    const planet = makePlanet({ 'Fe-ore': 100 });
+    buildPlant(planet, 0, 1);
+    // Энергобаланс положительный; рецепт smelt_fe: Fe-ore 10 → Fe 7 + O 3, time 5.
+    const fe0 = planet.resources['Fe'] ?? 0;
+    for (let t = 0; t < 5; t++) processEconomyTick([planet], queues);
+    // Авто-партия завершена: Fe-ore −10, Fe +7×0.75 = +5.25, O +3×0.75.
+    expect(planet.resources['Fe-ore']).toBe(90);
+    expect((planet.resources['Fe'] ?? 0) - fe0).toBeCloseTo(5.25, 5);
+    // Чистота партии = 0.78 (basePurity); складская — средневзвешенная со
+    // стартерным запасом (чистота по умолчанию 1.0) → в диапазоне [0.78, 1].
+    const purity = planet.resourcePurity?.['Fe'] ?? 0;
+    expect(purity).toBeGreaterThanOrEqual(0.78 - 1e-9);
+    expect(purity).toBeLessThanOrEqual(1.0 + 1e-9);
   });
 
-  test('3. Все базовые рецепты (химия R-27): песок→Si+O, каолин→Al+Si+O+H, уголь→C+Шлак', () => {
-    const planet = makePlanet(
-      [{ q: 0, r: 0, id: 'processor', level: 1 }],
-      { 'Si-ore': 100, 'Al-ore': 100, 'C-ore': 100 },
-    );
-    processEconomyTick([planet], queues());
-    // R-27 химия (fraction 0.2 партии/тик × yield 0.75 universal L1):
-    //   smelt_si (песок):  10 → Si 4.7 + O 5.3
-    //   smelt_al (каолин): 10 → Al 2.1 + Si 2.2 + O 5.6 + H 0.2
-    //   smelt_c (уголь):   10 → C 8.0 + Шлак 2.0 (побочный ресурс)
-    expect(planet.resources['Si-ore']).toBeCloseTo(98, 6);
-    expect(planet.resources['Al-ore']).toBeCloseTo(98, 6);
-    expect(planet.resources['C-ore']).toBeCloseTo(98, 6);
-    const f = 0.2 * 0.75;
-    expect(planet.resources['Al']).toBeCloseTo(2.1 * f, 6);
-    expect(planet.resources['C']).toBeCloseTo(8.0 * f, 6);
-    // Si приходит из ДВУХ рецептов (песок + каолин), O — тоже (песок + каолин)
-    expect(planet.resources['Si']).toBeCloseTo((4.7 + 2.2) * f, 6);
-    expect(planet.resources['O']).toBeCloseTo((5.3 + 5.6) * f, 6);
-    expect(planet.resources['H']).toBeCloseTo(0.2 * f, 6);
-    expect(planet.resources['slag']).toBeCloseTo(2.0 * f, 6);
+  test('A2. Резервный пол: авто-кандидат не стартует на резерве руды', () => {
+    // Fe-ore 15, резерв minimum 10 → над полом только 5 < 10 входа партии.
+    const planet = makePlanet({ 'Fe-ore': 15 });
+    planet.warehouse!.reserves['Fe-ore'] = { resourceId: 'Fe-ore', minimum: 10, priority: 1 };
+    buildPlant(planet, 0, 1);
+    for (let t = 0; t < 10; t++) processEconomyTick([planet], queues);
+    expect(planet.resources['Fe-ore']).toBe(15); // ничего не потрачено
+    // player-задача НЕ ограничена полем (raw stock 15 ≥ 10) — стартует.
+    const q: ProductionQueue = { planetId: planet.id, items: [] };
+    queues.set(planet.id, q);
+    expect(enqueueProduction(planet, queues, 'smelt_fe', false)).toBe(true);
+    processEconomyTick([planet], queues);
+    expect(q.items[0]!.progress).toBeLessThan(q.items[0]!.total);
   });
 
-  test('4. 3 переработчика = 3× скорость (жалоба владельца)', () => {
-    const planet = makePlanet(
-      [
-        { q: 0, r: 0, id: 'processor', level: 1 },
-        { q: 1, r: 0, id: 'processor', level: 1 },
-        { q: 0, r: 1, id: 'processor', level: 1 },
-      ],
-      { 'Fe-ore': 100 },
-    );
-    processEconomyTick([planet], queues());
-    // 3 × 2 ед. (не смежны — синергии нет)
-    expect(planet.resources['Fe-ore']).toBeCloseTo(94, 6);
-    expect(planet.resources['Fe']).toBeCloseTo(7 * 0.6 * 0.75, 6);
+  test('A3. Приоритет авто-кандидатов: Fe → Si (первый runnable по порядку)', () => {
+    const planet = makePlanet({ 'Fe-ore': 50, 'Si-ore': 50 });
+    buildPlant(planet, 0, 1);
+    const siAfterBuild = planet.resources['Si'] ?? 0;
+    for (let t = 0; t < 5; t++) processEconomyTick([planet], queues);
+    // Первой завершилась партия Fe (приоритет R-27), Si-ore не тронут.
+    expect(planet.resources['Fe-ore']).toBe(40);
+    expect(planet.resources['Si-ore']).toBe(50);
+    expect(planet.resources['Si'] ?? 0).toBe(siAfterBuild); // Si не произведён
   });
 
-  test('5. Уровень: L2 = ×1.15', () => {
-    const planet = makePlanet(
-      [{ q: 0, r: 0, id: 'processor', level: 2 }],
-      { 'Fe-ore': 100 },
-    );
-    processEconomyTick([planet], queues());
-    // 2 × 1.15 = 2.3 ед. Fe-ore
-    expect(planet.resources['Fe-ore']).toBeCloseTo(97.7, 6);
+  test('A4. Вместимость: L1 — 1 партия за раз; авто-партии ≤ числа цехов', () => {
+    const planet = makePlanet({ 'Fe-ore': 100, 'Si-ore': 100 });
+    buildPlant(planet, 0, 1);
+    for (let t = 0; t < 5; t++) processEconomyTick([planet], queues);
+    // За 5 тиков могла завершиться только ОДНА партия (1 цех).
+    const consumed = (100 - (planet.resources['Fe-ore'] ?? 0)) + (100 - (planet.resources['Si-ore'] ?? 0));
+    expect(consumed).toBe(10);
   });
 
-  test('6. Синергия mine_processor: смежная шахта → ×1.15', () => {
-    const planet = makePlanet(
-      [
-        { q: 0, r: 0, id: 'processor', level: 1 },
-        { q: 1, r: 0, id: 'mine', level: 1 },
-      ],
-      { 'Fe-ore': 100 },
-    );
-    processEconomyTick([planet], queues());
-    // 2 × 1.15 = 2.3 (mine не добывает — нет залежей, но синергия работает)
-    expect(planet.resources['Fe-ore']).toBeCloseTo(97.7, 6);
+  test('A5. Энергогейт: без энергии авто-партия стоит (входы не списываются)', () => {
+    const planet = makePlanet({ 'Fe-ore': 100 });
+    buildPlant(planet, 0, 1, /* withReactor */ false); // только потребитель
+    // per-tick стоимость smelt_fe = 2/5 = 0.4; статический баланс = −6
+    // (recalc каждого тика) → партия не стартует и не движется.
+    for (let t = 0; t < 10; t++) processEconomyTick([planet], queues);
+    expect(planet.resources['Fe-ore']).toBe(100);
+    const feAfterBuild = planet.resources['Fe'] ?? 0;
+    expect(planet.resources['Fe'] ?? 0).toBe(feAfterBuild);
   });
 
-  test('7. Специализация metal_smelting: только металлы, буст выхода', () => {
-    const planet = makePlanet(
-      [{
-        q: 0, r: 0, id: 'processor', level: 3,
-        processorType: 'specialized', specialization: 'metal_smelting', specializationLevel: 1,
-      }],
-      { 'Fe-ore': 100, 'Si-ore': 100 },
-    );
-    processEconomyTick([planet], queues());
-    // smelt_fe: fraction = 2 × 1.3 / 10 = 0.26; specialized yield = 1.0 → Fe = 0.26 × 7 = 1.82
-    expect(planet.resources['Fe']).toBeCloseTo(7 * 0.26, 6);
-    // smelt_si — nonmetal: специализированный metal_smelting его НЕ берёт
-    expect(planet.resources['Si-ore']).toBeCloseTo(100, 6);
-    expect(planet.resources['Si']).toBeUndefined();
+  test('A6. Отсутствующий вход пропускает кандидата: нет Fe-ore → берётся Si-ore', () => {
+    const planet = makePlanet({ 'Si-ore': 50 });
+    buildPlant(planet, 0, 1);
+    const siAfterBuild6 = planet.resources['Si'] ?? 0;
+    for (let t = 0; t < 5; t++) processEconomyTick([planet], queues);
+    // Fe-ore нет → первый runnable кандидат = Si (равноприоритетный порядок).
+    expect(planet.resources['Si-ore']).toBe(40);
+    // smelt_si: Si 4.7 × 0.75 = 3.525.
+    expect(planet.resources['Si'] ?? 0).toBeCloseTo(siAfterBuild6 + 4.7 * 0.75, 5);
   });
 
-  test('8. Специализация gas_processing: НЕ участвует в авто-режиме', () => {
-    const planet = makePlanet(
-      [{
-        q: 0, r: 0, id: 'processor', level: 3,
-        processorType: 'specialized', specialization: 'gas_processing', specializationLevel: 1,
-      }],
-      { 'Fe-ore': 100 },
-    );
-    processEconomyTick([planet], queues());
-    expect(planet.resources['Fe-ore']).toBeCloseTo(100, 6);
-    expect(planet.resources['Fe']).toBeUndefined();
+  test('A7. Множественные заказы одного рецепта — отдельные входные ресурсы', () => {
+    const planet = makePlanet({ 'Fe-ore': 40 });
+    buildPlant(planet, 0, 2); // 2 цеха
+    const q: ProductionQueue = { planetId: planet.id, items: [] };
+    queues.set(planet.id, q);
+    enqueueProduction(planet, queues, 'smelt_fe', false);
+    enqueueProduction(planet, queues, 'smelt_fe', false);
+    // Обе player-партии стартуют (2 цеха) и обе завершатся: 2 × 10 руды.
+    for (let t = 0; t < 5; t++) processEconomyTick([planet], queues);
+    expect(planet.resources['Fe-ore']).toBe(20);
+    expect(q.items.length).toBe(0); // обе не-repeat задачи удалены
   });
 
-  test('9. Энергогейт: energyBalance ≤ 0 → авто-переработка стоит', () => {
-    const planet = makePlanet(
-      [{ q: 0, r: 0, id: 'processor', level: 1 }],
-      { 'Fe-ore': 100 },
-    );
-    planet.energyBalance = 0;
-    processEconomyTick([planet], queues());
-    expect(planet.resources['Fe-ore']).toBeCloseTo(100, 6);
-    expect(planet.resources['Fe']).toBeUndefined();
+  test('A8. Специалист завода получает профильного авто-кандидата', () => {
+    const planet = makePlanet({ 'Fe-ore': 50, 'Si-ore': 50 });
+    buildPlant(planet, 0, 2);
+    // Цех №2 — специалист smelt_si; цех №1 — обычный.
+    planet.hexes[0]!.workshops![1] = { specializationRecipeId: 'smelt_si', specializationLevel: 1 };
+    const siAfterBuild8 = planet.resources['Si'] ?? 0;
+    for (let t = 0; t < 5; t++) processEconomyTick([planet], queues);
+    const w2 = planet.hexes[0]!.workshops![1]!;
+    // Оба цеха работали: Fe −10 (обычный цех №1), Si −10 (специалист — профиль).
+    expect(planet.resources['Fe-ore']).toBe(40);
+    expect(planet.resources['Si-ore']).toBe(40);
+    // Специалист завершил ПРОФИЛЬНУЮ партию: smelt_si выход Si 4.7 × 1.0
+    // (обычный цех дал бы 4.7 × 0.75 = 3.525).
+    expect(planet.resources['Si'] ?? 0).toBeCloseTo(siAfterBuild8 + 4.7, 5);
+    expect(w2.specializationRecipeId).toBe('smelt_si');
   });
 
-  test('10. Ёмкость processed склада ограничивает выходы', () => {
-    const planet = makePlanet(
-      [{ q: 0, r: 0, id: 'processor', level: 1 }],
-      { 'Fe-ore': 100 },
-    );
-    // Заполнить processed почти целиком (3500 − 1.0)
-    planet.resources['Si'] = 3499;
-    processEconomyTick([planet], queues());
-    // Итог ровно 3500: Fe добавился ровно в оставшийся 1.0 (O не влез — общий fraction урезан)
-    // fraction ограничен: Fe ≤ available/1.05; O ≤ available/0.45 → доля по O: 1.0/0.45 fraction…
-    const totalProcessed = planet.resources['Si']! + planet.resources['Fe']! + (planet.resources['O'] ?? 0) + (planet.resources['H'] ?? 0);
-    expect(totalProcessed).toBeCloseTo(3500, 4);
-    // Руда списана пропорционально фактической доле
-    expect(planet.resources['Fe-ore']).toBeGreaterThan(98);
-  });
-
-  test('11. buildOnHex интеграция: процессор после постройки сразу перерабатывает', () => {
-    const planet = makePlanet([{ q: 0, r: 0 }], { 'Fe-ore': 100, Fe: 50, Si: 50, C: 30, Al: 50, Ti: 20, Cu: 20 });
-    expect(buildOnHex(planet, 0, 'processor')).toBe(true);
-    // Стоимость постройки processor: Fe 8 + Si 5 + C 3
-    expect(planet.resources['Fe']).toBeCloseTo(42, 6);
-    // buildOnHex → recalcEnergyBalance: одиночный переработчик без генераторов
-    // даёт баланс −6 (энергогейт корректно блокирует авто-режим). Подключаем
-    // «сеть»: возвращаем положительный баланс, как в колонии с ЭС.
-    planet.energyBalance = 100;
-    processEconomyTick([planet], queues());
-    // 42 + 1.05 (авто-переработка) = 43.05
-    expect(planet.resources['Fe']).toBeCloseTo(43.05, 4);
+  test('A9. Продвинутый пул (processor) — авто-кандидатов НЕТ (изоляция пулов)', () => {
+    const planet = makePlanet({ 'Fe-ore': 100, 'Cr-ore': 100 });
+    // Только processor (продвинутый пул): базовых цехов НЕТ.
+    buildOnHex(planet, 0, 'processor');
+    planet.energyBalance = 1000; // recalc в buildOnHex — вернуть избыток
+    const feAfterBuild = planet.resources['Fe'] ?? 0;
+    const crAfterBuild = planet.resources['Cr'] ?? 0;
+    for (let t = 0; t < 10; t++) processEconomyTick([planet], queues);
+    // Базовые руды не перерабатываются (нет завода), Cr-ore не трогается
+    // (продвинутый пул без авто-кандидатов).
+    expect(planet.resources['Fe-ore']).toBe(100);
+    expect(planet.resources['Cr-ore']).toBe(100);
+    expect(planet.resources['Fe'] ?? 0).toBe(feAfterBuild);
+    expect(planet.resources['Cr'] ?? 0).toBe(crAfterBuild);
   });
 });

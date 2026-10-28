@@ -106,7 +106,8 @@ describe('Аудит 2026-10-26: полный HTTP-раундтрип сохра
     const withMine = state.galaxy.systems.flatMap((s) => s.planets).find((p) => p.id === planet.id)!;
     freeHex = withMine.hexes.findIndex((h) => h.buildingId == null);
     if (freeHex >= 0) {
-      bus.emit('economy:build', { planetId: planet.id, hexIndex: freeHex, buildingId: 'processor', layer: 'surface' });
+      // PROC-WORKSHOPS-01: smelt_fe принадлежит заводу стройматериалов
+      bus.emit('economy:build', { planetId: planet.id, hexIndex: freeHex, buildingId: 'construction_materials_plant', layer: 'surface' });
     }
 
     // Очередь производства с автоповтором (R-26 карусель)

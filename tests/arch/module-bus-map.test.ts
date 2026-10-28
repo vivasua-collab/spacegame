@@ -273,14 +273,16 @@ describe('ARCH-BUS-MAP-01: артефакт реального репозито�
     expect(isDrifted(rendered, existing)).toBe(false);
   });
 
-  test('сводные числа соответствуют module-contracts.md §4 (86 событий; 10/2/7/24/43)', () => {
+  test('сводные числа соответствуют module-contracts.md §4 (85 событий; 10/2/7/24/42 — PROC-WORKSHOPS-01)', () => {
     const map = analyzeBusMap(realOptions());
-    expect(Object.keys(map.events)).toHaveLength(86);
+    // PROC-WORKSHOPS-01: −processor-output-changed, −active-recipes-changed,
+    // +workshop-batch-started → 85 событий; declared 43→42.
+    expect(Object.keys(map.events)).toHaveLength(85);
     expect(map.summary.modules).toBe(10); // 6 active + core/combat/diplomacy/trade reserved
     expect(map.summary.queries).toBe(9);
     expect(map.summary.events).toEqual({
       declared_and_published: 10,
-      declared_but_not_observed_published: 43,
+      declared_but_not_observed_published: 42,
       manifest_vs_runtime_mismatch: 2,
       observed_but_not_declared: 7,
       published_without_observed_consumer: 24,

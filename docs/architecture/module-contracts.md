@@ -223,21 +223,23 @@ economy, research, ships, fleet, ai])` (:338-345), подписка стора �
 | `GameLoop` | Тики: интервал → `processTick()` :190-205. | emit: `core:tick` :196, `core:year` :203, `core:speed-changed` :97, `core:paused` :119, `core:started`/`core:resumed` :112 (тернарник — динамическая форма с двумя литералами). |
 | `ModuleRegistry` | Реестр: регистрация, топосортировка, тики, query-реестр. | `tickAll` :133-143; query API :148-171 (строковые имена, без типизированной карты — см. §8). |
 
-## 4. Итоги по статусам (86 событий каталога)
+## 4. Итоги по статусам (85 событий каталога)
+
+> PROC-WORKSHOPS-01 (2026-10-28): удалены `economy:processor-output-changed`
+> и `economy:active-recipes-changed` (категорийная модель процессора);
+> добавлен `economy:workshop-batch-started` (партии цехов). 86 → 85.
 
 | Статус | Кол-во | События |
 |---|---|---|
 | `declared_and_published` | 10 | `core:tick`, `core:game-created`, `core:game-loaded`, `core:state-changed`, `economy:build`, `economy:upgrade`, `economy:enqueue`, `economy:colonize`, `economy:specialize`, `economy:upgrade-specialization` |
 | `manifest_vs_runtime_mismatch` | 2 | `economy:downgrade`, `economy:demolish` (F-02) |
 | `observed_but_not_declared` | 7 | `core:year`, `core:started`, `core:paused`, `core:resumed`, `core:speed-changed`, `economy:production-cancelled` (F-03), `combat:engaged` |
-| `published_without_observed_consumer` | 24 | `galaxy:generated`; `economy:building-constructed/-upgraded/-downgraded/-demolished`, `economy:production-complete`, `economy:planet-colonized`, `economy:building-specialized`, `economy:specialization-upgraded`, `economy:processor-output-changed` (9); `ships:constructed`, `ships:construction-progress`, `ships:arrived`, `ships:fuel-consumed` (4); `fleet:movement-started`, `fleet:order-completed`, `fleet:arrived`, `fleet:fuel-low`, `fleet:stranded` (5); `tech:research-completed`, `tech:unlocked`, `tech:tree-validated`, `tech:queue-advanced`, `tech:fundamental-leveled` (5) |
-| `declared_but_not_observed_published` | 43 | полный список в §5 и карте; исторически задокументированный резерв этапов 3б/4 (§2.4) |
+| `published_without_observed_consumer` | 24 | `galaxy:generated`; `economy:building-constructed/-upgraded/-downgraded/-demolished`, `economy:production-complete`, `economy:planet-colonized`, `economy:building-specialized`, `economy:specialization-upgraded`, `economy:workshop-batch-started` (9, PROC-WORKSHOPS-01); `ships:constructed`, `ships:construction-progress`, `ships:arrived`, `ships:fuel-consumed` (4); `fleet:movement-started`, `fleet:order-completed`, `fleet:arrived`, `fleet:fuel-low`, `fleet:stranded` (5); `tech:research-completed`, `tech:unlocked`, `tech:tree-validated`, `tech:queue-advanced`, `tech:fundamental-leveled` (5) |
+| `declared_but_not_observed_published` | 42 | полный список в §5 и карте; исторически задокументированный резерв этапов 3б/4 (§2.4) |
 | `consumer_without_observed_publisher` | 0 | — |
 | `dynamic_or_unresolved` | 0 | на уровне событий; динамические формы механизмов — §8 |
 
-Сверка: 10+2+7+24+43 = **86** = |EventMap|. Историческая оценка в комментарии
-`src/core/events.ts:16` («эмитятся ~42 из объявленных») уточняется фактом:
-эмитятся **43 из 86**, у 24 из них нет production-потребителей (F-08).
+Сверка: 10+2+7+24+42 = **85** = |EventMap|.
 
 ## 5. Полная таблица событий (evidence — краткая; поимённо с file:line — в `module-bus-map.json`)
 
@@ -287,8 +289,6 @@ economy, research, ships, fleet, ai])` (:338-345), подписка стора �
 | `economy:upgrade-specialization` | :108 | economy:s | game-store:1061 | economy-module:146 | declared_and_published |
 | `economy:building-specialized` | :111 | economy:e | engine:1638,:1695 | — | published_without_observed_consumer |
 | `economy:specialization-upgraded` | :118 | economy:e | engine:1761 | — | published_without_observed_consumer |
-| `economy:processor-output-changed` | :128 | economy:e | engine:1646,:1703,:1767 | — | published_without_observed_consumer |
-| `economy:active-recipes-changed` | :135 | economy:e | — | — | declared_but_not_observed_published |
 
 ### Ships (11)
 | Событие | events.ts | М | Изд | Потр | Статус |

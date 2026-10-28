@@ -121,7 +121,7 @@ describe('Block 01 T3: Economy — extraction → production → energy', () => 
       deposits: [],
     };
     planet.hexes.push(hex2);
-    buildOnHex(planet, 1, 'processor');
+    buildOnHex(planet, 1, 'construction_materials_plant'); // PROC-WORKSHOPS-01: smelt_fe — завод
 
     // Give Fe-ore directly (no extraction to isolate production).
     planet.resources['Fe-ore'] = 100;
@@ -177,7 +177,7 @@ describe('Block 01 T3: Economy — extraction → production → energy', () => 
       deposits: [],
     };
     planet.hexes.push(hex2);
-    buildOnHex(planet, 1, 'processor');
+    buildOnHex(planet, 1, 'construction_materials_plant'); // PROC-WORKSHOPS-01
 
     // Set energy balance to negative (no solar plant).
     planet.energyBalance = -10;
@@ -208,7 +208,7 @@ describe('Block 01 T3: Economy — extraction → production → energy', () => 
       deposits: [],
     };
     planet.hexes.push(hex2);
-    buildOnHex(planet, 1, 'processor');
+    buildOnHex(planet, 1, 'construction_materials_plant'); // PROC-WORKSHOPS-01
 
     planet.resources['Fe-ore'] = 100;
     enqueueProduction(planet, queues, 'smelt_fe', false);

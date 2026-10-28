@@ -224,8 +224,8 @@ describe('R-39: Store→Mediator sync (P0-1) + GameLoop lifecycle + saveGame rac
   test('T3. cancelProduction: тик НЕ воскрешает отменённый элемент (syncMediatorState доходит до модулей)', () => {
     const { planetId, freeHexIndex } = startGameAndColonize();
     const store = useGameStore.getState();
-    // smelt_fe требует processor — строим (стартовых ресурсов хватает)
-    expect(store.buildOnHex(planetId, freeHexIndex, 'processor')).toBe(true);
+    // smelt_fe требует завод стройматериалов (PROC-WORKSHOPS-01) — строим
+    expect(store.buildOnHex(planetId, freeHexIndex, 'construction_materials_plant')).toBe(true);
 
     // Постановка (Pattern A)
     expect(useGameStore.getState().enqueueProduction(planetId, 'smelt_fe', false)).toBe(true);

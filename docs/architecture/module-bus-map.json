@@ -225,121 +225,114 @@
     },
     {
       "file": "src/economy/engine.ts",
-      "line": 592,
+      "line": 440,
       "event": "economy:production-cancelled",
       "publisher": "processProductionQueue",
       "receiver": "gameBus"
     },
     {
       "file": "src/economy/engine.ts",
-      "line": 679,
+      "line": 520,
       "event": "economy:production-complete",
       "publisher": "processProductionQueue",
       "receiver": "gameBus"
     },
     {
       "file": "src/economy/engine.ts",
-      "line": 682,
+      "line": 523,
       "event": "economy:production-cancelled",
       "publisher": "processProductionQueue",
       "receiver": "gameBus"
     },
     {
       "file": "src/economy/engine.ts",
-      "line": 1186,
+      "line": 1027,
       "event": "economy:building-constructed",
       "publisher": "buildOnHex",
       "receiver": "gameBus"
     },
     {
       "file": "src/economy/engine.ts",
-      "line": 1244,
+      "line": 1087,
       "event": "economy:building-constructed",
       "publisher": "buildOnAtmosphereSlot",
       "receiver": "gameBus"
     },
     {
       "file": "src/economy/engine.ts",
-      "line": 1296,
+      "line": 1141,
       "event": "economy:building-constructed",
       "publisher": "buildOnOrbitSlot",
       "receiver": "gameBus"
     },
     {
       "file": "src/economy/engine.ts",
-      "line": 1342,
+      "line": 1194,
       "event": "economy:building-upgraded",
       "publisher": "upgradeBuilding",
       "receiver": "gameBus"
     },
     {
       "file": "src/economy/engine.ts",
-      "line": 1448,
+      "line": 1311,
       "event": "economy:building-downgraded",
       "publisher": "downgradeBuilding",
       "receiver": "gameBus"
     },
     {
       "file": "src/economy/engine.ts",
-      "line": 1495,
+      "line": 1393,
       "event": "economy:building-demolished",
       "publisher": "demolishBuilding",
       "receiver": "gameBus"
     },
     {
       "file": "src/economy/engine.ts",
-      "line": 1638,
+      "line": 1530,
       "event": "economy:building-specialized",
-      "publisher": "specializeBuilding",
+      "publisher": "specializeWorkshop",
       "receiver": "gameBus"
     },
     {
       "file": "src/economy/engine.ts",
-      "line": 1646,
-      "event": "economy:processor-output-changed",
-      "publisher": "specializeBuilding",
-      "receiver": "gameBus"
-    },
-    {
-      "file": "src/economy/engine.ts",
-      "line": 1695,
-      "event": "economy:building-specialized",
-      "publisher": "specializeBuilding",
-      "receiver": "gameBus"
-    },
-    {
-      "file": "src/economy/engine.ts",
-      "line": 1703,
-      "event": "economy:processor-output-changed",
-      "publisher": "specializeBuilding",
-      "receiver": "gameBus"
-    },
-    {
-      "file": "src/economy/engine.ts",
-      "line": 1761,
+      "line": 1594,
       "event": "economy:specialization-upgraded",
-      "publisher": "upgradeSpecialization",
+      "publisher": "upgradeWorkshopSpecialization",
       "receiver": "gameBus"
     },
     {
       "file": "src/economy/engine.ts",
-      "line": 1767,
-      "event": "economy:processor-output-changed",
-      "publisher": "upgradeSpecialization",
-      "receiver": "gameBus"
-    },
-    {
-      "file": "src/economy/engine.ts",
-      "line": 1803,
+      "line": 1651,
       "event": "economy:production-cancelled",
       "publisher": "cancelProduction",
       "receiver": "gameBus"
     },
     {
       "file": "src/economy/engine.ts",
-      "line": 1877,
+      "line": 1747,
       "event": "economy:planet-colonized",
       "publisher": "colonizePlanet",
+      "receiver": "gameBus"
+    },
+    {
+      "file": "src/economy/workshop-scheduler.ts",
+      "line": 410,
+      "event": "economy:production-complete",
+      "publisher": "runWorkshopPoolTick",
+      "receiver": "gameBus"
+    },
+    {
+      "file": "src/economy/workshop-scheduler.ts",
+      "line": 442,
+      "event": "economy:workshop-batch-started",
+      "publisher": "startPlayerBatch",
+      "receiver": "gameBus"
+    },
+    {
+      "file": "src/economy/workshop-scheduler.ts",
+      "line": 462,
+      "event": "economy:workshop-batch-started",
+      "publisher": "startAutoBatch",
       "receiver": "gameBus"
     },
     {
@@ -407,91 +400,91 @@
     },
     {
       "file": "src/stores/game-store.ts",
-      "line": 1062,
+      "line": 1135,
       "event": "economy:build",
       "publisher": "buildOnHex",
       "receiver": "mediator.getBus()"
     },
     {
       "file": "src/stores/game-store.ts",
-      "line": 1079,
+      "line": 1152,
       "event": "economy:upgrade",
       "publisher": "upgradeBuildingOnHex",
       "receiver": "mediator.getBus()"
     },
     {
       "file": "src/stores/game-store.ts",
-      "line": 1099,
+      "line": 1172,
       "event": "economy:downgrade",
       "publisher": "downgradeBuildingOnHex",
       "receiver": "mediator.getBus()"
     },
     {
       "file": "src/stores/game-store.ts",
-      "line": 1120,
+      "line": 1193,
       "event": "economy:demolish",
       "publisher": "demolishBuildingOnHex",
       "receiver": "mediator.getBus()"
     },
     {
       "file": "src/stores/game-store.ts",
-      "line": 1138,
+      "line": 1211,
       "event": "economy:downgrade",
       "publisher": "downgradeBuildingOnSlot",
       "receiver": "mediator.getBus()"
     },
     {
       "file": "src/stores/game-store.ts",
-      "line": 1159,
+      "line": 1232,
       "event": "economy:demolish",
       "publisher": "demolishBuildingOnSlot",
       "receiver": "mediator.getBus()"
     },
     {
       "file": "src/stores/game-store.ts",
-      "line": 1178,
+      "line": 1251,
       "event": "economy:build",
       "publisher": "buildOnAtmosphereSlot",
       "receiver": "mediator.getBus()"
     },
     {
       "file": "src/stores/game-store.ts",
-      "line": 1202,
+      "line": 1275,
       "event": "economy:build",
       "publisher": "buildOnOrbitSlot",
       "receiver": "mediator.getBus()"
     },
     {
       "file": "src/stores/game-store.ts",
-      "line": 1223,
+      "line": 1296,
       "event": "economy:enqueue",
       "publisher": "enqueueProduction",
       "receiver": "mediator.getBus()"
     },
     {
       "file": "src/stores/game-store.ts",
-      "line": 1268,
+      "line": 1342,
       "event": "economy:specialize",
-      "publisher": "specializeBuildingOnHex",
+      "publisher": "specializeWorkshopOnHex",
       "receiver": "mediator.getBus()"
     },
     {
       "file": "src/stores/game-store.ts",
-      "line": 1293,
+      "line": 1367,
       "event": "economy:upgrade-specialization",
-      "publisher": "upgradeSpecializationOnHex",
+      "publisher": "upgradeWorkshopSpecializationOnHex",
       "receiver": "mediator.getBus()"
     },
     {
       "file": "src/stores/game-store.ts",
-      "line": 1311,
+      "line": 1389,
       "event": "economy:colonize",
       "publisher": "colonizePlanet",
       "receiver": "mediator.getBus()"
     },
     {
       "file": "src/stores/game-store.ts",
-      "line": 2143,
+      "line": 2221,
       "event": "tech:fundamental-leveled",
       "publisher": "levelUpFundamental",
       "receiver": "getMediatorWithModules().getBus()"
@@ -625,7 +618,7 @@
       "registration": [
         {
           "file": "src/stores/game-store.ts",
-          "line": 405,
+          "line": 412,
           "order": 1
         }
       ],
@@ -695,7 +688,7 @@
             "line": 70
           },
           {
-            "name": "economy:processor-output-changed",
+            "name": "economy:workshop-batch-started",
             "line": 71
           },
           {
@@ -876,7 +869,7 @@
       "registration": [
         {
           "file": "src/stores/game-store.ts",
-          "line": 405,
+          "line": 412,
           "order": 2
         }
       ],
@@ -1026,7 +1019,7 @@
       "registration": [
         {
           "file": "src/stores/game-store.ts",
-          "line": 405,
+          "line": 412,
           "order": 3
         }
       ],
@@ -1100,7 +1093,7 @@
       "registration": [
         {
           "file": "src/stores/game-store.ts",
-          "line": 405,
+          "line": 412,
           "order": 4
         }
       ],
@@ -1179,7 +1172,7 @@
       "registration": [
         {
           "file": "src/stores/game-store.ts",
-          "line": 405,
+          "line": 412,
           "order": 5
         }
       ],
@@ -1261,7 +1254,7 @@
       "registration": [
         {
           "file": "src/stores/game-store.ts",
-          "line": 405,
+          "line": 412,
           "order": 6
         }
       ],
@@ -1383,7 +1376,7 @@
     "ai:colony-founded": {
       "declared": {
         "file": "src/core/events.ts",
-        "line": 265,
+        "line": 278,
         "payloadType": "{ factionId: EntityId; planetId: EntityId }",
         "interfaceName": "AIEvents"
       },
@@ -1398,7 +1391,7 @@
     "ai:decision": {
       "declared": {
         "file": "src/core/events.ts",
-        "line": 264,
+        "line": 277,
         "payloadType": "{ factionId: EntityId; action: string; targetId?: EntityId }",
         "interfaceName": "AIEvents"
       },
@@ -1413,7 +1406,7 @@
     "ai:fleet-sent": {
       "declared": {
         "file": "src/core/events.ts",
-        "line": 266,
+        "line": 279,
         "payloadType": "{ factionId: EntityId; fleetId: EntityId; purpose: string }",
         "interfaceName": "AIEvents"
       },
@@ -1428,7 +1421,7 @@
     "combat:engaged": {
       "declared": {
         "file": "src/core/events.ts",
-        "line": 187,
+        "line": 200,
         "payloadType": "{ systemId: EntityId; attackerFactionId: EntityId; defenderFactionId: EntityId }",
         "interfaceName": "CombatEvents"
       },
@@ -1451,7 +1444,7 @@
     "combat:planet-bombarded": {
       "declared": {
         "file": "src/core/events.ts",
-        "line": 190,
+        "line": 203,
         "payloadType": "{ planetId: EntityId; damage: number; buildingsDestroyed: number }",
         "interfaceName": "CombatEvents"
       },
@@ -1466,7 +1459,7 @@
     "combat:resolved": {
       "declared": {
         "file": "src/core/events.ts",
-        "line": 189,
+        "line": 202,
         "payloadType": "{ systemId: EntityId; winnerFactionId: EntityId; losses: { factionId: EntityId; shipCount: number }[] }",
         "interfaceName": "CombatEvents"
       },
@@ -1481,7 +1474,7 @@
     "combat:round": {
       "declared": {
         "file": "src/core/events.ts",
-        "line": 188,
+        "line": 201,
         "payloadType": "{ systemId: EntityId; round: number; attackerDmg: number; defenderDmg: number }",
         "interfaceName": "CombatEvents"
       },
@@ -1797,7 +1790,7 @@
       "productionConsumers": [
         {
           "file": "src/stores/game-store.ts",
-          "line": 417,
+          "line": 424,
           "event": "core:state-changed",
           "subscriber": "getMediatorWithModules",
           "receiver": "mediator.getBus()"
@@ -2055,7 +2048,7 @@
     "diplomacy:accepted": {
       "declared": {
         "file": "src/core/events.ts",
-        "line": 244,
+        "line": 257,
         "payloadType": "{ fromFactionId: EntityId; toFactionId: EntityId; type: string }",
         "interfaceName": "DiplomacyEvents"
       },
@@ -2070,7 +2063,7 @@
     "diplomacy:peace-signed": {
       "declared": {
         "file": "src/core/events.ts",
-        "line": 248,
+        "line": 261,
         "payloadType": "{ factionA: EntityId; factionB: EntityId }",
         "interfaceName": "DiplomacyEvents"
       },
@@ -2085,7 +2078,7 @@
     "diplomacy:proposal": {
       "declared": {
         "file": "src/core/events.ts",
-        "line": 243,
+        "line": 256,
         "payloadType": "{ fromFactionId: EntityId; toFactionId: EntityId; type: string }",
         "interfaceName": "DiplomacyEvents"
       },
@@ -2100,7 +2093,7 @@
     "diplomacy:rejected": {
       "declared": {
         "file": "src/core/events.ts",
-        "line": 245,
+        "line": 258,
         "payloadType": "{ fromFactionId: EntityId; toFactionId: EntityId; type: string }",
         "interfaceName": "DiplomacyEvents"
       },
@@ -2115,7 +2108,7 @@
     "diplomacy:relations-changed": {
       "declared": {
         "file": "src/core/events.ts",
-        "line": 246,
+        "line": 259,
         "payloadType": "{ factionA: EntityId; factionB: EntityId; delta: number; newScore: number }",
         "interfaceName": "DiplomacyEvents"
       },
@@ -2130,24 +2123,9 @@
     "diplomacy:war-declared": {
       "declared": {
         "file": "src/core/events.ts",
-        "line": 247,
+        "line": 260,
         "payloadType": "{ attackerFactionId: EntityId; defenderFactionId: EntityId }",
         "interfaceName": "DiplomacyEvents"
-      },
-      "manifestEmittedBy": [],
-      "manifestSubscribedBy": [],
-      "productionEmitters": [],
-      "productionConsumers": [],
-      "testEmitters": [],
-      "testConsumers": [],
-      "status": "declared_but_not_observed_published"
-    },
-    "economy:active-recipes-changed": {
-      "declared": {
-        "file": "src/core/events.ts",
-        "line": 135,
-        "payloadType": "{ planetId: EntityId; hexIndex: number; activeRecipes: string[]; }",
-        "interfaceName": "EconomyEvents"
       },
       "manifestEmittedBy": [],
       "manifestSubscribedBy": [],
@@ -2174,21 +2152,21 @@
       "productionEmitters": [
         {
           "file": "src/stores/game-store.ts",
-          "line": 1062,
+          "line": 1135,
           "event": "economy:build",
           "publisher": "buildOnHex",
           "receiver": "mediator.getBus()"
         },
         {
           "file": "src/stores/game-store.ts",
-          "line": 1178,
+          "line": 1251,
           "event": "economy:build",
           "publisher": "buildOnAtmosphereSlot",
           "receiver": "mediator.getBus()"
         },
         {
           "file": "src/stores/game-store.ts",
-          "line": 1202,
+          "line": 1275,
           "event": "economy:build",
           "publisher": "buildOnOrbitSlot",
           "receiver": "mediator.getBus()"
@@ -2221,7 +2199,7 @@
           "file": "tests/save-roundtrip-http.test.ts",
           "lines": [
             103,
-            109
+            110
           ]
         }
       ],
@@ -2252,21 +2230,21 @@
       "productionEmitters": [
         {
           "file": "src/economy/engine.ts",
-          "line": 1186,
+          "line": 1027,
           "event": "economy:building-constructed",
           "publisher": "buildOnHex",
           "receiver": "gameBus"
         },
         {
           "file": "src/economy/engine.ts",
-          "line": 1244,
+          "line": 1087,
           "event": "economy:building-constructed",
           "publisher": "buildOnAtmosphereSlot",
           "receiver": "gameBus"
         },
         {
           "file": "src/economy/engine.ts",
-          "line": 1296,
+          "line": 1141,
           "event": "economy:building-constructed",
           "publisher": "buildOnOrbitSlot",
           "receiver": "gameBus"
@@ -2307,7 +2285,7 @@
       "productionEmitters": [
         {
           "file": "src/economy/engine.ts",
-          "line": 1495,
+          "line": 1393,
           "event": "economy:building-demolished",
           "publisher": "demolishBuilding",
           "receiver": "gameBus"
@@ -2348,7 +2326,7 @@
       "productionEmitters": [
         {
           "file": "src/economy/engine.ts",
-          "line": 1448,
+          "line": 1311,
           "event": "economy:building-downgraded",
           "publisher": "downgradeBuilding",
           "receiver": "gameBus"
@@ -2377,8 +2355,8 @@
     "economy:building-specialized": {
       "declared": {
         "file": "src/core/events.ts",
-        "line": 111,
-        "payloadType": "{ planetId: EntityId; hexIndex: number; specialization: ProcessorRecipeCategory | 'universal'; specializationLevel: number; }",
+        "line": 122,
+        "payloadType": "{ planetId: EntityId; hexIndex: number; /** Номер цеха 1..buildingLevel */ workshopNumber: number; /** Профиль-рецепт специализации */ recipeId: string; specializationLevel: number; }",
         "interfaceName": "EconomyEvents"
       },
       "manifestEmittedBy": [
@@ -2391,29 +2369,15 @@
       "productionEmitters": [
         {
           "file": "src/economy/engine.ts",
-          "line": 1638,
+          "line": 1530,
           "event": "economy:building-specialized",
-          "publisher": "specializeBuilding",
-          "receiver": "gameBus"
-        },
-        {
-          "file": "src/economy/engine.ts",
-          "line": 1695,
-          "event": "economy:building-specialized",
-          "publisher": "specializeBuilding",
+          "publisher": "specializeWorkshop",
           "receiver": "gameBus"
         }
       ],
       "productionConsumers": [],
       "testEmitters": [],
-      "testConsumers": [
-        {
-          "file": "tests/economy/processors.test.ts",
-          "lines": [
-            198
-          ]
-        }
-      ],
+      "testConsumers": [],
       "status": "published_without_observed_consumer"
     },
     "economy:building-upgraded": {
@@ -2433,7 +2397,7 @@
       "productionEmitters": [
         {
           "file": "src/economy/engine.ts",
-          "line": 1342,
+          "line": 1194,
           "event": "economy:building-upgraded",
           "publisher": "upgradeBuilding",
           "receiver": "gameBus"
@@ -2468,7 +2432,7 @@
       "productionEmitters": [
         {
           "file": "src/stores/game-store.ts",
-          "line": 1311,
+          "line": 1389,
           "event": "economy:colonize",
           "publisher": "colonizePlanet",
           "receiver": "mediator.getBus()"
@@ -2512,14 +2476,14 @@
       "productionEmitters": [
         {
           "file": "src/stores/game-store.ts",
-          "line": 1120,
+          "line": 1193,
           "event": "economy:demolish",
           "publisher": "demolishBuildingOnHex",
           "receiver": "mediator.getBus()"
         },
         {
           "file": "src/stores/game-store.ts",
-          "line": 1159,
+          "line": 1232,
           "event": "economy:demolish",
           "publisher": "demolishBuildingOnSlot",
           "receiver": "mediator.getBus()"
@@ -2550,14 +2514,14 @@
       "productionEmitters": [
         {
           "file": "src/stores/game-store.ts",
-          "line": 1099,
+          "line": 1172,
           "event": "economy:downgrade",
           "publisher": "downgradeBuildingOnHex",
           "receiver": "mediator.getBus()"
         },
         {
           "file": "src/stores/game-store.ts",
-          "line": 1138,
+          "line": 1211,
           "event": "economy:downgrade",
           "publisher": "downgradeBuildingOnSlot",
           "receiver": "mediator.getBus()"
@@ -2613,7 +2577,7 @@
       "productionEmitters": [
         {
           "file": "src/stores/game-store.ts",
-          "line": 1223,
+          "line": 1296,
           "event": "economy:enqueue",
           "publisher": "enqueueProduction",
           "receiver": "mediator.getBus()"
@@ -2638,7 +2602,7 @@
         {
           "file": "tests/save-roundtrip-http.test.ts",
           "lines": [
-            114
+            115
           ]
         }
       ],
@@ -2662,7 +2626,7 @@
       "productionEmitters": [
         {
           "file": "src/economy/engine.ts",
-          "line": 1877,
+          "line": 1747,
           "event": "economy:planet-colonized",
           "publisher": "colonizePlanet",
           "receiver": "gameBus"
@@ -2680,48 +2644,6 @@
       ],
       "status": "published_without_observed_consumer"
     },
-    "economy:processor-output-changed": {
-      "declared": {
-        "file": "src/core/events.ts",
-        "line": 128,
-        "payloadType": "{ planetId: EntityId; hexIndex: number; yieldMult: number; purity: number; }",
-        "interfaceName": "EconomyEvents"
-      },
-      "manifestEmittedBy": [
-        {
-          "module": "economy",
-          "line": 71
-        }
-      ],
-      "manifestSubscribedBy": [],
-      "productionEmitters": [
-        {
-          "file": "src/economy/engine.ts",
-          "line": 1646,
-          "event": "economy:processor-output-changed",
-          "publisher": "specializeBuilding",
-          "receiver": "gameBus"
-        },
-        {
-          "file": "src/economy/engine.ts",
-          "line": 1703,
-          "event": "economy:processor-output-changed",
-          "publisher": "specializeBuilding",
-          "receiver": "gameBus"
-        },
-        {
-          "file": "src/economy/engine.ts",
-          "line": 1767,
-          "event": "economy:processor-output-changed",
-          "publisher": "upgradeSpecialization",
-          "receiver": "gameBus"
-        }
-      ],
-      "productionConsumers": [],
-      "testEmitters": [],
-      "testConsumers": [],
-      "status": "published_without_observed_consumer"
-    },
     "economy:production-cancelled": {
       "declared": {
         "file": "src/core/events.ts",
@@ -2734,21 +2656,21 @@
       "productionEmitters": [
         {
           "file": "src/economy/engine.ts",
-          "line": 592,
+          "line": 440,
           "event": "economy:production-cancelled",
           "publisher": "processProductionQueue",
           "receiver": "gameBus"
         },
         {
           "file": "src/economy/engine.ts",
-          "line": 682,
+          "line": 523,
           "event": "economy:production-cancelled",
           "publisher": "processProductionQueue",
           "receiver": "gameBus"
         },
         {
           "file": "src/economy/engine.ts",
-          "line": 1803,
+          "line": 1651,
           "event": "economy:production-cancelled",
           "publisher": "cancelProduction",
           "receiver": "gameBus"
@@ -2776,9 +2698,16 @@
       "productionEmitters": [
         {
           "file": "src/economy/engine.ts",
-          "line": 679,
+          "line": 520,
           "event": "economy:production-complete",
           "publisher": "processProductionQueue",
+          "receiver": "gameBus"
+        },
+        {
+          "file": "src/economy/workshop-scheduler.ts",
+          "line": 410,
+          "event": "economy:production-complete",
+          "publisher": "runWorkshopPoolTick",
           "receiver": "gameBus"
         }
       ],
@@ -2810,8 +2739,8 @@
     "economy:specialization-upgraded": {
       "declared": {
         "file": "src/core/events.ts",
-        "line": 118,
-        "payloadType": "{ planetId: EntityId; hexIndex: number; specializationLevel: number; }",
+        "line": 132,
+        "payloadType": "{ planetId: EntityId; hexIndex: number; /** Номер цеха 1..buildingLevel */ workshopNumber: number; specializationLevel: number; }",
         "interfaceName": "EconomyEvents"
       },
       "manifestEmittedBy": [
@@ -2824,29 +2753,22 @@
       "productionEmitters": [
         {
           "file": "src/economy/engine.ts",
-          "line": 1761,
+          "line": 1594,
           "event": "economy:specialization-upgraded",
-          "publisher": "upgradeSpecialization",
+          "publisher": "upgradeWorkshopSpecialization",
           "receiver": "gameBus"
         }
       ],
       "productionConsumers": [],
       "testEmitters": [],
-      "testConsumers": [
-        {
-          "file": "tests/economy/processors.test.ts",
-          "lines": [
-            473
-          ]
-        }
-      ],
+      "testConsumers": [],
       "status": "published_without_observed_consumer"
     },
     "economy:specialize": {
       "declared": {
         "file": "src/core/events.ts",
-        "line": 102,
-        "payloadType": "{ planetId: EntityId; hexIndex: number; category: ProcessorRecipeCategory | 'universal'; }",
+        "line": 105,
+        "payloadType": "{ planetId: EntityId; hexIndex: number; /** Номер цеха 1..buildingLevel */ workshopNumber: number; /** Профиль-рецепт специализации (например 'smelt_fe') */ recipeId: string; }",
         "interfaceName": "EconomyEvents"
       },
       "manifestEmittedBy": [],
@@ -2859,9 +2781,9 @@
       "productionEmitters": [
         {
           "file": "src/stores/game-store.ts",
-          "line": 1268,
+          "line": 1342,
           "event": "economy:specialize",
-          "publisher": "specializeBuildingOnHex",
+          "publisher": "specializeWorkshopOnHex",
           "receiver": "mediator.getBus()"
         }
       ],
@@ -2895,7 +2817,7 @@
       "productionEmitters": [
         {
           "file": "src/stores/game-store.ts",
-          "line": 1079,
+          "line": 1152,
           "event": "economy:upgrade",
           "publisher": "upgradeBuildingOnHex",
           "receiver": "mediator.getBus()"
@@ -2924,8 +2846,8 @@
     "economy:upgrade-specialization": {
       "declared": {
         "file": "src/core/events.ts",
-        "line": 108,
-        "payloadType": "{ planetId: EntityId; hexIndex: number }",
+        "line": 114,
+        "payloadType": "{ planetId: EntityId; hexIndex: number; /** Номер цеха 1..buildingLevel */ workshopNumber: number; }",
         "interfaceName": "EconomyEvents"
       },
       "manifestEmittedBy": [],
@@ -2938,9 +2860,9 @@
       "productionEmitters": [
         {
           "file": "src/stores/game-store.ts",
-          "line": 1293,
+          "line": 1367,
           "event": "economy:upgrade-specialization",
-          "publisher": "upgradeSpecializationOnHex",
+          "publisher": "upgradeWorkshopSpecializationOnHex",
           "receiver": "mediator.getBus()"
         }
       ],
@@ -2997,10 +2919,45 @@
       "testConsumers": [],
       "status": "declared_but_not_observed_published"
     },
+    "economy:workshop-batch-started": {
+      "declared": {
+        "file": "src/core/events.ts",
+        "line": 143,
+        "payloadType": "{ planetId: EntityId; /** buildingId цехового здания (processor / construction_materials_plant) */ buildingId: string; hexIndex: number; workshopNumber: number; recipeId: string; /** null → системная авто-партия R-27 */ queueItemId: EntityId | null; }",
+        "interfaceName": "EconomyEvents"
+      },
+      "manifestEmittedBy": [
+        {
+          "module": "economy",
+          "line": 71
+        }
+      ],
+      "manifestSubscribedBy": [],
+      "productionEmitters": [
+        {
+          "file": "src/economy/workshop-scheduler.ts",
+          "line": 442,
+          "event": "economy:workshop-batch-started",
+          "publisher": "startPlayerBatch",
+          "receiver": "gameBus"
+        },
+        {
+          "file": "src/economy/workshop-scheduler.ts",
+          "line": 462,
+          "event": "economy:workshop-batch-started",
+          "publisher": "startAutoBatch",
+          "receiver": "gameBus"
+        }
+      ],
+      "productionConsumers": [],
+      "testEmitters": [],
+      "testConsumers": [],
+      "status": "published_without_observed_consumer"
+    },
     "fleet:arrived": {
       "declared": {
         "file": "src/core/events.ts",
-        "line": 175,
+        "line": 188,
         "payloadType": "{ fleetId: EntityId; systemId: EntityId }",
         "interfaceName": "FleetEvents"
       },
@@ -3028,7 +2985,7 @@
     "fleet:created": {
       "declared": {
         "file": "src/core/events.ts",
-        "line": 166,
+        "line": 179,
         "payloadType": "{ fleetId: EntityId; owner: EntityId; shipCount: number }",
         "interfaceName": "FleetEvents"
       },
@@ -3043,7 +3000,7 @@
     "fleet:fuel-low": {
       "declared": {
         "file": "src/core/events.ts",
-        "line": 179,
+        "line": 192,
         "payloadType": "{ fleetId: EntityId; remainingFuel: number; requiredFuel: number }",
         "interfaceName": "FleetEvents"
       },
@@ -3071,7 +3028,7 @@
     "fleet:merged": {
       "declared": {
         "file": "src/core/events.ts",
-        "line": 169,
+        "line": 182,
         "payloadType": "{ fleetId: EntityId; fromFleetIds: EntityId[] }",
         "interfaceName": "FleetEvents"
       },
@@ -3086,7 +3043,7 @@
     "fleet:movement-started": {
       "declared": {
         "file": "src/core/events.ts",
-        "line": 173,
+        "line": 186,
         "payloadType": "{ fleetId: EntityId; fromSystemId: EntityId; toSystemId: EntityId; path: EntityId[]; etaTick: number }",
         "interfaceName": "FleetEvents"
       },
@@ -3114,7 +3071,7 @@
     "fleet:order-cancelled": {
       "declared": {
         "file": "src/core/events.ts",
-        "line": 177,
+        "line": 190,
         "payloadType": "{ fleetId: EntityId; orderType: string; reason: 'manual' | 'impossible' | 'fuel' }",
         "interfaceName": "FleetEvents"
       },
@@ -3134,7 +3091,7 @@
     "fleet:order-completed": {
       "declared": {
         "file": "src/core/events.ts",
-        "line": 168,
+        "line": 181,
         "payloadType": "{ fleetId: EntityId; orderType: string; targetId: EntityId }",
         "interfaceName": "FleetEvents"
       },
@@ -3169,7 +3126,7 @@
     "fleet:order-issued": {
       "declared": {
         "file": "src/core/events.ts",
-        "line": 167,
+        "line": 180,
         "payloadType": "{ fleetId: EntityId; orderType: string; targetId: EntityId }",
         "interfaceName": "FleetEvents"
       },
@@ -3184,7 +3141,7 @@
     "fleet:split": {
       "declared": {
         "file": "src/core/events.ts",
-        "line": 170,
+        "line": 183,
         "payloadType": "{ fleetId: EntityId; newFleetId: EntityId }",
         "interfaceName": "FleetEvents"
       },
@@ -3199,7 +3156,7 @@
     "fleet:stranded": {
       "declared": {
         "file": "src/core/events.ts",
-        "line": 181,
+        "line": 194,
         "payloadType": "{ fleetId: EntityId; systemId: EntityId }",
         "interfaceName": "FleetEvents"
       },
@@ -3302,7 +3259,7 @@
     "ships:arrived": {
       "declared": {
         "file": "src/core/events.ts",
-        "line": 149,
+        "line": 162,
         "payloadType": "{ shipId: EntityId; systemId: EntityId }",
         "interfaceName": "ShipsEvents"
       },
@@ -3330,7 +3287,7 @@
     "ships:constructed": {
       "declared": {
         "file": "src/core/events.ts",
-        "line": 146,
+        "line": 159,
         "payloadType": "{ shipId: EntityId; designId: EntityId; owner: EntityId }",
         "interfaceName": "ShipsEvents"
       },
@@ -3365,7 +3322,7 @@
     "ships:construction-progress": {
       "declared": {
         "file": "src/core/events.ts",
-        "line": 158,
+        "line": 171,
         "payloadType": "{ planetId: EntityId; shipId: EntityId; progressTicks: number; totalTicks: number }",
         "interfaceName": "ShipsEvents"
       },
@@ -3400,7 +3357,7 @@
     "ships:construction-started": {
       "declared": {
         "file": "src/core/events.ts",
-        "line": 156,
+        "line": 169,
         "payloadType": "{ planetId: EntityId; designId: EntityId; shipId: EntityId; etaTick: number }",
         "interfaceName": "ShipsEvents"
       },
@@ -3420,7 +3377,7 @@
     "ships:damaged": {
       "declared": {
         "file": "src/core/events.ts",
-        "line": 150,
+        "line": 163,
         "payloadType": "{ shipId: EntityId; hp: number; maxHp: number }",
         "interfaceName": "ShipsEvents"
       },
@@ -3435,7 +3392,7 @@
     "ships:design-validated": {
       "declared": {
         "file": "src/core/events.ts",
-        "line": 154,
+        "line": 167,
         "payloadType": "{ designId: EntityId; valid: boolean; errors: string[] }",
         "interfaceName": "ShipsEvents"
       },
@@ -3450,7 +3407,7 @@
     "ships:designed": {
       "declared": {
         "file": "src/core/events.ts",
-        "line": 145,
+        "line": 158,
         "payloadType": "{ designId: EntityId; hullId: string; moduleCount: number }",
         "interfaceName": "ShipsEvents"
       },
@@ -3465,7 +3422,7 @@
     "ships:destroyed": {
       "declared": {
         "file": "src/core/events.ts",
-        "line": 147,
+        "line": 160,
         "payloadType": "{ shipId: EntityId; systemId: EntityId; byFactionId?: EntityId }",
         "interfaceName": "ShipsEvents"
       },
@@ -3480,7 +3437,7 @@
     "ships:fuel-consumed": {
       "declared": {
         "file": "src/core/events.ts",
-        "line": 160,
+        "line": 173,
         "payloadType": "{ fleetId: EntityId; fuelType: string; amount: number; remaining: number }",
         "interfaceName": "ShipsEvents"
       },
@@ -3508,7 +3465,7 @@
     "ships:movement-started": {
       "declared": {
         "file": "src/core/events.ts",
-        "line": 148,
+        "line": 161,
         "payloadType": "{ shipId: EntityId; from: EntityId; to: EntityId; etaTick: number }",
         "interfaceName": "ShipsEvents"
       },
@@ -3523,7 +3480,7 @@
     "ships:repaired": {
       "declared": {
         "file": "src/core/events.ts",
-        "line": 151,
+        "line": 164,
         "payloadType": "{ shipId: EntityId; hp: number }",
         "interfaceName": "ShipsEvents"
       },
@@ -3538,7 +3495,7 @@
     "tech:allocation-changed": {
       "declared": {
         "file": "src/core/events.ts",
-        "line": 220,
+        "line": 233,
         "payloadType": "{ factionId: EntityId; slots: Array<{ slotId: string; percent: number }> }",
         "interfaceName": "TechEvents"
       },
@@ -3553,7 +3510,7 @@
     "tech:fundamental-leveled": {
       "declared": {
         "file": "src/core/events.ts",
-        "line": 222,
+        "line": 235,
         "payloadType": "{ branchId: FundamentalBranchId; factionId: EntityId; newLevel: number }",
         "interfaceName": "TechEvents"
       },
@@ -3567,7 +3524,7 @@
       "productionEmitters": [
         {
           "file": "src/stores/game-store.ts",
-          "line": 2143,
+          "line": 2221,
           "event": "tech:fundamental-leveled",
           "publisher": "levelUpFundamental",
           "receiver": "getMediatorWithModules().getBus()"
@@ -3588,7 +3545,7 @@
     "tech:prerequisites-met": {
       "declared": {
         "file": "src/core/events.ts",
-        "line": 224,
+        "line": 237,
         "payloadType": "{ techId: string; factionId: EntityId; met: boolean; missing: string[] }",
         "interfaceName": "TechEvents"
       },
@@ -3603,7 +3560,7 @@
     "tech:queue-added": {
       "declared": {
         "file": "src/core/events.ts",
-        "line": 235,
+        "line": 248,
         "payloadType": "{ factionId: EntityId; techId: string; queueLength: number }",
         "interfaceName": "TechEvents"
       },
@@ -3623,7 +3580,7 @@
     "tech:queue-advanced": {
       "declared": {
         "file": "src/core/events.ts",
-        "line": 233,
+        "line": 246,
         "payloadType": "{ factionId: EntityId; techId: string; targetLevel: number; remainingQueue: number }",
         "interfaceName": "TechEvents"
       },
@@ -3651,7 +3608,7 @@
     "tech:queue-removed": {
       "declared": {
         "file": "src/core/events.ts",
-        "line": 237,
+        "line": 250,
         "payloadType": "{ factionId: EntityId; index: number; techId?: string }",
         "interfaceName": "TechEvents"
       },
@@ -3671,7 +3628,7 @@
     "tech:research-cancelled": {
       "declared": {
         "file": "src/core/events.ts",
-        "line": 218,
+        "line": 231,
         "payloadType": "{ slotId: string; factionId: EntityId; techId: string; rpRefunded: number }",
         "interfaceName": "TechEvents"
       },
@@ -3686,7 +3643,7 @@
     "tech:research-completed": {
       "declared": {
         "file": "src/core/events.ts",
-        "line": 213,
+        "line": 226,
         "payloadType": "{ techId: string; factionId: EntityId; level: number; unlocks: string[] }",
         "interfaceName": "TechEvents"
       },
@@ -3714,7 +3671,7 @@
     "tech:research-rejected": {
       "declared": {
         "file": "src/core/events.ts",
-        "line": 228,
+        "line": 241,
         "payloadType": "{ techId: string; factionId: EntityId; reasons: string[] }",
         "interfaceName": "TechEvents"
       },
@@ -3729,7 +3686,7 @@
     "tech:research-started": {
       "declared": {
         "file": "src/core/events.ts",
-        "line": 211,
+        "line": 224,
         "payloadType": "{ techId: string; factionId: EntityId; targetLevel: number; etaTick: number }",
         "interfaceName": "TechEvents"
       },
@@ -3744,7 +3701,7 @@
     "tech:tree-validated": {
       "declared": {
         "file": "src/core/events.ts",
-        "line": 226,
+        "line": 239,
         "payloadType": "{ ok: boolean; errors: string[] }",
         "interfaceName": "TechEvents"
       },
@@ -3772,7 +3729,7 @@
     "tech:unlocked": {
       "declared": {
         "file": "src/core/events.ts",
-        "line": 215,
+        "line": 228,
         "payloadType": "{ techId: string; factionId: EntityId; unlocks: string[] }",
         "interfaceName": "TechEvents"
       },
@@ -3800,7 +3757,7 @@
     "trade:offer-accepted": {
       "declared": {
         "file": "src/core/events.ts",
-        "line": 255,
+        "line": 268,
         "payloadType": "{ offerId: EntityId; buyerFactionId: EntityId }",
         "interfaceName": "TradeEvents"
       },
@@ -3815,7 +3772,7 @@
     "trade:offer-created": {
       "declared": {
         "file": "src/core/events.ts",
-        "line": 254,
+        "line": 267,
         "payloadType": "{ offerId: EntityId; factionId: EntityId; resourceId: string; amount: number; price: number }",
         "interfaceName": "TradeEvents"
       },
@@ -3830,7 +3787,7 @@
     "trade:route-completed": {
       "declared": {
         "file": "src/core/events.ts",
-        "line": 257,
+        "line": 270,
         "payloadType": "{ routeId: EntityId; delivered: number }",
         "interfaceName": "TradeEvents"
       },
@@ -3845,7 +3802,7 @@
     "trade:route-established": {
       "declared": {
         "file": "src/core/events.ts",
-        "line": 256,
+        "line": 269,
         "payloadType": "{ routeId: EntityId; fromPlanetId: EntityId; toPlanetId: EntityId; resourceId: string }",
         "interfaceName": "TradeEvents"
       },
@@ -3860,7 +3817,7 @@
     "trade:route-raided": {
       "declared": {
         "file": "src/core/events.ts",
-        "line": 258,
+        "line": 271,
         "payloadType": "{ routeId: EntityId; raiderFactionId: EntityId; stolen: number }",
         "interfaceName": "TradeEvents"
       },
@@ -4175,7 +4132,7 @@
   },
   "summary": {
     "events": {
-      "declared_but_not_observed_published": 43,
+      "declared_but_not_observed_published": 42,
       "observed_but_not_declared": 7,
       "declared_and_published": 10,
       "published_without_observed_consumer": 24,
