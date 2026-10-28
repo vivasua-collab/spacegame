@@ -6,6 +6,8 @@ import type { StarSystem } from '@/core/types';
 import { MAIN_SEQUENCE_STAR_TYPES } from '@/data/stars';
 import { FleetRouteOverlay } from './fleet-route-overlay';
 import { Rocket, Crosshair } from 'lucide-react';
+// GAL-UI-01 (Issue #19): чистая математика Fit — тестируется отдельно
+import { computeFitView } from '@/lib/map-viewport';
 
 /**
  * Deterministic LCG for star background — avoids hydration mismatch.
@@ -177,13 +179,33 @@ export function GalaxyMap() {
     };
   }, [systems]);
 
-  // Track container size
+  // GAL-UI-01: реф на базовый viewport — используется в колбэке
+  // ResizeObserver ниже (замыкание с [] зависимостями не видит свежий base;
+  // svgW/svgH — константы, но реф надёжнее при смене галактики).
+  const baseRef = useRef(base);
+  useEffect(() => { baseRef.current = base; }, [base]);
+
+  // Track container size + GAL-UI-01 (Issue #19): первичный fit.
+  // Начальный fit выполняется в колбэке ResizeObserver (асинхронный контекст
+  // после layout, не синхронно в эффекте — иначе каскад рендеров): при
+  // первом измерении контейнера канва вписывается и центрируется — галактика
+  // видна целиком с первого кадра, а не прижата к левому верхнему углу
+  // (преждевременное поведение: стартовые zoom=1/pan=0 при контейнере
+  // больше канвы 900×600).
+  const initialFitDone = useRef(false);
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
     const obs = new ResizeObserver((entries) => {
-      const { width, height } = entries[0].contentRect;
+      const { width, height } = entries[0]!.contentRect;
       setContainerSize({ w: width, h: height });
+      if (!initialFitDone.current && width > 0 && height > 0) {
+        initialFitDone.current = true;
+        const b = baseRef.current;
+        const fit = computeFitView(width, height, b.svgW, b.svgH);
+        setZoom(fit.zoom);
+        setPan({ x: fit.panX, y: fit.panY });
+      }
     });
     obs.observe(el);
     return () => obs.disconnect();
@@ -279,9 +301,14 @@ export function GalaxyMap() {
   const handleMouseUp = useCallback(() => setIsDragging(false), []);
 
   const resetView = useCallback(() => {
-    setZoom(1);
-    setPan({ x: 0, y: 0 });
-  }, []);
+    // GAL-UI-01 (Issue #19): прежний «Fit» сбрасывал zoom=1/pan=(0,0) — при
+    // контейнере больше канвы 900×600 галактика съезжала в левый верхний
+    // угол (замер в браузере: контейнер 1280×800, SVG остаётся в 0,0).
+    // Теперь вписываем канву в ФАКТИЧЕСКИЙ контейнер и центрируем.
+    const fit = computeFitView(containerSize.w, containerSize.h, base.svgW, base.svgH);
+    setZoom(fit.zoom);
+    setPan({ x: fit.panX, y: fit.panY });
+  }, [containerSize, base]);
 
   const zoomCenter = useCallback((factor: number) => {
     const currentZoom = zoomRef.current;
@@ -552,9 +579,10 @@ export function GalaxyMap() {
         <button onClick={resetView} aria-label="Сбросить вид" className="bg-black/60 rounded-lg px-2 py-1 text-[10px] text-slate-400 hover:text-white backdrop-blur-sm border border-white/5 hover:border-white/20 transition-colors ml-1" title="Reset view">Fit</button>
       </div>
 
-      {/* Zoom hint */}
+      {/* Zoom hint — GAL-UI-01: подсказка про мини-карту (появляется при 3×+,
+          прежде владелец не мог её найти: неочевидное условие появления) */}
       <div className="absolute top-3 left-3 bg-black/60 rounded-lg px-2 py-1 text-[10px] text-slate-500 backdrop-blur-sm border border-white/5">
-        Scroll to zoom • Drag to pan • Right-click for fleet menu
+        Scroll to zoom • Drag to pan • Right-click for fleet menu • Zoom 3×+ → minimap
       </div>
 
       {/* Block 02 (F7): right-click context menu for fleet orders */}
@@ -649,7 +677,13 @@ function Minimap({
   }, [base.svgW, base.svgH, containerSize, zoom, onNavigate]);
 
   return (
-    <div className="absolute bottom-3 right-3 bg-black/70 rounded-lg p-1.5 backdrop-blur-sm border border-white/10">
+    <div
+      className="absolute bottom-3 right-3 bg-black/70 rounded-lg p-1.5 backdrop-blur-sm border border-white/10"
+      title="Мини-карта: появляется при масштабе 3×+; клик — перейти к области"
+    >
+      <div className="text-[8px] uppercase tracking-wider text-slate-500 text-center mb-0.5 select-none">
+        Мини-карта
+      </div>
       <svg width={minimapW} height={minimapH} viewBox={`0 0 ${minimapW} ${minimapH}`} className="cursor-pointer" onClick={handleClick} role="img" aria-label="Мини-карта галактики для быстрой навигации">
         {systems.map((sys) => {
           const pos = systemPositions.get(sys.id);

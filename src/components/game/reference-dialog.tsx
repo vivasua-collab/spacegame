@@ -144,8 +144,13 @@ export function ReferenceDialog({
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="bg-[#0d0d24] border-white/10 text-white max-w-4xl max-h-[85vh] p-0 overflow-hidden">
-        <DialogHeader className="px-6 pt-6 pb-3 border-b border-white/10">
+      {/* GAL-UI-01 (Issue #19): ширина/раскладка — раньше sm:max-w-lg (512px)
+          из дефолтных классов DialogContent перекрывал max-w-4xl (разные
+          варианты Tailwind: base vs sm:) — диалог был зажат в 512px, а
+          вкладки (нужно 442px на ряд) обрезались. sm:max-w-4xl реально
+          перекрывает дефолт; flex-col — для корректного растягивания Tabs. */}
+      <DialogContent className="bg-[#0d0d24] border-white/10 text-white max-w-[calc(100%-2rem)] sm:max-w-4xl max-h-[85vh] p-0 overflow-hidden flex flex-col gap-0">
+        <DialogHeader className="px-6 pt-6 pb-3 border-b border-white/10 shrink-0">
           <DialogTitle className="flex items-center gap-2 text-cyan-200">
             <span className="text-cyan-400">📖</span>
             Справка
@@ -155,55 +160,64 @@ export function ReferenceDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <Tabs defaultValue="planets" className="flex-1 flex flex-col min-h-0">
-          {/* TabsList — горизонтальный ряд на мобильных, вертикальный на десктопе */}
-          <TabsList className="bg-white/5 flex flex-col sm:flex-row h-auto sm:h-9 w-full sm:w-56 shrink-0 rounded-none border-b border-white/10 p-1 gap-1">
+        {/* GAL-UI-01: на мобильных вкладки — горизонтальный скролл-ряд над
+            контентом; на десктопе — вертикальная колонка слева (w-56).
+            Прежде классы были инвертированы (flex-col sm:flex-row):
+            на десктопе ряд сжимался в 224px — вкладки «Переработка»,
+            «Флот», «Здания» уходили за границу (замер: scrollWidth 442 >
+            clientWidth 224). */}
+        <Tabs defaultValue="planets" className="flex-1 flex flex-col sm:flex-row min-h-0">
+          <TabsList className="bg-white/5 flex flex-row sm:flex-col h-auto w-full sm:w-56 shrink-0 rounded-none border-b sm:border-b-0 sm:border-r border-white/10 p-1 gap-1 overflow-x-auto sm:overflow-x-hidden custom-scrollbar">
             <TabsTrigger
               value="planets"
-              className="data-[state=active]:bg-cyan-500/15 data-[state=active]:text-cyan-200 text-slate-300 justify-start text-xs h-8 sm:h-[calc(100%-1px)]"
+              className="data-[state=active]:bg-cyan-500/15 data-[state=active]:text-cyan-200 text-slate-300 justify-start text-xs h-8 shrink-0 whitespace-nowrap"
             >
               <Globe2 className="size-3.5 mr-1.5" />
               Планеты
             </TabsTrigger>
             <TabsTrigger
               value="research"
-              className="data-[state=active]:bg-cyan-500/15 data-[state=active]:text-cyan-200 text-slate-300 justify-start text-xs h-8 sm:h-[calc(100%-1px)]"
+              className="data-[state=active]:bg-cyan-500/15 data-[state=active]:text-cyan-200 text-slate-300 justify-start text-xs h-8 shrink-0 whitespace-nowrap"
             >
               <FlaskConical className="size-3.5 mr-1.5" />
               Исследования
             </TabsTrigger>
             <TabsTrigger
               value="economy"
-              className="data-[state=active]:bg-cyan-500/15 data-[state=active]:text-cyan-200 text-slate-300 justify-start text-xs h-8 sm:h-[calc(100%-1px)]"
+              className="data-[state=active]:bg-cyan-500/15 data-[state=active]:text-cyan-200 text-slate-300 justify-start text-xs h-8 shrink-0 whitespace-nowrap"
             >
               <Boxes className="size-3.5 mr-1.5" />
               Экономика
             </TabsTrigger>
             <TabsTrigger
               value="processing"
-              className="data-[state=active]:bg-cyan-500/15 data-[state=active]:text-cyan-200 text-slate-300 justify-start text-xs h-8 sm:h-[calc(100%-1px)]"
+              className="data-[state=active]:bg-cyan-500/15 data-[state=active]:text-cyan-200 text-slate-300 justify-start text-xs h-8 shrink-0 whitespace-nowrap"
             >
               <Recycle className="size-3.5 mr-1.5" />
               Переработка
             </TabsTrigger>
             <TabsTrigger
               value="fleet"
-              className="data-[state=active]:bg-cyan-500/15 data-[state=active]:text-cyan-200 text-slate-300 justify-start text-xs h-8 sm:h-[calc(100%-1px)]"
+              className="data-[state=active]:bg-cyan-500/15 data-[state=active]:text-cyan-200 text-slate-300 justify-start text-xs h-8 shrink-0 whitespace-nowrap"
             >
               <Rocket className="size-3.5 mr-1.5" />
               Флот
             </TabsTrigger>
             <TabsTrigger
               value="buildings"
-              className="data-[state=active]:bg-cyan-500/15 data-[state=active]:text-cyan-200 text-slate-300 justify-start text-xs h-8 sm:h-[calc(100%-1px)]"
+              className="data-[state=active]:bg-cyan-500/15 data-[state=active]:text-cyan-200 text-slate-300 justify-start text-xs h-8 shrink-0 whitespace-nowrap"
             >
               <Hammer className="size-3.5 mr-1.5" />
               Здания
             </TabsTrigger>
           </TabsList>
 
-          {/* Контент-зона с прокруткой */}
-          <div className="flex-1 min-h-0 max-h-[68vh] overflow-y-auto p-4 custom-scrollbar">
+          {/* Контент-зона с прокруткой — GAL-UI-01: прежний жёсткий
+              max-h-[68vh] не учитывал фактическую высоту шапки/вкладок —
+              на низких viewport'ах (замер: 577px) зона прокрутки уходила
+              за границу диалога и обрезалась overflow-hidden. Теперь высота
+              вычисляется флексом внутри max-h-[85vh] диалога. */}
+          <div className="flex-1 min-h-0 overflow-y-auto p-4 custom-scrollbar">
             <TabsContent value="planets" className="mt-0 outline-none">
               <PlanetsTab />
             </TabsContent>
