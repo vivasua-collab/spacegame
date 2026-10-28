@@ -1,6 +1,12 @@
 # Module Contracts — инвентаризация фактической реализации модульной шины
 
 > **ARCH-BUS-MAP-01** (Issue #17), Этап A. База: main `9c84bb9`.
+> **Ревизия follow-up 2026-10-28:** схема синхронизирована с генератором и JSON
+> по находкам независимого аудита (комментарий 6471533872): F1 — query-регистрации
+> production отдельно от test-only; F2 — атрибуция emits «владение файлом
+> объявления» + топ-уровневый `fileLevelEmits`; F3 — `registrationStatus`
+> (только ось регистрации), убраны обещания несуществующих полей (observed
+> dependencies) и статусов зрелости partial/stub из схемы карты.
 > **Статус:** инвентаризация фактической реализации. НЕ заменяет канонические
 > архитектурные контракты (`docs/architecture/modular-bus.md`, `src/core/events.ts`).
 > Машинно-читаемая карта: `docs/architecture/module-bus-map.json` — генерируется
@@ -33,15 +39,21 @@ runtime-использование — разные сущности. Событ
 |---|---|
 | `className`, `file` | Класс, реализующий `IGameModule`, и файл его объявления. |
 | `name`/`version`/`description` | Человекочитаемые поля манифеста (как объявлено). |
-| `manifest.dependencies` | Объявленные зависимости (ModuleId[]), инициализируются раньше. |
-| `observed.dependencies` | Зависимости, фактически влияющие на порядок init/tick (вычисляется тем же алгоритмом топосортировки, что `ModuleRegistry.recalculateInitOrder`). |
-| `manifest.emits` / `observed.emits` | Объявленные / фактически найденные emit-вызовы (file:line каждого). |
-| `manifest.subscribes` / `observed.subscriptions` | Объявленные подписки (с priority) / фактические `bus.on/once` (file:line). |
-| `manifest.handlesQueries` / `observed.queriesRegistered` | Объявленные / фактически зарегистрированные обработчики запросов (file:line). |
-| `manifest.requiresQueries` / `observed.queriesCalled` | Объявленные / фактически вызываемые запросы (file:line). |
+| `manifest.dependencies` | ДЕКЛАРИРОВАННЫЕ зависимости (ModuleId[]). Карта не вычисляет «observed dependencies»: `wiring.initOrder` строится ИЗ этих деклараций алгоритмом, реплицирующим `ModuleRegistry.recalculateInitOrder` (вычисление над декларациями, не наблюдаемый факт). |
+| `manifest.emits` / `observed.emits` | Объявленные / фактически найденные emit-вызовы — ТОЛЬКО в файле объявления класса модуля (file:line каждого). Emissions из engine/инфраструктурных файлов модулю НЕ приписываются — они в топ-уровневом `fileLevelEmits` (F2). |
+| `manifest.subscribes` / `observed.subscriptions` | Объявленные подписки (с priority) / фактические `bus.on/once` в файле модуля (file:line). |
+| `manifest.handlesQueries` / `observed.queriesRegistered` | Объявленные / фактически зарегистрированные в файле модуля обработчики запросов (file:line). |
+| `manifest.requiresQueries` / `observed.queriesCalled` | Объявленные / фактически вызываемые из файла модуля запросы (file:line). |
 | `registration` | Точка(и) создания и регистрации (file:line, порядок в `registerAndInit`). |
-| `tick` | Участие в тиках: позиция в `initOrder` (порядок `registry.tickAll`), наличие `tick()`-тела с работой, bus-подписка `core:tick` (см. finding F-01 — двойной канал). |
-| `status` | `active` / `partial` / `stub` / `reserved` (см. §2.3). |
+| `tick` | Участие в тиках — ТОЛЬКО `positionInInitOrder` (позиция в `initOrder`, вычисленном из декларированных зависимостей). Наличие `tick()`-тела, bus-подписка `core:tick` (видна отдельно в `observed.subscriptions`) и факт реальной работы тика картой НЕ утверждаются (F-01). |
+| `registrationStatus` | ТОЛЬКО ось регистрации (что статанализ доказал): `active` (зарегистрирован в production-wiring) / `unregistered` (класс есть, регистрации нет) / `reserved` (id в `ModuleId`, класса нет). Зрелость реализации (`partial`/`stub`) машинно НЕ выводится и полем карты не является (§2.3, F3). |
+
+Топ-уровневая секция `fileLevelEmits` (не поле модуля): ВСЕ production emit-факты
+из файлов, не являющихся файлом объявления ни одного модуля (engine:
+`src/economy/engine.ts`, `src/ships/fleet-engine.ts`, `src/data/ships/shipyard-queue.ts`; store:
+`src/stores/game-store.ts`; ядро: `game-mediator.ts`, `game-loop.ts`). Каждый факт — file:line,
+опубликован ровно один раз, БЕЗ утверждения владения модулем (F-06; регресс-тест F2 —
+два модуля одной директории). Event-level ссылки сохраняются в `events.*.productionEmitters`.
 
 ### 1.2. Событие (`events.<name>`)
 
@@ -61,9 +73,11 @@ runtime-использование — разные сущности. Событ
 |---|---|
 | `declaredHandles` | Модули, объявившие запрос в `handlesQueries` (file:line). |
 | `declaredRequires` | Модули, объявившие в `requiresQueries` (file:line). |
-| `registeredBy` | Фактические `registerQuery` в `src/` (file:line) + unregister (file:line). |
+| `registeredBy` | Фактические `registerQuery` ТОЛЬКО в production `src/` (file:line). Тестовые регистрации НЕ включаются и не влияют на `status` (F1). |
+| `unregisteredBy` | Фактические `unregisterQuery` ТОЛЬКО в `src/` (file:line). |
+| `testRegisteredBy` / `testUnregisteredBy` | Test-only регистрации/снятия из `tests/` и `scripts/`, агрегированные по файлам (`{file, lines[]}`). Публикуются отдельно; на production-статус НЕ влияют (регресс-тест F1). |
 | `productionCallers` / `testCallers` | Фактические вызовы `query(name)` в `src/` / в `tests/` (file:line). |
-| `status` | §2.2. |
+| `status` | §2.2 — вычисляется ТОЛЬКО по production-фактам. |
 
 ## 2. Классификация статусов
 
@@ -80,22 +94,37 @@ runtime-использование — разные сущности. Событ
 | 7 | `declared_and_published` | Есть production-издатели и событие заявлено ≥1 манифестом в согласованной роли. |
 
 Замечания:
-- Emit-вызовы engine-функций (`src/economy/engine.ts`, `src/ships/fleet-engine.ts`, `src/data/ships/shipyard-queue.ts`) через импортированный синглтон `gameBus` — факты публикуются как есть (file:line двигателя). Атрибуция «это события СИСТЕМЫ economy» — интерпретация манифеста (комментарий `src/economy/economy-module.ts:54-58`), в карте различается полями, не смешивается.
+- Emit-вызовы engine-функций (`src/economy/engine.ts`, `src/ships/fleet-engine.ts`, `src/data/ships/shipyard-queue.ts`) через импортированный синглтон `gameBus` — факты публикуются как есть (file:line двигателя) в event-level `productionEmitters` и в топ-уровневом `fileLevelEmits`. Атрибуция «это события СИСТЕМЫ economy» — интерпретация манифеста (комментарий `src/economy/economy-module.ts:54-58`); владение модулю НЕ приписывается: `modules.*.observed.emits` содержит только факты файла объявления класса (F2).
 - `core:*` lifecycle-события публикует ядро-инфраструктура (GameLoop/GameMediator), которая НЕ является зарегистрированным модулем реестра — для них честен статус 4 (`observed_but_not_declared`), кроме `core:tick`/`core:game-created`/`core:game-loaded`/`core:state-changed`, заявленных манифестами модулей (в подписочной роли).
 - Статус 2 покрывает только подписочную сторону и несогласованность подписок; emit-сторона «декларировано, но не эмитится» — это статус 6 (резерв/намерение), не mismatch.
 
 ### 2.2. Статусы запросов
 
-`declared_and_registered` (есть декларация handlesQueries и фактическая регистрация) ·
+Статус вычисляется ТОЛЬКО по production-фактам `src/` — тестовые регистрации/снятия
+(`testRegisteredBy`/`testUnregisteredBy`) и вызовы (`testCallers`) НЕ классифицируют
+запрос как зарегистрированный в production (F1; регресс-фикстура `fx-f1-*`).
+
+`declared_and_registered` (есть декларация handlesQueries и фактическая production-регистрация) ·
 `registered_not_declared` · `declared_not_registered` · `unregistered_call` (production-вызов незарегистрированного) ·
-`unused` (нет ни вызовов в src, ни в tests). Число production-вызовов — отдельное поле (сейчас 0 у всех — см. F-05).
+`unused` (нет ни production-регистрации, ни декларации, ни production-вызовов; test-only
+активность при этом видна в `test*`-полях, статус не меняет). Число production-вызовов —
+отдельное поле (сейчас 0 у всех — см. F-05).
 
-### 2.3. Статусы модулей
+### 2.3. Статусы модулей (`registrationStatus` — только ось регистрации)
 
-- `active` — зарегистрирован в production-wiring, инициализируется, тикает с реальной работой, проводки совпадают с манифестом (или расхождения перечислены в findings).
-- `partial` — зарегистрирован и живёт, но часть контракта сознательно не реализована (зарезервированные события/действия) с документированным основанием.
-- `stub` — зарегистрирован, но не выполняет заявленной работы.
-- `reserved` — объявлен в типах (`ModuleId`), но не реализован и не зарегистрирован.
+Карта доказывает ТОЛЬКО факт регистрации; зрелость реализации машинно не выводится
+(оси не смешиваются — F3):
+
+- `active` — зарегистрирован в production-wiring (найден `registerAndInit`/`registerModule` в `src/`); позиция в init/tick-порядке — в `tick.positionInInitOrder`.
+- `unregistered` — класс модуля существует в `src/`, но не регистрируется ни одной точкой wiring.
+- `reserved` — идентификатор объявлен в union `ModuleId`, класс не найден.
+
+Зрелость реализации (`active`/`partial`/`stub` как human-оценка полноты контракта) —
+ПРЕДМЕТ ИНТЕРПРЕТАЦИИ вне схемы карты: см. §3.6 (AIModule: `registrationStatus: active`,
+зрелость «partial — инертный по дизайну этапа 3а/3б.1» — человеческая оценка с
+доказательствами в таблице §3.6, а не поле JSON). Тест схемы
+(`tests/arch/module-bus-map-schema.test.ts`) гарантирует, что у модулей нет полей
+`status`/`implementationStatus`, а enum ограничен тремя значениями выше.
 
 ### 2.4. Правило интерпретации резерва
 
@@ -115,7 +144,7 @@ economy, research, ships, fleet, ai])` (:338-345), подписка стора �
 **`[galaxy, economy, tech, ships, fleet, ai]`** — этот же порядок использует
 `registry.tickAll()` (`src/core/module-registry.ts:133-143`, затем `bus.flush()` :142).
 
-### 3.1. GalaxyModule — `galaxy` — статус: `active`
+### 3.1. GalaxyModule — `galaxy` — `registrationStatus: active`
 
 | Аспект | Манифест (декларация) | Факт (runtime) | Согласовано |
 |---|---|---|---|
@@ -127,7 +156,7 @@ economy, research, ships, fleet, ai])` (:338-345), подписка стора �
 | requiresQueries | `[]` (:38) | query-вызовов нет | ✅ |
 | tick() | — | пустой (:86-88) — галактика статична | ✅ |
 
-### 3.2. EconomyModule — `economy` — статус: `active`
+### 3.2. EconomyModule — `economy` — `registrationStatus: active`
 
 | Аспект | Манифест | Факт | Согласовано |
 |---|---|---|---|
@@ -139,7 +168,7 @@ economy, research, ships, fleet, ai])` (:338-345), подписка стора �
 | requiresQueries | `galaxy:system-by-id` (:90-92) | query-вызовов в src НЕТ (F-05) | ⚠️ F-05 |
 | tick() | — | `processEconomyTick()` (:160-162) — реальная работа | ✅ |
 
-### 3.3. ResearchModule — `tech` — статус: `active`
+### 3.3. ResearchModule — `tech` — `registrationStatus: active`
 
 | Аспект | Манифест | Факт | Согласовано |
 |---|---|---|---|
@@ -151,7 +180,7 @@ economy, research, ships, fleet, ai])` (:338-345), подписка стора �
 | requiresQueries | `[]` (:69) | — | ✅ |
 | tick() | — | `processResearchTick(time)` (:127-129) — реальная работа | ✅ |
 
-### 3.4. ShipsModule — `ships` — статус: `active`
+### 3.4. ShipsModule — `ships` — `registrationStatus: active`
 
 | Аспект | Манифест | Факт | Согласовано |
 |---|---|---|---|
@@ -162,7 +191,7 @@ economy, research, ships, fleet, ai])` (:338-345), подписка стора �
 | handlesQueries / requiresQueries | `[]` / `[]` (:58-59) | — | ✅ |
 | tick() | — | обрабатывает shipyard-очереди через `processShipyardTick` (:100-124) | ✅ |
 
-### 3.5. FleetModule — `fleet` — статус: `active`
+### 3.5. FleetModule — `fleet` — `registrationStatus: active`
 
 | Аспект | Манифест | Факт | Согласовано |
 |---|---|---|---|
@@ -173,7 +202,7 @@ economy, research, ships, fleet, ai])` (:338-345), подписка стора �
 | handlesQueries / requiresQueries | `[]` / `[]` (:43-44) | — | ✅ |
 | tick() | — | итерирует флоты, `processFleetTick` (:82-106) | ✅ |
 
-### 3.6. AIModule — `ai` — статус: `partial` (этап 3а/3б.1: инертный по дизайну)
+### 3.6. AIModule — `ai` — `registrationStatus: active`; зрелость реализации (вне карты, human-оценка): partial — этап 3а/3б.1, инертный по дизайну
 
 | Аспект | Манифест | Факт | Согласовано |
 |---|---|---|---|
@@ -335,10 +364,15 @@ economy, research, ships, fleet, ai])` (:338-345), подписка стора �
 | `research:tech-status` | tech :66 | — | :117 | :141 | 0 | — | declared_and_registered (unused) |
 | `ai:state` | ai :90-97 | — | ai-module:151 | :167 | 0 | ai-module.test:322,:333 | declared_and_registered |
 
-Сводка: **9 регистраций, 0 production-вызовов**. Единственное `requiresQueries`
+Сводка: **9 production-регистраций, 0 production-вызовов**. Единственное `requiresQueries`
 (economy → `galaxy:system-by-id`) не exercised ни разу (F-05). Обращения UI/стора
 к данным идут напрямую через accessor'ы (e.g. `useGameStore` → `getMediatorWithModules().get*()`),
 минуя query API — см. F-05.
+
+Test-only регистрации/снятия публикуются отдельно (`testRegisteredBy`/`testUnregisteredBy`)
+и на статусы не влияют (F1): `galaxy:system-by-id` — регистрации `tests/r42-stage01-reaudit.test.ts:678,681`,
+снятие `:684`; статус запроса при этом определён production-фактом (`galaxy-module:76`) —
+`declared_and_registered`.
 
 ## 7. Findings (спорные случаи; поведение не меняется — только фиксация)
 
@@ -415,11 +449,18 @@ economy, research, ships, fleet, ai])` (:338-345), подписка стора �
 4. Call-graph не строится: emit через `mediator.commitState()` атрибутируется
    файлу метода (game-mediator), а не вызывающему модулю (см. F-06).
 5. Сканируются `src/` (production) отдельно от `tests/` и `scripts/` (non-production);
-   test-only потребители не маскируют отсутствие production-потребителей (тест
-   генератора фиксирует это поведение).
+   test-only потребители не маскируют отсутствие production-потребителей; test-only
+   регистрации/снятия query публикуются в `testRegisteredBy`/`testUnregisteredBy` и не
+   классифицируют запрос как зарегистрированный (тесты генератора фиксируют оба поведения).
 6. Регистрация модулей — по `new XxxModule(` + `registerAndInit([...])`/`registerModule(...)`
    call-sites; порядок init/tick воспроизводит `recalculateInitOrder` (DFS по deps в
    порядке вставки). Иные (будущие) способы регистрации потребуют расширения анализатора.
+7. Атрибуция emits: модуль владеет ТОЛЬКО emit-фактами файла объявления своего класса;
+   emissions engine/инфраструктурных файлов — в топ-уровневом `fileLevelEmits` без
+   утверждения владения; два модуля одной директории не получают одинаковый список как
+   подтверждённое владение (регресс-фикстура `tests/arch/fixtures/shared/`).
+8. Зрелость реализации модулей (`partial`/`stub`) машинно НЕ выводится: карта содержит
+   только `registrationStatus`; человеческая оценка — вне схемы (§2.3, §3.6).
 
 ## 9. Воспроизведение
 
@@ -432,4 +473,8 @@ bun run audit:module-bus --check    # дрейф: exit ≠ 0, если арте�
 детерминированный вывод). Тесты генератора: `tests/arch/module-bus-map.test.ts`
 (фикстуры: alias/import, typed emit/on, метод-обработчик, reserved event,
 test-only consumer, query register/lookup, неподдерживаемая форма, детерминизм,
-drift-check артефакта).
+drift-check артефакта; регрессии follow-up: F1 — `tests/arch/fixtures/fx-f1-*`,
+test-only регистрация query не засчитывается в production; F2 — `tests/arch/fixtures/shared/`,
+общий engine двух модулей одной директории не приписывается обоим как владение).
+Тест конформности схемы: `tests/arch/module-bus-map-schema.test.ts` (F3 — поля и
+enum-значения артефакта не расходятся с этим документом).
