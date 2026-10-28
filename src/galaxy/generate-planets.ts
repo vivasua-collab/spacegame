@@ -146,7 +146,14 @@ function selectPlanetType(orbitalRadius: number, star: Star, rng: Xoshiro128Star
  * Парниковый эффект масштабируется с давлением:
  *   ΔT = base_ΔT × (pressure / 1 atm)^0.25
  */
-function calculatePlanetTemperature(
+/**
+ * GAL-GEN-AUDIT-01 (Issue #20, 2026-10-28): функция экспортирована ТОЛЬКО для
+ * characterizing-тестов (прецедент — serializeGameState для Block 01 T5).
+ * Поведение НЕ изменено; формула та же. Аудит модели температуры —
+ * checkpoints/10_28_gal_gen_audit01.md; любые изменения формулы — только
+ * после решения владельца (гейт аудита, не авторизация на изменение).
+ */
+export function calculatePlanetTemperature(
   star: Star,
   orbitalRadiusAU: number,
   planetDef: typeof PLANET_TYPES[0],
@@ -198,7 +205,11 @@ function calculatePlanetTemperature(
  * Bond albedo по типу планеты и атмосферы.
  * Данные: Kopparapu et al. 2013, Solar System observations.
  */
-function getAlbedo(planetType: string, atmosphereType: string, rng: Xoshiro128StarStar): number {
+/**
+ * GAL-GEN-AUDIT-01 (Issue #20): экспортировано для characterizing-тестов
+ * (см. комментарий у calculatePlanetTemperature). Поведение не изменено.
+ */
+export function getAlbedo(planetType: string, atmosphereType: string, rng: Xoshiro128StarStar): number {
   // Базовое альбедо по типу планеты
   let baseAlbedo: number;
   switch (planetType) {
