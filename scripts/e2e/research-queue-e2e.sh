@@ -14,9 +14,12 @@
 #      уровня (A→B→C→A…), несколько полных проходов, отсутствие starvation
 #      и монополизации (симптом владельца: первая технология до 8, остальные 0).
 #   5. Pause → скриншот согласованного состояния (тик таймлайна == тик кадра).
-#   6. Save → reload → Load: порядок очереди и частичный RP переживают
-#      round-trip.
-#   7. Артефакты: скриншоты, timeline.log, console.log (page errors + console).
+#   6. Save → reload → Load round-trip с ЯВНЫМИ asserts: уровни A/B/C,
+#      активный проект + частичный RP, ЦЕЛЕВОЙ УРОВЕНЬ активной технологии
+#      (target_POST == target_PRE) и ПОРЯДОК ОЧЕРЕДИ (Q_POST == Q_PRE).
+#   7. Артефакты: скриншоты, timeline.txt, console.txt (page errors + console).
+#      ВАЖНО: файлы артефактов — .txt, а НЕ .log, потому что *.log в .gitignore
+#      и логи не попадали бы в Git (замечание аудита 2026-10-28T07:14Z, п. 4).
 #
 # Требования: запущенный dev-сервер spacegame (next dev), agent-browser CLI
 # (npm i -g agent-browser && agent-browser install), bash, python3.
@@ -96,7 +99,7 @@ except Exception:
     print('')
 "; }
 
-TL="$ARTDIR/timeline.log"
+TL="$ARTDIR/timeline.txt"  # .txt, не .log: *.log в .gitignore (артефакт должен попасть в Git)
 { echo "# R-RES-QUEUE E2E — $(date -u +%Y-%m-%dT%H:%M:%SZ)"; echo "# BASE_URL=$BASE_URL SESSION=$SESSION SEED=$SEED"; echo "# формат: tick | speed | active(цель, RP) | уровни A/B/C | очередь | банк | приток-дерево"; } > "$TL"
 
 log_state() { # log_state '<json>' '<метка>'
@@ -267,6 +270,7 @@ S_PRE=$(state)
 LA_PRE=$(pyval "$S_PRE" lvls.A); LB_PRE=$(pyval "$S_PRE" lvls.B); LC_PRE=$(pyval "$S_PRE" lvls.C)
 Q_PRE=$(unq "$(pyval "$S_PRE" queue)")
 ACT_PRE=$(unq "$(pyval "$S_PRE" active.tech)"); RP_PRE=$(unq "$(pyval "$S_PRE" active.rp)")
+AT_PRE=$(unq "$(pyval "$S_PRE" active.target)")
 click_btn "Save" "x => x.textContent.trim() === 'Save'"
 sleep 3
 ab reload >/dev/null 2>&1; sleep 6
@@ -297,6 +301,7 @@ S_POST=$(state)
 LA_POST=$(pyval "$S_POST" lvls.A); LB_POST=$(pyval "$S_POST" lvls.B); LC_POST=$(pyval "$S_POST" lvls.C)
 Q_POST=$(unq "$(pyval "$S_POST" queue)")
 ACT_POST=$(unq "$(pyval "$S_POST" active.tech)"); RP_POST=$(unq "$(pyval "$S_POST" active.rp)")
+AT_POST=$(unq "$(pyval "$S_POST" active.target)")
 PH_POST=$(pyval "$S_POST" phase)
 log_state "$S_POST" "ПОСЛЕ LOAD (round-trip)"
 if [ "$LA_POST" = "$LA_PRE" ] && [ "$LB_POST" = "$LB_PRE" ] && [ "$LC_POST" = "$LC_PRE" ]; then
@@ -309,10 +314,23 @@ if [ "$ACT_POST" = "$ACT_PRE" ] && [ "$RP_POST" = "$RP_PRE" ]; then
 else
   fail "save/load: активный до='$ACT_PRE $RP_PRE' после='$ACT_POST $RP_POST'"
 fi
+# assert Q_POST == Q_PRE: порядок очереди и целевые уровни переживают round-trip
+# (добавлено по остаточному замечанию аудита 2026-10-28T07:14Z, п. 3)
+if [ -n "$Q_PRE" ] && [ "$Q_POST" = "$Q_PRE" ]; then
+  ok "save/load: очередь пережила round-trip (Q_POST == Q_PRE: [$Q_POST])"
+else
+  fail "save/load: очередь до=[$Q_PRE] после=[$Q_POST]"
+fi
+# assert target_POST == target_PRE: целевой уровень активной технологии
+if [ -n "$AT_PRE" ] && [ "$AT_POST" = "$AT_PRE" ]; then
+  ok "save/load: целевой уровень активной технологии пережил round-trip (target L$AT_POST == L$AT_PRE)"
+else
+  fail "save/load: target до=L$AT_PRE после=L$AT_POST"
+fi
 ab screenshot "$ARTDIR/03-after-load-roundtrip.png" >/dev/null 2>&1
 
 # --- 8. Консоль/page errors ---------------------------------------------------
-{ echo "# Console/page errors — R-RES-QUEUE E2E $(date -u +%Y-%m-%dT%H:%M:%SZ)"; echo "## Page errors:"; ab errors 2>&1; echo "(конец page errors)"; echo "## Console:"; ab console 2>&1; echo "(конец console)"; } > "$ARTDIR/console.log"
+{ echo "# Console/page errors — R-RES-QUEUE E2E $(date -u +%Y-%m-%dT%H:%M:%SZ)"; echo "## Page errors:"; ab errors 2>&1; echo "(конец page errors)"; echo "## Console:"; ab console 2>&1; echo "(конец console)"; } > "$ARTDIR/console.txt"
 
 # --- Итог ---------------------------------------------------------------------
 echo "" >> "$TL"

@@ -1,0 +1,11 @@
+# Console/page errors — R-RES-QUEUE E2E 2026-10-28T05:55:12Z
+## Page errors:
+(конец page errors)
+## Console:
+[info] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[log] [HMR] connected
+[log] [Fast Refresh] rebuilding
+[log] [Fast Refresh] done in 102ms
+[info] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[log] [HMR] connected
+(конец console)

@@ -1,0 +1,12 @@
+# Console log — b15bc5b pre-fix speed² reproduction (session b15, port 3003, seed 424242)
+# Captured 2026-10-28T05:32:38Z via agent-browser console/errors
+
+## Page errors (agent-browser errors):
+(end of page errors — none recorded)
+
+## Console messages:
+[info] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[log] [HMR] connected
+[log] [Fast Refresh] rebuilding
+[log] [Fast Refresh] done in 1593ms
+(end of console)
