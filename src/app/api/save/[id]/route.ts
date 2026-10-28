@@ -55,6 +55,12 @@ export async function GET(_request: Request, context: RouteContext) {
  * `{ name, state, stateEncoding?, tick }` when `currentSaveId` is set.
  */
 export async function PUT(request: Request, context: RouteContext) {
+  // ─── CORE-SAVE-01 (Issue #18): старт-лог ДО любых await ──────────
+  // См. комментарий в POST /api/save: делает зависший запрос видимым
+  // в логе мгновенно (строка старта без строки завершения).
+  console.log(
+    `[save-api] PUT /api/save/[id] start: content-length=${request.headers.get('content-length') ?? 'unknown'}`,
+  );
   // ─── Rate limit (gap-8) ────────────────────────────────────────────
   const ip = request.headers.get('x-forwarded-for') ?? 'unknown';
   if (!checkRateLimit(`save:${ip}`)) {
@@ -97,6 +103,7 @@ export async function PUT(request: Request, context: RouteContext) {
     // ─── R-26: декодирование транспорта (gzip-base64 → plain JSON) ────
     // Аудит 2026-10-26 (этап 0–1): потоковая распаковка с РАННИМ лимитом
     // байтов — как в POST (gzip-бомба отклоняется в процессе декодирования).
+    const tDecode0 = Date.now();
     let stateJson: string;
     try {
       stateJson = await decodeStatePayload(state, stateEncoding, MAX_STATE_BYTES);
@@ -112,6 +119,10 @@ export async function PUT(request: Request, context: RouteContext) {
         { status: 400 },
       );
     }
+    // CORE-SAVE-01 (Issue #18): метрика декодирования (как в POST).
+    console.log(
+      `[save-api] PUT /api/save/${id} decoded: raw=${Buffer.byteLength(stateJson, 'utf8')} bytes, decodeMs=${Date.now() - tDecode0}`,
+    );
     // R-31: считаем байты UTF-8, а не символы (как в POST /api/save).
     // (gzip-путь уже ограничен потоком; эта проверка — для plain-JSON пути)
     const stateBytes = Buffer.byteLength(stateJson, 'utf8');

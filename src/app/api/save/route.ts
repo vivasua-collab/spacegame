@@ -52,6 +52,15 @@ export async function GET() {
  * `{ name, seed, state, stateEncoding?, tick }` — all within the schema's accepted shape.
  */
 export async function POST(request: Request) {
+  // ─── CORE-SAVE-01 (Issue #18): старт-лог ДО любых await ────────────
+  // Инцидент 2026-10-28: зависший запрос сохранения НЕ оставил строки в
+  // логе (Next пишет строку только по ЗАВЕРШЕНИИ запроса) — граница отказа
+  // была недиагностируема. Синхронный старт-лог делает «зависший» запрос
+  // видимым мгновенно: строка есть — строки завершения нет = запрос висит.
+  console.log(
+    `[save-api] POST /api/save start: content-length=${request.headers.get('content-length') ?? 'unknown'}`,
+  );
+
   // ─── Rate limit (gap-8) ────────────────────────────────────────────
   // `x-forwarded-for` is set by Caddy in production. In dev (direct Next
   // server access), it's absent — fall back to 'unknown' so all dev
@@ -96,6 +105,7 @@ export async function POST(request: Request) {
     // Аудит 2026-10-26 (этап 0–1): потоковая распаковка с РАННИМ лимитом
     // байтов — gzip-бомба отклоняется в процессе декодирования (расход
     // памяти ≤ MAX_STATE_BYTES), а не после полного разворачивания.
+    const tDecode0 = Date.now();
     let stateJson: string;
     try {
       stateJson = await decodeStatePayload(state ?? '{}', stateEncoding, MAX_STATE_BYTES);
@@ -111,6 +121,11 @@ export async function POST(request: Request) {
         { status: 400 },
       );
     }
+    // CORE-SAVE-01 (Issue #18): метрика декодирования — самая тяжёлая фаза
+    // обработки видна отдельно от общего времени запроса.
+    console.log(
+      `[save-api] POST /api/save decoded: raw=${Buffer.byteLength(stateJson, 'utf8')} bytes, decodeMs=${Date.now() - tDecode0}`,
+    );
     // Реальный лимит — на raw JSON (после декодирования), Block 08 gap-8.
     // R-31: считаем байты UTF-8, а не символы (многобайтовые юникод-строки
     // раздули бы фактический размер до 4× без этой проверки).

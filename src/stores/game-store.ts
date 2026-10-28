@@ -398,6 +398,20 @@ function syncMediatorState(): void {
 // ============ Сериализация ============
 
 /**
+ * CORE-SAVE-01 (Issue #18, 2026-10-28): таймаут HTTP-запроса сохранения.
+ *
+ * Обоснование значения (замеры на main, 200-системная галактика):
+ *   - POST/PUT через превью-шлюз: 0.2–2 с (реальный браузер + curl);
+ *   - серверная обработка 33 МБ raw-стейта: ~1.9 с;
+ *   - то есть нормальный сейв укладывается с запасом 15–100×.
+ * Увеличение таймаута НЕ является фиксом зависшего запроса — при инциденте
+ * 2026-10-28 запрос вообще не дошёл до сервера (см. чекпоинт CORE-SAVE-01);
+ * правильный ответ — диагностика границы отказа, а не молчаливое ожидание.
+ * Экспортировано для использования в сообщении об ошибке и в тестах.
+ */
+export const SAVE_REQUEST_TIMEOUT_MS = 30_000;
+
+/**
  * Сериализует GameState в JSON-строку.
  *
  * Exported for Block 01 T5 (serialization round-trip test) so test code can
@@ -1236,6 +1250,11 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
       if (!gameState) return false;
 
       const savedSpeed = gameState.speed;
+      // CORE-SAVE-01 (Issue #18): тайминги/размеры для диагностики сбоев
+      // сохранения. Замеры на main (2026-10-28): serialize 2.77 МБ ≈ 35 мс,
+      // gzip ≈ 52 мс, POST через превью-шлюз ≈ 0.2–2 с. Нормальный сейв
+      // укладывается в таймаут с запасом 15–100×.
+      const tStart = Date.now();
 
       // ─── R-39 (race fix): стопорим САМ GameLoop на время сохранения ──
       // Прежде блок мутировал phase='paused' + syncMediatorState() и
@@ -1270,10 +1289,17 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
 
       await new Promise<void>((resolve) => setTimeout(resolve, 50));
 
+      // CORE-SAVE-01 (Issue #18): размер/кодировка видны в catch-е даже если
+      // сбой произошёл до/во время сетевого запроса (для detail-диагностики).
+      let serializeLen = 0;
+      let bodyLen = 0;
+      let encodingUsed: string = 'json';
       try {
         const currentGameState = get().gameState!;
         const saveName = name || `Galaxy #${currentGameState.galaxy.seed}`;
+        const tSerialize0 = Date.now();
         const stateJson = serializeGameState(currentGameState);
+        const tSerialized = Date.now();
 
         // ─── R-26 (2026-08-31): сжатый транспорт сохранений ────────────
         // Сериализованное состояние 200-системной галактики ~31 МБ — шлюз
@@ -1292,10 +1318,14 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
             stateEncoding = undefined;
           }
         }
+        const tEncoded = Date.now();
+        serializeLen = stateJson.length;
+        bodyLen = stateBody.length;
+        encodingUsed = stateEncoding ?? 'json';
 
         const fetchWithTimeout = async (url: string, options: RequestInit) => {
           const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 30000);
+          const timeoutId = setTimeout(() => controller.abort(), SAVE_REQUEST_TIMEOUT_MS);
           try {
             const res = await fetch(url, { ...options, signal: controller.signal });
             return res;
@@ -1304,6 +1334,7 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
           }
         };
 
+        const tNetwork0 = Date.now();
         if (currentSaveId) {
           const res = await fetchWithTimeout(`/api/save/${currentSaveId}`, {
             method: 'PUT',
@@ -1333,11 +1364,39 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
           const data = await res.json();
           set({ currentSaveId: data.id });
         }
+        // CORE-SAVE-01 (Issue #18): структурная диагностика успешного пути.
+        // При инцидентах следующего раунда эти строки в консоли браузера
+        // сразу показывают границу отказа (сериализация/сжатие/сеть).
+        console.info(
+          `[save] OK: total=${Date.now() - tStart}ms ` +
+          `(serialize=${tSerialized - tSerialize0}ms, encode=${tEncoded - tSerialized}ms, ` +
+          `network=${Date.now() - tNetwork0}ms), ` +
+          `raw=${stateJson.length} chars, body=${stateBody.length} chars, encoding=${stateEncoding ?? 'json'}, ` +
+          `saveId=${get().currentSaveId ?? 'new'}`,
+        );
         set({ saveError: null });
         return true;
       } catch (e: unknown) {
-        const errorMsg = e instanceof Error ? e.message : String(e);
-        console.error('Save failed:', e);
+        // CORE-SAVE-01 (Issue #18): честная диагностика сбоя. Прежде любой
+        // сбой (включая 30-с таймаут запроса) показывался сырой строкой
+        // «The operation was aborted» без объяснения, что состояние игры
+        // не пострадало и повтор попытки безопасен.
+        const isAbort = e instanceof Error && e.name === 'AbortError';
+        const detail = {
+          reason: isAbort ? 'request-timeout' : 'error',
+          timeoutMs: SAVE_REQUEST_TIMEOUT_MS,
+          elapsedMs: Date.now() - tStart,
+          rawChars: serializeLen,
+          bodyChars: bodyLen,
+          encoding: encodingUsed,
+          error: e instanceof Error ? `${e.name}: ${e.message}` : String(e),
+        };
+        console.error('Save failed:', e, detail);
+        const errorMsg = isAbort
+          ? `Сохранение не завершилось за ${Math.round(SAVE_REQUEST_TIMEOUT_MS / 1000)} с (таймаут запроса). `
+            + 'Состояние игры в памяти не пострадало — нажмите Save ещё раз. '
+            + `Диагностика: ${JSON.stringify(detail)}`
+          : e instanceof Error ? e.message : String(e);
         set({ saveError: errorMsg });
         return false;
       } finally {

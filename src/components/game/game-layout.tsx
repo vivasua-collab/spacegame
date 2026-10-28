@@ -443,9 +443,15 @@ function SaveButton() {
         description: currentSaveId ? 'Сохранение обновлено' : 'Создано новое сохранение',
       });
     } else {
+      // CORE-SAVE-01 (Issue #18): показываем фактическую причину из store
+      // (saveError), а не генерик «смотрите консоль» — при таймауте это
+      // объясняет, что состояние не потеряно и повтор безопасен.
+      const reason = useGameStore.getState().saveError;
       toast({
         title: 'Ошибка сохранения',
-        description: 'Не удалось сохранить игру. Проверьте консоль для деталей.',
+        description: reason
+          ? (reason.length > 300 ? `${reason.slice(0, 300)}…` : reason)
+          : 'Не удалось сохранить игру. Проверьте консоль для деталей.',
         variant: 'destructive',
       });
     }
