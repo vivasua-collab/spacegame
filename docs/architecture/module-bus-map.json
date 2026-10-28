@@ -28,6 +28,8 @@
     ],
     "limitations": [
       "проводкой считаются только вызовы со СТРОКОВЫМ ЛИТЕРАЛОМ (или тернарником литералов) в первом аргументе; переменные и вычисляемые имена фиксируются в analyzer.unresolvedForms и не создают фактов",
+      "атрибуция emits: модуль владеет ТОЛЬКО emit-вызовами файла объявления своего класса; emissions из engine/инфраструктурных файлов (engine.ts, fleet-engine.ts, shipyard-queue.ts, game-store.ts, game-mediator.ts, game-loop.ts) публикуются в топ-уровневой секции fileLevelEmits как file-level факты БЕЗ утверждения владения — два модуля одного каталога не получают одинаковый список как подтверждённое владение",
+      "query-статусы вычисляются ТОЛЬКО по production-фактам src/ (registerQuery/unregisterQuery/query); тестовые регистрации/снятия публикуются отдельно в testRegisteredBy/testUnregisteredBy и НЕ классифицируют запрос как зарегистрированный в production",
       "получатель вызова должен распознаваться как шина/реестр (см. busReceivers); иные .emit/.on (стриймы, UI-библиотеки) игнорируются по получателю; нераспознанный получатель с не-литеральным аргументом фиксируется как unresolved (recognized=false) — для прозрачности, статусы событий не меняет",
       "нераспознанные формы на РАСПОЗНАННОМ получателе (recognized=true) означают, что потенциальный издатель/потребитель события не доказуем: события без наблюдаемых production-фактов помечаются статусом dynamic_or_unresolved",
       "call-graph не строится: emit внутри GameMediator.commitState/emitStateChanged атрибутируется файлу медиатора, а не вызывающему модулю (см. module-contracts.md F-06)",
@@ -136,6 +138,365 @@
     ],
     "tickOrderNote": "registry.tickAll() обходит initOrder и вызывает tick() каждого started-модуля — это действующий канал тиков; bus-подписки модулей на 'core:tick' — no-op (см. module-contracts.md F-01)"
   },
+  "fileLevelEmits": [
+    {
+      "file": "src/core/game-loop.ts",
+      "line": 97,
+      "event": "core:speed-changed",
+      "publisher": "GameLoop.setSpeed",
+      "receiver": "this.bus"
+    },
+    {
+      "file": "src/core/game-loop.ts",
+      "line": 112,
+      "event": "core:resumed",
+      "publisher": "GameLoop.start",
+      "receiver": "this.bus"
+    },
+    {
+      "file": "src/core/game-loop.ts",
+      "line": 112,
+      "event": "core:started",
+      "publisher": "GameLoop.start",
+      "receiver": "this.bus"
+    },
+    {
+      "file": "src/core/game-loop.ts",
+      "line": 119,
+      "event": "core:paused",
+      "publisher": "GameLoop.pause",
+      "receiver": "this.bus"
+    },
+    {
+      "file": "src/core/game-loop.ts",
+      "line": 196,
+      "event": "core:tick",
+      "publisher": "GameLoop.processTick",
+      "receiver": "this.bus"
+    },
+    {
+      "file": "src/core/game-loop.ts",
+      "line": 203,
+      "event": "core:year",
+      "publisher": "GameLoop.processTick",
+      "receiver": "this.bus"
+    },
+    {
+      "file": "src/core/game-mediator.ts",
+      "line": 153,
+      "event": "core:game-created",
+      "publisher": "GameMediator.newGame",
+      "receiver": "this.bus"
+    },
+    {
+      "file": "src/core/game-mediator.ts",
+      "line": 196,
+      "event": "core:game-loaded",
+      "publisher": "GameMediator.setLoadedState",
+      "receiver": "this.bus"
+    },
+    {
+      "file": "src/core/game-mediator.ts",
+      "line": 208,
+      "event": "core:state-changed",
+      "publisher": "GameMediator.emitStateChanged",
+      "receiver": "this.bus"
+    },
+    {
+      "file": "src/core/game-mediator.ts",
+      "line": 227,
+      "event": "core:state-changed",
+      "publisher": "GameMediator.commitState",
+      "receiver": "this.bus"
+    },
+    {
+      "file": "src/data/ships/shipyard-queue.ts",
+      "line": 175,
+      "event": "ships:construction-progress",
+      "publisher": "processShipyardTick",
+      "receiver": "gameBus"
+    },
+    {
+      "file": "src/data/ships/shipyard-queue.ts",
+      "line": 234,
+      "event": "ships:constructed",
+      "publisher": "processShipyardTick",
+      "receiver": "gameBus"
+    },
+    {
+      "file": "src/economy/engine.ts",
+      "line": 592,
+      "event": "economy:production-cancelled",
+      "publisher": "processProductionQueue",
+      "receiver": "gameBus"
+    },
+    {
+      "file": "src/economy/engine.ts",
+      "line": 679,
+      "event": "economy:production-complete",
+      "publisher": "processProductionQueue",
+      "receiver": "gameBus"
+    },
+    {
+      "file": "src/economy/engine.ts",
+      "line": 682,
+      "event": "economy:production-cancelled",
+      "publisher": "processProductionQueue",
+      "receiver": "gameBus"
+    },
+    {
+      "file": "src/economy/engine.ts",
+      "line": 1186,
+      "event": "economy:building-constructed",
+      "publisher": "buildOnHex",
+      "receiver": "gameBus"
+    },
+    {
+      "file": "src/economy/engine.ts",
+      "line": 1244,
+      "event": "economy:building-constructed",
+      "publisher": "buildOnAtmosphereSlot",
+      "receiver": "gameBus"
+    },
+    {
+      "file": "src/economy/engine.ts",
+      "line": 1296,
+      "event": "economy:building-constructed",
+      "publisher": "buildOnOrbitSlot",
+      "receiver": "gameBus"
+    },
+    {
+      "file": "src/economy/engine.ts",
+      "line": 1342,
+      "event": "economy:building-upgraded",
+      "publisher": "upgradeBuilding",
+      "receiver": "gameBus"
+    },
+    {
+      "file": "src/economy/engine.ts",
+      "line": 1448,
+      "event": "economy:building-downgraded",
+      "publisher": "downgradeBuilding",
+      "receiver": "gameBus"
+    },
+    {
+      "file": "src/economy/engine.ts",
+      "line": 1495,
+      "event": "economy:building-demolished",
+      "publisher": "demolishBuilding",
+      "receiver": "gameBus"
+    },
+    {
+      "file": "src/economy/engine.ts",
+      "line": 1638,
+      "event": "economy:building-specialized",
+      "publisher": "specializeBuilding",
+      "receiver": "gameBus"
+    },
+    {
+      "file": "src/economy/engine.ts",
+      "line": 1646,
+      "event": "economy:processor-output-changed",
+      "publisher": "specializeBuilding",
+      "receiver": "gameBus"
+    },
+    {
+      "file": "src/economy/engine.ts",
+      "line": 1695,
+      "event": "economy:building-specialized",
+      "publisher": "specializeBuilding",
+      "receiver": "gameBus"
+    },
+    {
+      "file": "src/economy/engine.ts",
+      "line": 1703,
+      "event": "economy:processor-output-changed",
+      "publisher": "specializeBuilding",
+      "receiver": "gameBus"
+    },
+    {
+      "file": "src/economy/engine.ts",
+      "line": 1761,
+      "event": "economy:specialization-upgraded",
+      "publisher": "upgradeSpecialization",
+      "receiver": "gameBus"
+    },
+    {
+      "file": "src/economy/engine.ts",
+      "line": 1767,
+      "event": "economy:processor-output-changed",
+      "publisher": "upgradeSpecialization",
+      "receiver": "gameBus"
+    },
+    {
+      "file": "src/economy/engine.ts",
+      "line": 1803,
+      "event": "economy:production-cancelled",
+      "publisher": "cancelProduction",
+      "receiver": "gameBus"
+    },
+    {
+      "file": "src/economy/engine.ts",
+      "line": 1877,
+      "event": "economy:planet-colonized",
+      "publisher": "colonizePlanet",
+      "receiver": "gameBus"
+    },
+    {
+      "file": "src/ships/fleet-engine.ts",
+      "line": 296,
+      "event": "fleet:order-completed",
+      "publisher": "processFleetTick",
+      "receiver": "gameBus"
+    },
+    {
+      "file": "src/ships/fleet-engine.ts",
+      "line": 317,
+      "event": "fleet:movement-started",
+      "publisher": "processFleetTick",
+      "receiver": "gameBus"
+    },
+    {
+      "file": "src/ships/fleet-engine.ts",
+      "line": 346,
+      "event": "fleet:fuel-low",
+      "publisher": "processFleetTick",
+      "receiver": "gameBus"
+    },
+    {
+      "file": "src/ships/fleet-engine.ts",
+      "line": 351,
+      "event": "fleet:stranded",
+      "publisher": "processFleetTick",
+      "receiver": "gameBus"
+    },
+    {
+      "file": "src/ships/fleet-engine.ts",
+      "line": 389,
+      "event": "fleet:arrived",
+      "publisher": "processFleetTick",
+      "receiver": "gameBus"
+    },
+    {
+      "file": "src/ships/fleet-engine.ts",
+      "line": 391,
+      "event": "ships:arrived",
+      "publisher": "processFleetTick",
+      "receiver": "gameBus"
+    },
+    {
+      "file": "src/ships/fleet-engine.ts",
+      "line": 417,
+      "event": "ships:fuel-consumed",
+      "publisher": "consumeFuel",
+      "receiver": "gameBus"
+    },
+    {
+      "file": "src/ships/fleet-engine.ts",
+      "line": 495,
+      "event": "combat:engaged",
+      "publisher": "completeOrder",
+      "receiver": "gameBus"
+    },
+    {
+      "file": "src/ships/fleet-engine.ts",
+      "line": 509,
+      "event": "fleet:order-completed",
+      "publisher": "completeOrder",
+      "receiver": "gameBus"
+    },
+    {
+      "file": "src/stores/game-store.ts",
+      "line": 830,
+      "event": "economy:build",
+      "publisher": "buildOnHex",
+      "receiver": "mediator.getBus()"
+    },
+    {
+      "file": "src/stores/game-store.ts",
+      "line": 847,
+      "event": "economy:upgrade",
+      "publisher": "upgradeBuildingOnHex",
+      "receiver": "mediator.getBus()"
+    },
+    {
+      "file": "src/stores/game-store.ts",
+      "line": 867,
+      "event": "economy:downgrade",
+      "publisher": "downgradeBuildingOnHex",
+      "receiver": "mediator.getBus()"
+    },
+    {
+      "file": "src/stores/game-store.ts",
+      "line": 888,
+      "event": "economy:demolish",
+      "publisher": "demolishBuildingOnHex",
+      "receiver": "mediator.getBus()"
+    },
+    {
+      "file": "src/stores/game-store.ts",
+      "line": 906,
+      "event": "economy:downgrade",
+      "publisher": "downgradeBuildingOnSlot",
+      "receiver": "mediator.getBus()"
+    },
+    {
+      "file": "src/stores/game-store.ts",
+      "line": 927,
+      "event": "economy:demolish",
+      "publisher": "demolishBuildingOnSlot",
+      "receiver": "mediator.getBus()"
+    },
+    {
+      "file": "src/stores/game-store.ts",
+      "line": 946,
+      "event": "economy:build",
+      "publisher": "buildOnAtmosphereSlot",
+      "receiver": "mediator.getBus()"
+    },
+    {
+      "file": "src/stores/game-store.ts",
+      "line": 970,
+      "event": "economy:build",
+      "publisher": "buildOnOrbitSlot",
+      "receiver": "mediator.getBus()"
+    },
+    {
+      "file": "src/stores/game-store.ts",
+      "line": 991,
+      "event": "economy:enqueue",
+      "publisher": "enqueueProduction",
+      "receiver": "mediator.getBus()"
+    },
+    {
+      "file": "src/stores/game-store.ts",
+      "line": 1036,
+      "event": "economy:specialize",
+      "publisher": "specializeBuildingOnHex",
+      "receiver": "mediator.getBus()"
+    },
+    {
+      "file": "src/stores/game-store.ts",
+      "line": 1061,
+      "event": "economy:upgrade-specialization",
+      "publisher": "upgradeSpecializationOnHex",
+      "receiver": "mediator.getBus()"
+    },
+    {
+      "file": "src/stores/game-store.ts",
+      "line": 1079,
+      "event": "economy:colonize",
+      "publisher": "colonizePlanet",
+      "receiver": "mediator.getBus()"
+    },
+    {
+      "file": "src/stores/game-store.ts",
+      "line": 1892,
+      "event": "tech:fundamental-leveled",
+      "publisher": "levelUpFundamental",
+      "receiver": "getMediatorWithModules().getBus()"
+    }
+  ],
   "modules": {
     "galaxy": {
       "id": "galaxy",
@@ -271,7 +632,7 @@
       "tick": {
         "positionInInitOrder": 1
       },
-      "status": "active"
+      "registrationStatus": "active"
     },
     "economy": {
       "id": "economy",
@@ -407,127 +768,7 @@
         ]
       },
       "observed": {
-        "emits": [
-          {
-            "file": "src/economy/engine.ts",
-            "line": 592,
-            "event": "economy:production-cancelled",
-            "publisher": "processProductionQueue",
-            "receiver": "gameBus"
-          },
-          {
-            "file": "src/economy/engine.ts",
-            "line": 679,
-            "event": "economy:production-complete",
-            "publisher": "processProductionQueue",
-            "receiver": "gameBus"
-          },
-          {
-            "file": "src/economy/engine.ts",
-            "line": 682,
-            "event": "economy:production-cancelled",
-            "publisher": "processProductionQueue",
-            "receiver": "gameBus"
-          },
-          {
-            "file": "src/economy/engine.ts",
-            "line": 1186,
-            "event": "economy:building-constructed",
-            "publisher": "buildOnHex",
-            "receiver": "gameBus"
-          },
-          {
-            "file": "src/economy/engine.ts",
-            "line": 1244,
-            "event": "economy:building-constructed",
-            "publisher": "buildOnAtmosphereSlot",
-            "receiver": "gameBus"
-          },
-          {
-            "file": "src/economy/engine.ts",
-            "line": 1296,
-            "event": "economy:building-constructed",
-            "publisher": "buildOnOrbitSlot",
-            "receiver": "gameBus"
-          },
-          {
-            "file": "src/economy/engine.ts",
-            "line": 1342,
-            "event": "economy:building-upgraded",
-            "publisher": "upgradeBuilding",
-            "receiver": "gameBus"
-          },
-          {
-            "file": "src/economy/engine.ts",
-            "line": 1448,
-            "event": "economy:building-downgraded",
-            "publisher": "downgradeBuilding",
-            "receiver": "gameBus"
-          },
-          {
-            "file": "src/economy/engine.ts",
-            "line": 1495,
-            "event": "economy:building-demolished",
-            "publisher": "demolishBuilding",
-            "receiver": "gameBus"
-          },
-          {
-            "file": "src/economy/engine.ts",
-            "line": 1638,
-            "event": "economy:building-specialized",
-            "publisher": "specializeBuilding",
-            "receiver": "gameBus"
-          },
-          {
-            "file": "src/economy/engine.ts",
-            "line": 1646,
-            "event": "economy:processor-output-changed",
-            "publisher": "specializeBuilding",
-            "receiver": "gameBus"
-          },
-          {
-            "file": "src/economy/engine.ts",
-            "line": 1695,
-            "event": "economy:building-specialized",
-            "publisher": "specializeBuilding",
-            "receiver": "gameBus"
-          },
-          {
-            "file": "src/economy/engine.ts",
-            "line": 1703,
-            "event": "economy:processor-output-changed",
-            "publisher": "specializeBuilding",
-            "receiver": "gameBus"
-          },
-          {
-            "file": "src/economy/engine.ts",
-            "line": 1761,
-            "event": "economy:specialization-upgraded",
-            "publisher": "upgradeSpecialization",
-            "receiver": "gameBus"
-          },
-          {
-            "file": "src/economy/engine.ts",
-            "line": 1767,
-            "event": "economy:processor-output-changed",
-            "publisher": "upgradeSpecialization",
-            "receiver": "gameBus"
-          },
-          {
-            "file": "src/economy/engine.ts",
-            "line": 1803,
-            "event": "economy:production-cancelled",
-            "publisher": "cancelProduction",
-            "receiver": "gameBus"
-          },
-          {
-            "file": "src/economy/engine.ts",
-            "line": 1877,
-            "event": "economy:planet-colonized",
-            "publisher": "colonizePlanet",
-            "receiver": "gameBus"
-          }
-        ],
+        "emits": [],
         "subscriptions": [
           {
             "file": "src/economy/economy-module.ts",
@@ -642,7 +883,7 @@
       "tick": {
         "positionInInitOrder": 2
       },
-      "status": "active"
+      "registrationStatus": "active"
     },
     "tech": {
       "id": "tech",
@@ -792,7 +1033,7 @@
       "tick": {
         "positionInInitOrder": 3
       },
-      "status": "active"
+      "registrationStatus": "active"
     },
     "ships": {
       "id": "ships",
@@ -842,71 +1083,7 @@
         "requiresQueries": []
       },
       "observed": {
-        "emits": [
-          {
-            "file": "src/ships/fleet-engine.ts",
-            "line": 296,
-            "event": "fleet:order-completed",
-            "publisher": "processFleetTick",
-            "receiver": "gameBus"
-          },
-          {
-            "file": "src/ships/fleet-engine.ts",
-            "line": 317,
-            "event": "fleet:movement-started",
-            "publisher": "processFleetTick",
-            "receiver": "gameBus"
-          },
-          {
-            "file": "src/ships/fleet-engine.ts",
-            "line": 346,
-            "event": "fleet:fuel-low",
-            "publisher": "processFleetTick",
-            "receiver": "gameBus"
-          },
-          {
-            "file": "src/ships/fleet-engine.ts",
-            "line": 351,
-            "event": "fleet:stranded",
-            "publisher": "processFleetTick",
-            "receiver": "gameBus"
-          },
-          {
-            "file": "src/ships/fleet-engine.ts",
-            "line": 389,
-            "event": "fleet:arrived",
-            "publisher": "processFleetTick",
-            "receiver": "gameBus"
-          },
-          {
-            "file": "src/ships/fleet-engine.ts",
-            "line": 391,
-            "event": "ships:arrived",
-            "publisher": "processFleetTick",
-            "receiver": "gameBus"
-          },
-          {
-            "file": "src/ships/fleet-engine.ts",
-            "line": 417,
-            "event": "ships:fuel-consumed",
-            "publisher": "consumeFuel",
-            "receiver": "gameBus"
-          },
-          {
-            "file": "src/ships/fleet-engine.ts",
-            "line": 495,
-            "event": "combat:engaged",
-            "publisher": "completeOrder",
-            "receiver": "gameBus"
-          },
-          {
-            "file": "src/ships/fleet-engine.ts",
-            "line": 509,
-            "event": "fleet:order-completed",
-            "publisher": "completeOrder",
-            "receiver": "gameBus"
-          }
-        ],
+        "emits": [],
         "subscriptions": [
           {
             "file": "src/ships/ships-module.ts",
@@ -930,7 +1107,7 @@
       "tick": {
         "positionInInitOrder": 4
       },
-      "status": "active"
+      "registrationStatus": "active"
     },
     "fleet": {
       "id": "fleet",
@@ -985,71 +1162,7 @@
         "requiresQueries": []
       },
       "observed": {
-        "emits": [
-          {
-            "file": "src/ships/fleet-engine.ts",
-            "line": 296,
-            "event": "fleet:order-completed",
-            "publisher": "processFleetTick",
-            "receiver": "gameBus"
-          },
-          {
-            "file": "src/ships/fleet-engine.ts",
-            "line": 317,
-            "event": "fleet:movement-started",
-            "publisher": "processFleetTick",
-            "receiver": "gameBus"
-          },
-          {
-            "file": "src/ships/fleet-engine.ts",
-            "line": 346,
-            "event": "fleet:fuel-low",
-            "publisher": "processFleetTick",
-            "receiver": "gameBus"
-          },
-          {
-            "file": "src/ships/fleet-engine.ts",
-            "line": 351,
-            "event": "fleet:stranded",
-            "publisher": "processFleetTick",
-            "receiver": "gameBus"
-          },
-          {
-            "file": "src/ships/fleet-engine.ts",
-            "line": 389,
-            "event": "fleet:arrived",
-            "publisher": "processFleetTick",
-            "receiver": "gameBus"
-          },
-          {
-            "file": "src/ships/fleet-engine.ts",
-            "line": 391,
-            "event": "ships:arrived",
-            "publisher": "processFleetTick",
-            "receiver": "gameBus"
-          },
-          {
-            "file": "src/ships/fleet-engine.ts",
-            "line": 417,
-            "event": "ships:fuel-consumed",
-            "publisher": "consumeFuel",
-            "receiver": "gameBus"
-          },
-          {
-            "file": "src/ships/fleet-engine.ts",
-            "line": 495,
-            "event": "combat:engaged",
-            "publisher": "completeOrder",
-            "receiver": "gameBus"
-          },
-          {
-            "file": "src/ships/fleet-engine.ts",
-            "line": 509,
-            "event": "fleet:order-completed",
-            "publisher": "completeOrder",
-            "receiver": "gameBus"
-          }
-        ],
+        "emits": [],
         "subscriptions": [
           {
             "file": "src/ships/fleet-module.ts",
@@ -1073,7 +1186,7 @@
       "tick": {
         "positionInInitOrder": 5
       },
-      "status": "active"
+      "registrationStatus": "active"
     },
     "ai": {
       "id": "ai",
@@ -1155,7 +1268,7 @@
       "tick": {
         "positionInInitOrder": 6
       },
-      "status": "active"
+      "registrationStatus": "active"
     },
     "core": {
       "id": "core",
@@ -1182,7 +1295,7 @@
       "tick": {
         "positionInInitOrder": null
       },
-      "status": "reserved"
+      "registrationStatus": "reserved"
     },
     "combat": {
       "id": "combat",
@@ -1209,7 +1322,7 @@
       "tick": {
         "positionInInitOrder": null
       },
-      "status": "reserved"
+      "registrationStatus": "reserved"
     },
     "diplomacy": {
       "id": "diplomacy",
@@ -1236,7 +1349,7 @@
       "tick": {
         "positionInInitOrder": null
       },
-      "status": "reserved"
+      "registrationStatus": "reserved"
     },
     "trade": {
       "id": "trade",
@@ -1263,7 +1376,7 @@
       "tick": {
         "positionInInitOrder": null
       },
-      "status": "reserved"
+      "registrationStatus": "reserved"
     }
   },
   "events": {
@@ -3769,6 +3882,8 @@
           "query": "ai:state"
         }
       ],
+      "testRegisteredBy": [],
+      "testUnregisteredBy": [],
       "productionCallers": [],
       "testCallers": [
         {
@@ -3804,6 +3919,8 @@
           "query": "economy:planet-energy"
         }
       ],
+      "testRegisteredBy": [],
+      "testUnregisteredBy": [],
       "productionCallers": [],
       "testCallers": [],
       "status": "declared_and_registered"
@@ -3831,6 +3948,8 @@
           "query": "economy:planet-resources"
         }
       ],
+      "testRegisteredBy": [],
+      "testUnregisteredBy": [],
       "productionCallers": [],
       "testCallers": [],
       "status": "declared_and_registered"
@@ -3858,6 +3977,8 @@
           "query": "economy:production-queue"
         }
       ],
+      "testRegisteredBy": [],
+      "testUnregisteredBy": [],
       "productionCallers": [],
       "testCallers": [],
       "status": "declared_and_registered"
@@ -3885,6 +4006,8 @@
           "query": "galaxy:colonized-planets"
         }
       ],
+      "testRegisteredBy": [],
+      "testUnregisteredBy": [],
       "productionCallers": [],
       "testCallers": [],
       "status": "declared_and_registered"
@@ -3912,6 +4035,8 @@
           "query": "galaxy:planet-by-id"
         }
       ],
+      "testRegisteredBy": [],
+      "testUnregisteredBy": [],
       "productionCallers": [],
       "testCallers": [],
       "status": "declared_and_registered"
@@ -3935,18 +4060,6 @@
           "line": 76,
           "query": "galaxy:system-by-id",
           "moduleContext": "GalaxyModule.init"
-        },
-        {
-          "file": "tests/r42-stage01-reaudit.test.ts",
-          "line": 678,
-          "query": "galaxy:system-by-id",
-          "moduleContext": "<module scope>"
-        },
-        {
-          "file": "tests/r42-stage01-reaudit.test.ts",
-          "line": 681,
-          "query": "galaxy:system-by-id",
-          "moduleContext": "<module scope>"
         }
       ],
       "unregisteredBy": [
@@ -3954,11 +4067,23 @@
           "file": "src/galaxy/galaxy-module.ts",
           "line": 99,
           "query": "galaxy:system-by-id"
-        },
+        }
+      ],
+      "testRegisteredBy": [
         {
           "file": "tests/r42-stage01-reaudit.test.ts",
-          "line": 684,
-          "query": "galaxy:system-by-id"
+          "lines": [
+            678,
+            681
+          ]
+        }
+      ],
+      "testUnregisteredBy": [
+        {
+          "file": "tests/r42-stage01-reaudit.test.ts",
+          "lines": [
+            684
+          ]
         }
       ],
       "productionCallers": [],
@@ -3997,6 +4122,8 @@
           "query": "research:state"
         }
       ],
+      "testRegisteredBy": [],
+      "testUnregisteredBy": [],
       "productionCallers": [],
       "testCallers": [],
       "status": "declared_and_registered"
@@ -4024,6 +4151,8 @@
           "query": "research:tech-status"
         }
       ],
+      "testRegisteredBy": [],
+      "testUnregisteredBy": [],
       "productionCallers": [],
       "testCallers": [],
       "status": "declared_and_registered"

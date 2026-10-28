@@ -5,12 +5,16 @@
  * анализ без type-checker) и генерирует машинно-читаемую инвентаризацию
  * ФАКТИЧЕСКОЙ реализации модульной шины: docs/architecture/module-bus-map.json.
  *
- * Принципы (по ТЗ Issue #17):
+ * Принципы (по ТЗ Issue #17 + follow-up аудит 2026-10-28):
  * - проводкой события считается ТОЛЬКО вызов emit/on/once с первым аргументом —
  *   строковым литералом (или разрешаемой формой) и получателем из набора шины;
  *   текстовые вхождения имени события проводкой НЕ считаются;
  * - production (src/) анализируется ОТДЕЛЬНО от tests/ и scripts/ — test-only
- *   потребитель не маскирует отсутствие production-потребителя;
+ *   потребитель не маскирует отсутствие production-потребителя; query-регистрации
+ *   из тестов также НЕ засчитываются как production (F1);
+ * - атрибуция emits по владению: модуль — только файл объявления своего класса;
+ *   engine/инфраструктурные emissions — в fileLevelEmits без утверждения владения (F2);
+ * - registrationStatus — только ось регистрации; зрелость реализации машинно не выводится (F3);
  * - детерминированный вывод: отсортированные коллекции, никаких времён/HEAD;
  * - каждый факт несёт file:line;
  * - ограничения анализатора перечислены в выводе (analyzer.limitations).
@@ -120,7 +124,9 @@ export interface ModuleEntry {
     requiresQueries: ManifestQueryDecl[];
   };
   observed: {
-    /** emit-вызовы на пути этой модульной системы: файл модуля ИЛИ engine-файлы его каталога. */
+    /** emit-вызовы ТОЛЬКО в файле объявления класса модуля (модуль-own факты).
+     *  Emissions из engine/инфраструктурных файлов НЕ атрибутируются модулю —
+     *  они публикуются в топ-уровневой секции fileLevelEmits (без утверждения владения). */
     emits: EmitFact[];
     /** фактические bus-подписки, созданные в файле модуля. */
     subscriptions: SubscribeFact[];
@@ -130,7 +136,9 @@ export interface ModuleEntry {
   };
   registration: Array<{ file: string; line: number; order: number }>;
   tick: { positionInInitOrder: number | null };
-  status: 'active' | 'unregistered' | 'reserved';
+  /** ТОЛЬКО ось регистрации (что статанализ доказал о регистрации в production).
+   *  Зрелость реализации (partial/stub) машинно НЕ выводится и полем карты не является. */
+  registrationStatus: 'active' | 'unregistered' | 'reserved';
 }
 
 export interface EventEntry {
@@ -147,8 +155,15 @@ export interface EventEntry {
 export interface QueryEntry {
   declaredHandles: Array<{ module: string; line: number }>;
   declaredRequires: Array<{ module: string; line: number }>;
+  /** фактические registerQuery ТОЛЬКО в production (src/). */
   registeredBy: RegisterFact[];
+  /** фактические unregisterQuery ТОЛЬКО в production (src/). */
   unregisteredBy: UnregisterFact[];
+  /** test-only регистрации (tests/, scripts/) — агрегированы по файлам,
+   *  публикуются ОТДЕЛЬНО и НЕ влияют на production status (F1 follow-up). */
+  testRegisteredBy: Array<{ file: string; lines: number[] }>;
+  /** test-only снятия регистрации — аналогично testRegisteredBy. */
+  testUnregisteredBy: Array<{ file: string; lines: number[] }>;
   productionCallers: QueryCallFact[];
   testCallers: Array<{ file: string; lines: number[] }>;
   status: string;
@@ -170,6 +185,11 @@ export interface BusMap {
     initOrder: string[];
     tickOrderNote: string;
   };
+  /** Production emit-факты из файлов, НЕ являющихся файлом объявления модуля
+   *  (engine, store, ядро-инфраструктура). File-level каталог БЕЗ утверждения
+   *  владения модулем: два модуля в одном каталоге не получают чужие emissions
+   *  (F2 follow-up). Event-level ссылки сохраняются в events.*.productionEmitters. */
+  fileLevelEmits: EmitFact[];
   modules: Record<string, ModuleEntry>;
   events: Record<string, EventEntry>;
   queries: Record<string, QueryEntry>;
@@ -219,6 +239,8 @@ const FORMS_COVERED: readonly string[] = [
 
 const LIMITATIONS: readonly string[] = [
   'проводкой считаются только вызовы со СТРОКОВЫМ ЛИТЕРАЛОМ (или тернарником литералов) в первом аргументе; переменные и вычисляемые имена фиксируются в analyzer.unresolvedForms и не создают фактов',
+  'атрибуция emits: модуль владеет ТОЛЬКО emit-вызовами файла объявления своего класса; emissions из engine/инфраструктурных файлов (engine.ts, fleet-engine.ts, shipyard-queue.ts, game-store.ts, game-mediator.ts, game-loop.ts) публикуются в топ-уровневой секции fileLevelEmits как file-level факты БЕЗ утверждения владения — два модуля одного каталога не получают одинаковый список как подтверждённое владение',
+  'query-статусы вычисляются ТОЛЬКО по production-фактам src/ (registerQuery/unregisterQuery/query); тестовые регистрации/снятия публикуются отдельно в testRegisteredBy/testUnregisteredBy и НЕ классифицируют запрос как зарегистрированный в production',
   'получатель вызова должен распознаваться как шина/реестр (см. busReceivers); иные .emit/.on (стриймы, UI-библиотеки) игнорируются по получателю; нераспознанный получатель с не-литеральным аргументом фиксируется как unresolved (recognized=false) — для прозрачности, статусы событий не меняет',
   'нераспознанные формы на РАСПОЗНАННОМ получателе (recognized=true) означают, что потенциальный издатель/потребитель события не доказуем: события без наблюдаемых production-фактов помечаются статусом dynamic_or_unresolved',
   'call-graph не строится: emit внутри GameMediator.commitState/emitStateChanged атрибутируется файлу медиатора, а не вызывающему модулю (см. module-contracts.md F-06)',
@@ -249,12 +271,6 @@ function lineOf(sf: ts.SourceFile, node: ts.Node): number {
 
 function normReceiver(text: string): string {
   return text.replace(/\s+/g, '');
-}
-
-function dirOf(p: string): string {
-  const parts = toPosix(p).split('/');
-  parts.pop();
-  return parts.join('/');
 }
 
 /** Ближайшее осмысленное имя-контекст: Class.method / функция / свойство. */
@@ -786,6 +802,9 @@ export function analyzeBusMap(opts: AnalyzeOptions): BusMap {
   const classByClassName = new Map(classes.map((c) => [c.className, c]));
   const classById = new Map<string, ClassInfo>();
   for (const c of classes) if (!classById.has(c.id)) classById.set(c.id, c);
+  // F2 (follow-up): файлы объявления модулей — граница между module-owned
+  // и file-level emit-фактами.
+  const moduleFileSet = new Set(classes.map((c) => c.file));
 
   // Факты: production и non-production отдельно.
   const prodFacts = new Map<string, FileFacts>();
@@ -829,10 +848,13 @@ export function analyzeBusMap(opts: AnalyzeOptions): BusMap {
 
   // ─── Модули ───
   const modules: Record<string, ModuleEntry> = {};
-  const buildEntry = (id: string, ci: ClassInfo | undefined, status: ModuleEntry['status']): ModuleEntry => {
-    const observedEmits = ci
-      ? sortByFileLine(prod.emits.filter((e) => e.file === ci.file || dirOf(e.file) === dirOf(ci.file)))
-      : [];
+  const buildEntry = (id: string, ci: ClassInfo | undefined, registrationStatus: ModuleEntry['registrationStatus']): ModuleEntry => {
+    // F2 (follow-up): модуль-own факты — ТОЛЬКО emit-вызовы файла объявления
+    // класса. Каталоговая эвристика «файл модуля ИЛИ любой файл его директории»
+    // удалена: она приписывала один и тот же список engine-emissions обоим
+    // модулям общей директории (ships/fleet). Emissions из прочих файлов —
+    // в топ-уровневой секции fileLevelEmits без утверждения владения.
+    const observedEmits = ci ? sortByFileLine(prod.emits.filter((e) => e.file === ci.file)) : [];
     const observedSubs = ci ? sortByFileLine(prod.subscriptions.filter((s) => s.file === ci.file)) : [];
     const qReg = ci ? sortByFileLine(prod.queriesRegistered.filter((q) => q.file === ci.file)) : [];
     const qUnreg = ci ? sortByFileLine(prod.queriesUnregistered.filter((q) => q.file === ci.file)) : [];
@@ -857,7 +879,7 @@ export function analyzeBusMap(opts: AnalyzeOptions): BusMap {
       observed: { emits: observedEmits, subscriptions: observedSubs, queriesRegistered: qReg, queriesUnregistered: qUnreg, queriesCalled: qCalled },
       registration: reg,
       tick: { positionInInitOrder: initOrder.includes(id) ? initOrder.indexOf(id) + 1 : null },
-      status,
+      registrationStatus,
     };
   };
 
@@ -883,7 +905,7 @@ export function analyzeBusMap(opts: AnalyzeOptions): BusMap {
         observed: { emits: [], subscriptions: [], queriesRegistered: [], queriesUnregistered: [], queriesCalled: [] },
         registration: [],
         tick: { positionInInitOrder: null },
-        status: 'reserved',
+        registrationStatus: 'reserved',
       };
     }
   }
@@ -917,7 +939,7 @@ export function analyzeBusMap(opts: AnalyzeOptions): BusMap {
     // mismatch: подписочная сторона — по модулям (файл модуля ↔ фактические подписки).
     let mismatch = false;
     for (const m of Object.values(modules)) {
-      if (m.status === 'reserved' || !m.file) continue;
+      if (m.registrationStatus === 'reserved' || !m.file) continue;
       const declared = m.manifest.subscribes.some((s) => s.event === name);
       const observed = prod.subscriptions.some((s) => s.event === name && s.file === m.file);
       if (declared !== observed) {
@@ -975,8 +997,12 @@ export function analyzeBusMap(opts: AnalyzeOptions): BusMap {
       .filter((m) => m.manifest.requiresQueries.some((q) => q.queryName === name))
       .map((m) => ({ module: m.id, line: m.manifest.requiresQueries.find((q) => q.queryName === name)!.line }))
       .sort((a, b) => (a.module < b.module ? -1 : 1));
-    const registeredBy = sortByFileLine(everything.queriesRegistered.filter((r) => r.query === name));
-    const unregisteredBy = sortByFileLine(everything.queriesUnregistered.filter((r) => r.query === name));
+    // F1 (follow-up): production-регистрация/снятие — ТОЛЬКО факты из src/;
+    // тестовые регистрации не классифицируют запрос как зарегистрированный.
+    const registeredBy = sortByFileLine(prod.queriesRegistered.filter((r) => r.query === name));
+    const unregisteredBy = sortByFileLine(prod.queriesUnregistered.filter((r) => r.query === name));
+    const testRegisteredBy = aggregateByFile(testFactsQueryRegisters(testFacts, name));
+    const testUnregisteredBy = aggregateByFile(testFactsQueryUnregisters(testFacts, name));
     const productionCallers = sortByFileLine(prod.queriesCalled.filter((c) => c.query === name));
     const testCallers = aggregateByFile(testFactsQueryCalls(testFacts, name));
 
@@ -987,7 +1013,17 @@ export function analyzeBusMap(opts: AnalyzeOptions): BusMap {
     else if (registeredBy.length > 0 && declaredHandles.length > 0) status = 'declared_and_registered';
     else status = 'unused';
 
-    queries[name] = { declaredHandles, declaredRequires, registeredBy, unregisteredBy, productionCallers, testCallers, status };
+    queries[name] = {
+      declaredHandles,
+      declaredRequires,
+      registeredBy,
+      unregisteredBy,
+      testRegisteredBy,
+      testUnregisteredBy,
+      productionCallers,
+      testCallers,
+      status,
+    };
   }
 
   const summaryEvents: Record<string, number> = {};
@@ -1011,6 +1047,10 @@ export function analyzeBusMap(opts: AnalyzeOptions): BusMap {
       initOrder,
       tickOrderNote: TICK_ORDER_NOTE,
     },
+    // F2 (follow-up): file-level emissions — production-факты из файлов, которые
+    // не являются файлом объявления ни одного модуля (engine/инфраструктура).
+    // Каждый факт публикуется ровно один раз; владение модулем не утверждается.
+    fileLevelEmits: sortByFileLine(prod.emits.filter((e) => !moduleFileSet.has(e.file))),
     modules,
     events,
     queries,
@@ -1031,6 +1071,16 @@ export function analyzeBusMap(opts: AnalyzeOptions): BusMap {
   function testFactsQueryCalls(maps: Map<string, FileFacts>, name: string): Array<{ file: string; line: number }> {
     const out: Array<{ file: string; line: number }> = [];
     for (const ff of maps.values()) for (const c of ff.queriesCalled) if (c.query === name) out.push({ file: c.file, line: c.line });
+    return out;
+  }
+  function testFactsQueryRegisters(maps: Map<string, FileFacts>, name: string): Array<{ file: string; line: number }> {
+    const out: Array<{ file: string; line: number }> = [];
+    for (const ff of maps.values()) for (const r of ff.queriesRegistered) if (r.query === name) out.push({ file: r.file, line: r.line });
+    return out;
+  }
+  function testFactsQueryUnregisters(maps: Map<string, FileFacts>, name: string): Array<{ file: string; line: number }> {
+    const out: Array<{ file: string; line: number }> = [];
+    for (const ff of maps.values()) for (const r of ff.queriesUnregistered) if (r.query === name) out.push({ file: r.file, line: r.line });
     return out;
   }
 }
