@@ -5,27 +5,56 @@ import { RECIPE_MAP } from '@/data/recipes';
 import { ELEMENT_MAP } from '@/data/elements';
 import { getCraftedMaterial } from '@/data/crafted-materials';
 import { getCurrentLookups, findResourceDisplay } from '@/data/baked-lookups';
+import { findWorkshopExecutor, getRecipeRunability } from '@/economy/workshop-scheduler';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Badge } from '@/components/ui/badge';
-import { X, Repeat, Factory } from 'lucide-react';
-import type { EntityId, ProductionItem } from '@/core/types';
+import { X, Repeat, Factory, Clock, AlertTriangle } from 'lucide-react';
+import type { EntityId, Planet, ProductionItem } from '@/core/types';
 
 /**
- * R-26 (баги 3–4): декодировать ключ экземпляра-исполнителя в человеко-читаемый
- * бейдж. key: hexIndex (>= 0) — гекс поверхности; -1-i — атмосферный слот;
- * -100-i — орбитальный слот (та же конвенция, что в hexIndex-событиях).
+ * PROC-WORKSHOPS-01: бейдж исполнителя — lookup по цехам планеты
+ * (workshops[].currentBatch.queueItemId). Это НЕ сохраняемая привязка:
+ * планировщик её не читает; sticky-`assignedTo` удалён из модели.
  */
-function describeAssignment(key: number | undefined): string | null {
-  if (key === undefined) return null;
-  if (key >= 0) return `гекс #${key + 1}`;
-  if (key > -100) return `атм. слот #${-1 - key + 1}`;
-  return `орб. слот #${-100 - key + 1}`;
+function describeExecutor(planet: Planet | null, itemId: EntityId): string | null {
+  if (!planet) return null;
+  const exec = findWorkshopExecutor(planet, itemId);
+  if (!exec) return null;
+  const place = exec.layer === 'surface'
+    ? `гекс #${exec.instanceKey + 1}`
+    : exec.layer === 'atmosphere'
+      ? `атм. слот #${exec.instanceKey + 2}`
+      : `орб. слот #${exec.instanceKey + 101}`;
+  return `${place} · цех ${exec.workshopNumber}`;
+}
+
+/**
+ * PROC-WORKSHOPS-01: статус элемента очереди цехового пула.
+ * Выполняется (есть цех-исполнитель) / ожидает FIFO / пропущена
+ * (нет входов / энергии / места под выходы — не блокирует другие).
+ */
+type ItemStatus =
+  | { kind: 'executing'; executor: string }
+  | { kind: 'waiting' }
+  | { kind: 'skipped'; reason: string };
+
+function getItemStatus(planet: Planet | null, item: ProductionItem): ItemStatus {
+  const executor = describeExecutor(planet, item.id);
+  if (executor) return { kind: 'executing', executor };
+  const recipe = RECIPE_MAP.get(item.recipeId);
+  if (recipe && planet) {
+    const runability = getRecipeRunability(planet, item.recipeId);
+    if (runability === 'no-inputs') return { kind: 'skipped', reason: 'нет входных ресурсов' };
+    if (runability === 'no-energy') return { kind: 'skipped', reason: 'нет энергии' };
+    if (runability === 'no-output-space') return { kind: 'skipped', reason: 'нет места на складе' };
+  }
+  return { kind: 'waiting' };
 }
 
 /**
  * ProductionQueue — список элементов очереди производства с прогресс-баром
- * и кнопкой «Отменить». (Block 01 P4)
+ * и кнопкой «Отменить». (Block 01 P4; PROC-WORKSHOPS-01: статусы пула.)
  *
  * Принимает `items` (уже отфильтрованные по зданию на вызывающей стороне)
  * и `planetId` — для вызова `useGameStore.cancelProduction`.
@@ -39,6 +68,17 @@ interface ProductionQueueProps {
 
 export function ProductionQueue({ planetId, items }: ProductionQueueProps) {
   const cancelProduction = useGameStore((s) => s.cancelProduction);
+  const gameState = useGameStore((s) => s.gameState);
+
+  const planet = gameState
+    ? (() => {
+      for (const sys of gameState.galaxy.systems) {
+        const p = sys.planets.find((p) => p.id === planetId);
+        if (p) return p;
+      }
+      return null;
+    })()
+    : null;
 
   if (items.length === 0) {
     return (
@@ -64,6 +104,7 @@ export function ProductionQueue({ planetId, items }: ProductionQueueProps) {
             ? Math.max(0, Math.min(1, (totalTicks - remainingTicks) / totalTicks))
             : 0;
           const percent = Math.round(completedFraction * 100);
+          const status = getItemStatus(planet, item);
 
           return (
             <div
@@ -71,30 +112,47 @@ export function ProductionQueue({ planetId, items }: ProductionQueueProps) {
               className="rounded-md border border-white/10 bg-white/[0.03] p-2 space-y-1"
               data-testid={`production-queue-item-${idx}`}
             >
-              {/* Header: name + assignment + repeat icon + cancel button */}
+              {/* Header: name + executor/status + repeat icon + cancel button */}
               <div className="flex items-center gap-1.5">
                 <span className="text-[11px] text-slate-200 font-medium truncate flex-1" title={recipeName}>
                   {recipeName}
                 </span>
-                {/* R-26 (баги 3–4): бейдж экземпляра-исполнителя (карусель). */}
-                {(() => {
-                  const assigned = describeAssignment(item.assignedTo);
-                  return assigned ? (
-                    <Badge
-                      variant="outline"
-                      className="text-[9px] h-4 px-1 bg-amber-900/30 text-amber-300 border-amber-700/40 flex items-center gap-0.5"
-                      title={`Исполнитель: ${assigned}`}
-                    >
-                      <Factory className="size-2.5" />
-                      {assigned}
-                    </Badge>
-                  ) : null;
-                })()}
+                {/* PROC-WORKSHOPS-01: фактический цех-исполнитель (не привязка). */}
+                {status.kind === 'executing' && (
+                  <Badge
+                    variant="outline"
+                    className="text-[9px] h-4 px-1 bg-amber-900/30 text-amber-300 border-amber-700/40 flex items-center gap-0.5"
+                    title={`Исполнитель: ${status.executor}`}
+                  >
+                    <Factory className="size-2.5" />
+                    {status.executor}
+                  </Badge>
+                )}
+                {status.kind === 'waiting' && (
+                  <Badge
+                    variant="outline"
+                    className="text-[9px] h-4 px-1 bg-slate-800/60 text-slate-400 border-slate-700/40 flex items-center gap-0.5"
+                    title="В FIFO-очереди пула: ждёт свободный цех"
+                  >
+                    <Clock className="size-2.5" />
+                    в очереди
+                  </Badge>
+                )}
+                {status.kind === 'skipped' && (
+                  <Badge
+                    variant="outline"
+                    className="text-[9px] h-4 px-1 bg-red-900/30 text-red-300 border-red-800/40 flex items-center gap-0.5"
+                    title={`Пропущена планировщиком: ${status.reason} (не блокирует другие задачи)`}
+                  >
+                    <AlertTriangle className="size-2.5" />
+                    {status.reason}
+                  </Badge>
+                )}
                 {item.repeat && (
                   <Badge
                     variant="outline"
                     className="text-[9px] h-4 px-1 bg-cyan-900/30 text-cyan-300 border-cyan-700/40 flex items-center gap-0.5"
-                    title="Автоповтор"
+                    title="Автоповтор: после партии — в хвост пула"
                   >
                     <Repeat className="size-2.5" />
                     автоповтор

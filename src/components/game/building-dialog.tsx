@@ -24,7 +24,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
-import { Hammer, Zap, ArrowUp, ArrowDown, Trash2, Wrench, RotateCcw, ArrowRight, FlaskConical, Sparkles } from 'lucide-react';
+import { Hammer, Zap, ArrowUp, ArrowDown, Trash2, Wrench, ArrowRight, FlaskConical, Sparkles } from 'lucide-react';
 import type { Planet, HexTerrain, BuildingLayer, BuildingDef } from '@/core/types';
 import {
   calculateProcessorOutputMultiplier,
@@ -37,7 +37,7 @@ import {
   getEnergyConsumptionMultiplier,
 } from '@/economy/adjacency';
 import { PROCESSOR_CATEGORIES } from '@/data/processor-categories';
-import { SpecializeDialog } from './specialize-dialog';
+import { WorkshopPanel } from './workshop-panel'; // PROC-WORKSHOPS-01
 import { toast } from '@/hooks/use-toast';
 import { ShipyardDialog } from './shipyard-dialog';
 import { getResearchRate } from '@/research/engine'; // Block 03 R2: RP/sec для laboratory
@@ -286,10 +286,6 @@ function UpgradeMode({
   const [demolishFlow, setDemolishFlow] = useState<{
     action: 'downgrade1' | 'demolish';
   } | null>(null);
-  // Block 05 PR6 — specialization state
-  const specializeBuildingOnHex = useGameStore((s) => s.specializeBuildingOnHex);
-  const upgradeSpecializationOnHex = useGameStore((s) => s.upgradeSpecializationOnHex);
-  const [specializeDialogOpen, setSpecializeDialogOpen] = useState(false);
   // Block 02 F6 — shipyard queue dialog state
   const [shipyardDialogOpen, setShipyardDialogOpen] = useState(false);
 
@@ -299,18 +295,16 @@ function UpgradeMode({
   const specializationLevel = hex?.specializationLevel ?? 0;
   const activeRecipes = hex?.activeRecipes ?? [];
 
-  // Показывать блок специализации только для зданий-переработчиков
+  // PROC-WORKSHOPS-01: цеховые здания (processor / construction_materials_plant)
+  // — панель цехов; предельные формы (refinery/synthesizer) — категорийная
+  // модель Block 05 (display-only: их специализация предустановлена).
+  const isWorkshopBuilding = existingBuilding.usesWorkshops === true;
   const isProcessorBuilding = existingBuilding.isUniversalProcessor === true;
-  // Если building.defaultProcessorType === 'specialized' (refinery/synthesizer)
-  // — это предельная форма, нельзя специализироваться дальше или откатиться.
   const isLimitSpecializedForm = existingBuilding.defaultProcessorType === 'specialized';
-  const isUniversalInstance = processorType === 'universal' || processorType === undefined;
-  const isSpecializedInstance = processorType === 'specialized';
-  const canUpgradeSpecialization =
-    isSpecializedInstance && specializationLevel < 5 && !isLimitSpecializedForm;
 
-  // Расчёт текущего коэф. выхода и чистоты через calculateProcessorOutputMultiplier
-  const processorOutput = isProcessorBuilding
+  // Расчёт текущего коэф. выхода и чистоты — только для предельных форм
+  // (цеховые здания считают выход партии по цеху-исполнителю в планировщике).
+  const processorOutput = isProcessorBuilding && !isWorkshopBuilding
     ? calculateProcessorOutputMultiplier(existingBuilding, {
         processorType,
         specialization,
@@ -319,21 +313,8 @@ function UpgradeMode({
       })
     : null;
 
-  // Категория для отображения имени (если specialized)
+  // Категория для отображения имени (если specialized — только limit forms)
   const categoryDef = specialization ? PROCESSOR_CATEGORIES.get(specialization) : null;
-
-  // Проверка доступности ресурсов для upgradeSpecialization
-  const upgradeSpecializationCost = existingBuilding.upgradeSpecializationCost ?? {};
-  // Стоимость апгрейда специализации = upgradeSpecializationCost × specializationLevel
-  function checkCanAffordSpecUpgrade(): boolean {
-    if (!isSpecializedInstance) return false;
-    for (const [resourceId, amount] of Object.entries(upgradeSpecializationCost)) {
-      const required = (amount ?? 0) * specializationLevel;
-      if ((planet.resources[resourceId] ?? 0) < required) return false;
-    }
-    return true;
-  }
-  const canUpgradeSpec = checkCanAffordSpecUpgrade();
 
   return (
     <>
@@ -418,29 +399,20 @@ function UpgradeMode({
                 </div>
               )}
 
-              {/* ─── Block 05 PR6 — панель специализации переработчика ─── */}
-              {isProcessorBuilding && processorOutput && (
+              {/* ─── PROC-WORKSHOPS-01: панель цехов ─── */}
+              {isWorkshopBuilding && (
+                <WorkshopPanel planet={planet} hexIndex={hexIndex} />
+              )}
+
+              {/* ─── Block 05: предельные формы (refinery/synthesizer, display-only) ─── */}
+              {isProcessorBuilding && !isWorkshopBuilding && processorOutput && (
                 <ProcessorSpecializationPanel
                   isLimitSpecializedForm={isLimitSpecializedForm}
-                  isUniversalInstance={isUniversalInstance}
-                  isSpecializedInstance={isSpecializedInstance}
                   specializationLevel={specializationLevel}
                   categoryDefName={categoryDef?.name}
                   yieldMult={processorOutput.yieldMult}
                   purity={processorOutput.purity}
-                  activeRecipesCount={activeRecipes.length}
-                  canUpgradeSpecialization={canUpgradeSpecialization}
-                  canUpgradeSpec={canUpgradeSpec}
-                  upgradeSpecializationCost={upgradeSpecializationCost}
-                  upgradeSpecializationLevel={specializationLevel}
                   planet={planet}
-                  onOpenSpecializeDialog={() => setSpecializeDialogOpen(true)}
-                  onUpgradeSpecialization={() => {
-                    upgradeSpecializationOnHex(planet.id, hexIndex);
-                  }}
-                  onRevertToUniversal={() => {
-                    specializeBuildingOnHex(planet.id, hexIndex, 'universal');
-                  }}
                 />
               )}
 
@@ -452,7 +424,14 @@ function UpgradeMode({
                 </div>
               ) : (
                 <>
-                  <div className="text-sm text-slate-300 mb-2">Апгрейд до Lvl {existingLevel + 1}:</div>
+                  <div className="text-sm text-slate-300 mb-2">
+                Апгрейд до Lvl {existingLevel + 1}:
+                {existingBuilding.usesWorkshops && (
+                  <span className="text-emerald-400 text-xs ml-1">
+                    (+1 обычный цех №{existingLevel + 1})
+                  </span>
+                )}
+              </div>
                   {/* R-40: предупреждение о неизученных технологиях (гейт апгрейда). */}
                   {!techsMet && (
                     <div className="text-xs text-amber-400 mb-2">
@@ -513,6 +492,23 @@ function UpgradeMode({
                     <ArrowDown className="size-4 mr-1" />
                     {existingLevel === 1 ? 'Снести (ур. 1)' : `Понизить до ур. ${existingLevel - 1}`}
                   </Button>
+                  {/* PROC-WORKSHOPS-01: понижение = удаление цеха №L */}
+                  {existingBuilding.usesWorkshops && existingLevel > 1 && (
+                    <div className="text-[10px] text-amber-400/90 leading-snug">
+                      Понижение удалит цех №{existingLevel}
+                      {(hex?.workshops?.[existingLevel - 1]?.specializationRecipeId) && (
+                        <strong className="text-red-400">
+                          {' '}вместе со специализацией — потеря безвозвратна
+                        </strong>
+                      )}
+                      {(hex?.workshops?.[existingLevel - 1]?.currentBatch) && (
+                        <span>
+                          {' '}— его партия вернётся в хвост очереди с сохранённым прогрессом
+                        </span>
+                      )}
+                      .
+                    </div>
+                  )}
                   {existingLevel > 1 && (
                     <Button
                       variant="outline"
@@ -566,16 +562,6 @@ function UpgradeMode({
           </div>
         </DialogContent>
       </Dialog>
-
-      {/* SpecializeDialog — открывается поверх UpgradeMode */}
-      {isProcessorBuilding && specializeDialogOpen && (
-        <SpecializeDialog
-          open={specializeDialogOpen}
-          onOpenChange={setSpecializeDialogOpen}
-          planet={planet}
-          hexIndex={hexIndex}
-        />
-      )}
 
       {/* Block 02 (F6): ShipyardDialog — открывается из shipyard UpgradeMode */}
       {existingBuilding.id === 'shipyard' && shipyardDialogOpen && (
@@ -1141,66 +1127,44 @@ function canAffordBuildingUpgrade(
   return true;
 }
 
-// ============ Block 05 PR6 — Processor Specialization Panel ============
+// ============ Block 05: панель предельных форм (refinery/synthesizer) ============
+// PROC-WORKSHOPS-01: категорийная модель осталась ТОЛЬКО для предельных
+// специализированных форм; панель display-only (их специализация
+// предустановлена, уровень фиксирован). Кнопки специализации/отката
+// («Вернуть к универсальному») удалены вместе с категорийной моделью
+// processor'а; цеховые здания используют WorkshopPanel.
 
 interface ProcessorSpecializationPanelProps {
   isLimitSpecializedForm: boolean;     // refinery/synthesizer (предельная форма)
-  isUniversalInstance: boolean;
-  isSpecializedInstance: boolean;
   specializationLevel: number;
   categoryDefName?: string;
   yieldMult: number;
   purity: number;
-  activeRecipesCount: number;
-  canUpgradeSpecialization: boolean;   // < 5 и не предельная форма
-  canUpgradeSpec: boolean;             // хватает ресурсов
-  upgradeSpecializationCost: Partial<Record<string, number>>;
-  upgradeSpecializationLevel: number;  // текущий уровень (для стоимости × level)
   planet: Planet;
-  onOpenSpecializeDialog: () => void;
-  onUpgradeSpecialization: () => void;
-  onRevertToUniversal: () => void;
 }
 
 function ProcessorSpecializationPanel({
   isLimitSpecializedForm,
-  isUniversalInstance,
-  isSpecializedInstance,
   specializationLevel,
   categoryDefName,
   yieldMult,
   purity,
-  activeRecipesCount,
-  canUpgradeSpecialization,
-  canUpgradeSpec,
-  upgradeSpecializationCost,
-  upgradeSpecializationLevel,
-  planet,
-  onOpenSpecializeDialog,
-  onUpgradeSpecialization,
-  onRevertToUniversal,
 }: ProcessorSpecializationPanelProps) {
   return (
     <div className="rounded-md border border-purple-900/30 bg-purple-950/20 p-3 space-y-2">
       <div className="flex items-center gap-2 mb-1">
         <Wrench className="size-3 text-purple-400" />
         <span className="text-xs text-purple-300 uppercase tracking-wider font-semibold">
-          Переработчик
+          Переработчик (предельная форма)
         </span>
       </div>
 
       {/* Тип переработчика */}
       <div className="flex justify-between items-center text-xs">
         <span className="text-slate-500">Тип:</span>
-        {isUniversalInstance ? (
-          <Badge variant="outline" className="text-[10px] h-5 px-2 bg-slate-700/50">
-            Универсальный
-          </Badge>
-        ) : (
-          <Badge variant="outline" className="text-[10px] h-5 px-2 bg-purple-900/40 text-purple-300 border-purple-700">
-            Специализированный {categoryDefName ? `· ${categoryDefName}` : ''} · L{specializationLevel}
-          </Badge>
-        )}
+        <Badge variant="outline" className="text-[10px] h-5 px-2 bg-purple-900/40 text-purple-300 border-purple-700">
+          Специализированный {categoryDefName ? `· ${categoryDefName}` : ''} · L{specializationLevel}
+        </Badge>
       </div>
 
       {/* Коэф. выхода и чистота */}
@@ -1213,100 +1177,15 @@ function ProcessorSpecializationPanel({
         <span className="font-mono text-cyan-400">{(purity * 100).toFixed(1)}%</span>
       </div>
 
-      {/* Для universal — штраф за мульти-рецепт */}
-      {isUniversalInstance && (
-        <div className="flex justify-between text-xs">
-          <span className="text-slate-500">Активных рецептов:</span>
-          <span className="font-mono text-amber-400">
-            {activeRecipesCount} {activeRecipesCount > 1 && `(штраф ×${(1 / Math.sqrt(activeRecipesCount)).toFixed(3)})`}
+      {/* Для refinery/synthesizer — пометить как предельную форму */}
+      {isLimitSpecializedForm && (
+        <div className="text-[11px] text-slate-500 italic flex items-start gap-1.5 mt-1">
+          <ArrowRight className="size-3 text-slate-500 mt-0.5 shrink-0" />
+          <span>
+            Предельная специализированная форма. Не подлежит переключению или откату.
           </span>
         </div>
       )}
-
-      {/* Кнопки */}
-      <div className="space-y-2 pt-1">
-        {/* Universal → Specialized (только для processor, не refinery/synthesizer) */}
-        {isUniversalInstance && !isLimitSpecializedForm && (
-          <Button
-            size="sm"
-            variant="default"
-            className="w-full bg-purple-700 hover:bg-purple-600"
-            onClick={onOpenSpecializeDialog}
-          >
-            <Wrench className="size-3 mr-1" />
-            Специализировать
-          </Button>
-        )}
-
-        {/* Specialized → Upgrade specialization level (только для processor, не refinery/synthesizer) */}
-        {isSpecializedInstance && canUpgradeSpecialization && !isLimitSpecializedForm && (
-          <>
-            <div className="text-[11px] text-slate-400 mt-1">
-              Апгрейд специализации L{specializationLevel} → L{specializationLevel + 1}:
-            </div>
-            <div className="space-y-0.5">
-              {Object.entries(upgradeSpecializationCost).map(([resourceId, amount]) => {
-                const required = (amount ?? 0) * upgradeSpecializationLevel;
-                const current = planet.resources[resourceId] ?? 0;
-                const enough = current >= required;
-                const elDef = ELEMENT_MAP.get(resourceId);
-                const name = elDef?.symbol ?? resourceId;
-                return (
-                  <div
-                    key={resourceId}
-                    className={`flex justify-between text-xs ${enough ? 'text-slate-400' : 'text-red-400'}`}
-                  >
-                    <span>{name}</span>
-                    <span className="font-mono">
-                      {required} / {Math.floor(current)}
-                      {!enough && ' (!)'}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-            <Button
-              size="sm"
-              className="w-full bg-emerald-700 hover:bg-emerald-600"
-              disabled={!canUpgradeSpec}
-              onClick={onUpgradeSpecialization}
-            >
-              <ArrowUp className="size-3 mr-1" />
-              Повысить спец-уровень (L{specializationLevel} → L{specializationLevel + 1})
-            </Button>
-          </>
-        )}
-
-        {/* Specialized → Revert to universal (только для processor, не refinery/synthesizer) */}
-        {isSpecializedInstance && !isLimitSpecializedForm && (
-          <Button
-            size="sm"
-            variant="outline"
-            className="w-full border-red-800/50 text-red-400 hover:bg-red-900/20"
-            onClick={onRevertToUniversal}
-          >
-            <RotateCcw className="size-3 mr-1" />
-            Вернуть к универсальному (50% возврата)
-          </Button>
-        )}
-
-        {/* Для refinery/synthesizer — пометить как предельную форму */}
-        {isLimitSpecializedForm && (
-          <div className="text-[11px] text-slate-500 italic flex items-start gap-1.5 mt-1">
-            <ArrowRight className="size-3 text-slate-500 mt-0.5 shrink-0" />
-            <span>
-              Предельная специализированная форма. Не подлежит переключению или откату.
-            </span>
-          </div>
-        )}
-
-        {/* Universal processor — подсказка про минимальный уровень */}
-        {isUniversalInstance && !isLimitSpecializedForm && (
-          <div className="text-[11px] text-slate-500 italic">
-            Требуется уровень здания ≥ 3 для специализации. Глубинные руды (добываются буровой установкой) — ≥ 5.
-          </div>
-        )}
-      </div>
     </div>
   );
 }

@@ -496,7 +496,16 @@ function ResourceSection({
 // ============ Production Tab (Block 01 P4) ============
 
 /** ID зданий, у которых есть очередь производства. */
-const PRODUCTION_BUILDING_IDS = ['processor', 'synthesizer', 'refinery', 'shipyard'] as const;
+// PROC-WORKSHOPS-01: два раздельных пула переработки (стройматериалы —
+// construction_materials_plant, продвинутый — processor) идут ПЕРВЫМИ
+// и явно разнесены; далее — прежние категорийные здания и верфь.
+const PRODUCTION_BUILDING_IDS = [
+  'construction_materials_plant',
+  'processor',
+  'synthesizer',
+  'refinery',
+  'shipyard',
+] as const;
 
 /**
  * Найти все экземпляры здания (на поверхности / в атмосфере / на орбите).
@@ -538,9 +547,11 @@ function ProductionTabContent({ planet }: { planet: Planet }) {
     <ScrollArea className="h-full max-h-[calc(100vh-160px)]">
       <div className="p-2 space-y-4">
         <div className="text-[10px] text-slate-600 italic px-1">
-          Очередь производства — по зданиям. Одновременно работает столько задач,
-          сколько построено переработчиков; специализированные берут задачи своей
-          категории в первую очередь, остальные идут по карусели.
+          Очереди производства — по пулам зданий. Цеховые здания (завод
+          стройматериалов и переработчик): уровень = число цехов, один цех —
+          одна партия; специалист берёт профильную задачу первым, остальные —
+          общий FIFO; repeat возвращается в хвост пула. Свободные цехи завода
+          стройматериалов автоматически заполняются базовыми рудами (R-27).
         </div>
 
         {PRODUCTION_BUILDING_IDS.map((buildingId) => {
