@@ -4103,3 +4103,23 @@ Stage Summary:
 - Карта создана и проверяема: генератор из исходников, drift-check, 16 тестов; runtime не тронут (diff: docs/, scripts/gen-module-bus-map.ts, tests/arch/, package.json).
 - Главные факты: 86 событий (43 эмитятся, у 24 нет потребителей), 2 manifest_vs_runtime_mismatch (economy:downgrade/demolish), query API 9/0, двойной канал тиков (F-01) — все решения за владельцем.
 - Этапы 3б/4 не начинались; пулы/баланс не менялись; CI нет — не заявляется.
+
+---
+Task ID: 60 (ARCH-BUS-MAP-01 follow-up — F1/F2/F3)
+Agent: coding agent (Z.ai Code)
+Task: Issue #17 — узкий раунд по находкам независимого аудита (комментарий 6472418955): F1 (production query registration не satisfied тестами), F2 (shared engine emissions без импликации владения двумя модулями), F3 (контракт и JSON-схема согласованы). Только генератор/фикстуры/тесты/JSON/доки; runtime src/ не менять; F-01..F-10 не исправлять; портал не строить.
+
+Work Log:
+- F1: scripts/gen-module-bus-map.ts — registeredBy/unregisteredBy/status запросов вычисляются ТОЛЬКО по prod-фактам src/; тестовые регистрации/снятия — новые отдельные поля testRegisteredBy/testUnregisteredBy (агрегация {file, lines[]}); +2 помощника. На реальном репо galaxy:system-by-id: registeredBy = только galaxy-module.ts:76; тестовые :678,:681/:684 ушли в test-поля.
+- F2: observed.emits модуля — только emit-вызовы файла объявления класса; каталоговая эвристика «модуль ИЛИ директория» удалена (dirOf удалён); новая топ-секция fileLevelEmits — production emissions файлов, не являющихся файлами модулей (51 факт: economy/engine 17, fleet-engine 9, game-store 13, game-loop 6, game-mediator 4, shipyard-queue 2), каждый факт ровно один раз без утверждения владения; event-level productionEmitters сохранены.
+- F3: ModuleEntry.status → registrationStatus (active/unregistered/reserved — только ось регистрации); контракт module-contracts.md синхронизирован: убраны обещания observed.dependencies (dependencies — только declared; initOrder — вычисление ИЗ деклараций), tick задокументирован как только positionInInitOrder, зрелость (partial/stub) — human-оценка вне схемы (§2.3, §3.6 AIModule: registrationStatus active, зрелость partial — вне карты); analyzer.limitations +2 (итого 10).
+- Регресс-фикстуры: F1 — tests/arch/fixtures/fx-f1-module.ts (query объявлен prod-модулем) + fx-f1-nonprod-reg.ts (регистрация только в тесте) → declared_not_registered, test-факты отдельно; F2 — tests/arch/fixtures/shared/ (fx2-events/module-types/engine/alpha/beta: два модуля одной директории + общий engine) → engine-факт не в observed.emits обоих, в fileLevelEmits ровно 1 раз, event-level ссылки сохранены.
+- Тесты: tests/arch/module-bus-map.test.ts 16→20 (+F1, +F2, +2 real-repo: prod-only galaxy:system-by-id; fleet-engine не приписан ships/fleet); новый tests/arch/module-bus-map-schema.test.ts (6 тестов F3: наборы ключей всех уровней, enum 3/7/5, запрет status/implementationStatus/observed.dependencies, prod/test границы файлов, fileLevelEmits вне module-файлов, doc-sync).
+- Доки: module-contracts.md — ревизия follow-up в шапке; §1.1/1.3/2.2/2.3/3.1–3.6/6/8/9 синхронизированы с генератором.
+- Гейты (итоговое дерево): bun test 959/959 exit 0 (61 файл = 949 + 10 новых); lint 0 errors/38 warnings (Δ0); tsc --noEmit exit 0 (86→0 ошибок на финальном дереве; промежуточно 3×TS2769 в schema-тесте исправлены; baseline-ошибки исторических деревьев не рекурируют); validate:all 4/4; git diff --check чисто; audit:module-bus --check exit 0; детерминизм — два прогона байт-в-бит (cmp); git diff --stat -- src/ пусто.
+- Коммиты: docs(contract) → feat(генератор+карта+тесты) → docs(checkpoint/worklog). Push без force. Issue #17 не закрывается.
+
+Stage Summary:
+- Три находки аудита закрыты в границах раунда: F1 (test-only регистрации не классифицируют query), F2 (ownership = файл объявления; engine-факты в fileLevelEmits без дублей), F3 (схема = контракт; защита тестом конформности).
+- Runtime-код src/ не менялся; F-01..F-10 не исправлялись (решения за владельцем); история не переписывалась; CI/браузерный E2E в этом раунде не запускались и не заявляются.
+- Issue #17 остаётся OPEN для нового независимого аудита.
