@@ -36,6 +36,15 @@ import { SerializedGameStateSchema } from '@/lib/schemas/game-state-schema'; // 
 import { compactSaveV3, expandSaveV3 } from '@/lib/save-format-v3'; // R-29: ленивые залежи + словарь; R-30: v3 — единственный формат
 import { DEPOSIT_RNG_VERSION, migrateMaterializedBodySummary, needsSummaryMigration, type LazyDepositBody } from '@/galaxy/generate-resources'; // R-37: перепись тел, ожидающих версионную материализацию; R-38: миграция свода материализованных тел
 import { gzipBase64, gunzipBase64, isBrowserCodecAvailable } from '@/lib/save-codec-browser'; // R-26: сжатый транспорт сейвов
+// GAME-RECOVERY-01 (Issue #22): контракт recovery-checkpoint (без цикла
+// импортов — модуль-контракт не имеет зависимостей; сам game-recovery
+// импортирует serializeGameState отсюда, поэтому стор не импортирует его).
+import {
+  RECOVERY_SCHEMA_VERSION,
+  RecoveryError,
+  RECOVERY_ERROR_MESSAGES,
+  type RecoveryCheckpoint,
+} from '@/lib/game-recovery-contract';
 import { enqueueShipBuild as enqueueShipBuildFn, cancelShipyardItem as cancelShipyardItemFn } from '@/data/ships/shipyard-queue'; // Block 02 F6
 import { ShipsModule, resetShipCounter } from '@/ships/ships-module'; // Block 02 F5
 import { FleetModule } from '@/ships/fleet-module'; // Block 02 F5
@@ -144,6 +153,16 @@ export interface GameStore {
    * suspended-сессии (или она была на паузе: speed 0).
    */
   suspendedSpeed: GameSpeed | null;
+  /**
+   * GAME-RECOVERY-01 (Issue #22): идёт ли восстановление из локального
+   * checkpoint (loading state карточки восстановления).
+   */
+  isRestoring: boolean;
+  /**
+   * GAME-RECOVERY-01 (Issue #22): причина последнего НЕудачного
+   * восстановления (честное сообщение; null — успеха/попытки не было).
+   */
+  recoveryError: string | null;
 
   // === Действия ===
   /** Сгенерировать новый случайный seed (для кнопки «кости» в главном меню). */
@@ -164,6 +183,16 @@ export interface GameStore {
    * была играющей). Пауза остаётся паузой — loop не запускается.
    */
   continueGame: () => boolean;
+  /**
+   * GAME-RECOVERY-01 (Issue #22): восстановить сессию из локального
+   * checkpoint (IndexedDB, отдельного от серверных сейвов). Тот же путь
+   * интеграции, что у loadGame (общий integrator): deserializeGameState →
+   * счётчики → mediator.setLoadedState → store. currentSaveId = null —
+   * локальный checkpoint НЕ приписывает несуществующий серверный ID.
+   * Восстановленная сессия приходит на паузе (checkpoint играющей сессии
+   * сериализуется как paused) — игровой цикл НЕ стартует молча.
+   */
+  restoreFromCheckpoint: (cp: RecoveryCheckpoint) => Promise<boolean>;
   setSpeed: (speed: GameSpeed) => void;
   togglePause: () => void;
   tick: () => void;
@@ -756,6 +785,42 @@ export function deserializeGameState(json: string): GameState {
 
 // ============ Store ============
 
+/**
+ * GAME-RECOVERY-01 (Issue #22): общий путь интеграции ЗАГРУЖЕННОГО
+ * состояния в store/mediator — используется и loadGame (серверный сейв),
+ * и restoreFromCheckpoint (локальный recovery). Прежде код жил только в
+ * loadGame; задача прямо требует «тот же корректный путь подключения к
+ * mediator/store, который используется для успешного loadGame» — без
+ * ручного копирования половины логики.
+ */
+function integrateLoadedStateIntoStore(
+  set: (partial: Partial<GameStore>) => void,
+  loadedState: GameState,
+  warnings: string[],
+  saveId: string | null,
+): void {
+  // R-31 (audit): восстановить счётчик ProductionItem IDs (max суффикс + 1).
+  restoreProductionItemCounter(loadedState.productionQueues);
+  // Block 02 (F5): reset ship ID counter — newly built ships get fresh IDs.
+  resetShipCounter();
+  // Audit Pass 1 P1-2 + R-39: mediator видит загруженное состояние; loop
+  // приводится в соответствие фазе (paused/colonization — интервал не
+  // запускается; playing+speed>0 — запущен ровно один).
+  const mediator = getMediatorWithModules();
+  mediator.setLoadedState(loadedState);
+  set({
+    gameState: loadedState,
+    view: 'galaxy',
+    selectedSystemId: loadedState.galaxy.systems[0]?.id ?? null,
+    selectedPlanetId: null,
+    selectedFleetId: null,
+    isInitialized: true,
+    // Локальный recovery-чекпоинт не приписывает серверный save ID.
+    currentSaveId: saveId,
+    loadWarnings: warnings,
+  });
+}
+
 export const useGameStore = create<GameStore>()(immer((set, get) => {
   /** Создать начальное GameState */
   function createInitialState(config: Partial<import('@/galaxy').GalaxyGenConfig>): GameState {
@@ -782,6 +847,9 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
     galaxySeed: Math.floor(Math.random() * 1_000_000) + 1,
     // GAME-SESSION-UI-01 (Issue #21): нет suspended-сессии на старте.
     suspendedSpeed: null,
+    // GAME-RECOVERY-01 (Issue #22): восстановление не идёт, ошибок нет.
+    isRestoring: false,
+    recoveryError: null,
 
     rollGalaxySeed: () => {
       set({ galaxySeed: Math.floor(Math.random() * 1_000_000) + 1 });
@@ -871,6 +939,56 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
       // Сессия была на паузе — остаёмся на паузе; модули запустит
       // React-эффект page.tsx (mediator.start(), идемпотентно).
       return true;
+    },
+
+    // GAME-RECOVERY-01 (Issue #22): восстановление сессии из локального
+    // checkpoint (IndexedDB — отдельное хранилище, НЕ серверные сейвы).
+    // Путь интеграции — общий с loadGame (integrateLoadedStateIntoStore):
+    // deserializeGameState → счётчики → mediator.setLoadedState → store.
+    // Восстановленная сессия на паузе (checkpoint играющей сессии
+    // сериализуется как paused) — игровой цикл НЕ стартует молча.
+    restoreFromCheckpoint: async (cp: RecoveryCheckpoint) => {
+      set({ isRestoring: true, recoveryError: null, loadWarnings: [] });
+      try {
+        // Контракт: версия схемы. Декодирование — тот же хелпер, что у
+        // загрузки сейвов (gunzipBase64 / plain JSON).
+        if (cp.schemaVersion !== RECOVERY_SCHEMA_VERSION) {
+          throw new RecoveryError('bad-version');
+        }
+        let stateJson: string;
+        if (cp.encoding === 'gzip-base64') {
+          try {
+            stateJson = await gunzipBase64(cp.payload);
+          } catch (e) {
+            // Битый base64/gzip — честная причина, не сырая DOMException.
+            throw new RecoveryError('corrupted', e);
+          }
+        } else {
+          stateJson = cp.payload;
+        }
+        let loadedState: GameState;
+        try {
+          loadedState = deserializeGameState(stateJson);
+        } catch (e) {
+          // Мусор/невалидная схема v3 — тоже повреждение checkpoint'а.
+          throw new RecoveryError('corrupted', e);
+        }
+        const warnings = consumeDeserializeWarnings();
+        // Холодный старт (восстановление из меню после F5) — активной
+        // игры нет, lookups-защита как в loadGame не нужна.
+        integrateLoadedStateIntoStore(set, loadedState, warnings, null);
+        return true;
+      } catch (e) {
+        console.error('Recovery restore failed:', e);
+        // Честная причина: версия/повреждение/чтение — без ложного успеха.
+        const msg = e instanceof RecoveryError
+          ? RECOVERY_ERROR_MESSAGES[e.reason]
+          : e instanceof Error ? e.message : String(e);
+        set({ recoveryError: msg });
+        return false;
+      } finally {
+        set({ isRestoring: false });
+      }
     },
 
     togglePause: () => {
@@ -1525,39 +1643,10 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
         // (канал одноразовый) — попадут в store.loadWarnings для UI-тоста.
         const warnings = consumeDeserializeWarnings();
 
-        // R-31 (audit): восстановить счётчик ProductionItem IDs из загруженных
-        // очередей (max суффикс + 1). Раньше счётчик сбрасывался в 0 — новые
-        // ID коллидировали с существующими элементами из сейва (cancelProduction
-        // удаляет по первому совпадению — отменялась не та задача).
-        restoreProductionItemCounter(loadedState.productionQueues);
-        // Block 02 (F5): reset ship ID counter — newly built ships get fresh IDs.
-        resetShipCounter();
-
-        // Audit Pass 1 P1-2: sync mediator with the loaded state. Without this
-        // call, `mediator.gameState` stays on the OLD (or null) reference and
-        // subsequent `mediator.tick()` calls either return early (phase check)
-        // or process the OLD state — silently overwriting the loaded state on
-        // the very next tick. `setLoadedState` updates `mediator.gameState`,
-        // resets the GameLoop time, and emits `core:state-changed` (which our
-        // store subscription then forwards back to Zustand).
-        // R-39: setLoadedState также приводит GameLoop в соответствие фазе
-        // загруженного сейва (playing → модули+интервал запущены; пауза/
-        // колонизация → интервал предыдущей игры остановлен) — прежде модули
-        // оставались остановленными после stopAll при загрузке в активной
-        // сессии (заморозка симуляции).
-        const mediator = getMediatorWithModules();
-        mediator.setLoadedState(loadedState);
-
-        set({
-          gameState: loadedState,
-          view: 'galaxy',
-          selectedSystemId: loadedState.galaxy.systems[0]?.id ?? null,
-          selectedPlanetId: null,
-          selectedFleetId: null,
-          isInitialized: true,
-          currentSaveId: id,
-          loadWarnings: warnings,
-        });
+        // GAME-RECOVERY-01 (Issue #22): интеграция вынесена в общий
+        // integrator (тот же путь, что у восстановления из recovery-
+        // checkpoint) — поведение loadGame не изменилось.
+        integrateLoadedStateIntoStore(set, loadedState, warnings, id);
         return true;
       } catch (e) {
         console.error('Load failed:', e);

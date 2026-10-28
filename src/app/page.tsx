@@ -4,7 +4,7 @@ import { useEffect, useState, useMemo, useCallback } from 'react';
 import { useGameStore, type SaveInfo } from '@/stores/game-store';
 import { GameLayout } from '@/components/game/game-layout';
 import { Button } from '@/components/ui/button';
-import { Rocket, Save, Trash2, Loader2, FolderOpen, Dices, Play } from 'lucide-react';
+import { Rocket, Save, Trash2, Loader2, FolderOpen, Dices, Play, RotateCcw } from 'lucide-react';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -18,6 +18,8 @@ import {
 } from '@/components/ui/alert-dialog';
 import { getGameMediator } from '@/core/game-mediator';
 import { toast } from '@/hooks/use-toast';
+import { getRecoveryService, type RecoveryCheckpoint } from '@/lib/game-recovery';
+import { useGameRecovery } from '@/hooks/use-game-recovery';
 
 /**
  * Deterministic pseudo-random number generator (simple LCG).
@@ -59,6 +61,15 @@ export default function Home() {
   // «прыгал» раз в 20-30 секунд при активной игре. Store-поле стабильно.
   const galaxySeed = useGameStore((s) => s.galaxySeed);
   const rollGalaxySeed = useGameStore((s) => s.rollGalaxySeed);
+
+  // GAME-RECOVERY-01 (Issue #22): запись recovery-checkpoint'ов (один
+  // экземпляр хука на корень). Ниже — чтение для карточки восстановления.
+  useGameRecovery();
+  const restoreFromCheckpoint = useGameStore((s) => s.restoreFromCheckpoint);
+  const isRestoring = useGameStore((s) => s.isRestoring);
+  const recoveryError = useGameStore((s) => s.recoveryError);
+  const [recoveryCp, setRecoveryCp] = useState<RecoveryCheckpoint | null>(null);
+  const [recoveryStatus, setRecoveryStatus] = useState<'checking' | 'available' | 'error' | 'none'>('checking');
 
   const [saves, setSaves] = useState<SaveInfo[]>([]);
   const [loadingSaveId, setLoadingSaveId] = useState<string | null>(null);
@@ -114,6 +125,24 @@ export default function Home() {
     });
     return () => { active = false; };
   }, [loadSaveList]);
+
+  // GAME-RECOVERY-01 (Issue #22): холодная проверка recovery-checkpoint
+  // (IndexedDB) — НЕ блокирует меню: карточка появляется по завершении
+  // проверки. Ошибка хранилища — честное объяснение (не молчание).
+  useEffect(() => {
+    let active = true;
+    getRecoveryService()
+      .readCheckpoint()
+      .then((cp) => {
+        if (!active) return;
+        setRecoveryCp(cp);
+        setRecoveryStatus(cp ? 'available' : 'none');
+      })
+      .catch(() => {
+        if (active) setRecoveryStatus('error');
+      });
+    return () => { active = false; };
+  }, []);
 
   // Handle load
   // R-30: отказ загрузки — видимый тост (например, сейв старого формата:
@@ -203,6 +232,74 @@ export default function Home() {
           </div>
           <p className="text-slate-500 text-sm">A 4X Space Strategy Game</p>
         </div>
+
+        {/* GAME-RECOVERY-01 (Issue #22): карточка восстановления после
+            перезагрузки страницы. Показывается ТОЛЬКО при отсутствии
+            приостановленной in-memory сессии (после F5 её нет; если сессия
+            жива — приоритет у «Продолжить игру» из #21). */}
+        {!isInitialized && !hasSuspendedSession && (recoveryStatus === 'available' || recoveryStatus === 'error') && (
+          <div
+            className={
+              recoveryStatus === 'available'
+                ? 'bg-[#101828] border border-white/15 rounded-xl p-4 w-full'
+                : 'bg-[#1a1010] border border-red-500/30 rounded-xl p-4 w-full'
+            }
+            role="region"
+            aria-label="Восстановление последней игры"
+          >
+            {recoveryStatus === 'available' && recoveryCp ? (
+              <div className="flex items-center gap-3">
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium text-slate-200">Последняя игра (после перезагрузки)</div>
+                  <div className="text-[10px] text-slate-500 mt-0.5 font-mono">
+                    Seed {recoveryCp.seed} · тик {recoveryCp.tick} · {new Date(recoveryCp.savedAt).toLocaleString()}
+                  </div>
+                  {recoveryError && (
+                    <div className="text-[10px] text-red-400 mt-1" role="alert">{recoveryError}</div>
+                  )}
+                </div>
+                <Button
+                  className="shrink-0"
+                  disabled={isRestoring}
+                  onClick={async () => {
+                    const ok = await restoreFromCheckpoint(recoveryCp);
+                    if (!ok) {
+                      // Причина — в store.recoveryError (показана в карточке).
+                      toast({
+                        title: 'Не удалось восстановить игру',
+                        description: useGameStore.getState().recoveryError ?? 'Checkpoint повреждён или несовместим.',
+                        variant: 'destructive',
+                      });
+                    }
+                  }}
+                >
+                  {isRestoring ? <Loader2 className="size-4 mr-2 animate-spin" /> : <RotateCcw className="size-4 mr-2" />}
+                  {isRestoring ? 'Восстановление…' : 'Восстановить последнюю игру'}
+                </Button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-3">
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium text-red-300">Recovery-checkpoint недоступен</div>
+                  <div className="text-[10px] text-slate-500 mt-0.5">
+                    Локальное хранилище не читается. Можно удалить повреждённую запись и начать новую игру.
+                  </div>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0 border-red-500/30 text-red-300 hover:bg-red-500/10"
+                  onClick={async () => {
+                    await getRecoveryService().clearCheckpoint().catch(() => undefined);
+                    setRecoveryStatus('none');
+                  }}
+                >
+                  Удалить запись
+                </Button>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* GAME-SESSION-UI-01 (Issue #21): карточка продолжения приостановленной
             сессии — над табами, заметнее переключателя New/Load. */}

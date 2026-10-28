@@ -4202,3 +4202,24 @@ Stage Summary:
 - Ловушка lifecycle закрыта: меню гарантированно не тикает (эффект останавливает медиатор), Continue — ровно один активный интервал (доказано шпионом таймеров и подсчётом тиков).
 - Замена suspended-сессии (New Galaxy/Load) — только через явное подтверждение; Отмена нетронута; серверные сейвы не удаляются (0 сетевых запросов в тесте).
 - F5-восстановление — НЕ здесь (Issue #22, отдельная задача).
+
+---
+Task ID: 65 (GAME-RECOVERY-01)
+Agent: coding agent (Z.ai Code)
+Task: Issue #22 [P1] — локальный recovery checkpoint (IndexedDB) и «Восстановить последнюю игру» после F5; отдельный от серверных сейвов; запись ~30 с + скрытие вкладки + переход в меню; восстановление тем же путём, что loadGame.
+
+Work Log:
+- Архитектура без циклов (требование задачи): game-recovery-contract.ts (типы/версия/ошибки, без зависимостей) ← game-store (только контракт) и ← game-recovery.ts (IndexedDB-бэкенд + RecoveryService, импортирует serializeGameState из store); use-game-recovery.ts (хук записи); page.tsx (карточка восстановления). Ключ IDB: БД spacegame-recovery/стойка checkpoint/запись current-session — не конфликтует с серверными сейвами.
+- RecoveryService: атомарный put (IDB-транзакция; сбой сериализации до put; квота → старая запись цела); параллельность — не более одной полной сериализации, ровно один отложенный свежий снимок (последний); playing-сессия сериализуется как paused/0 (поверхностная копия — восстановление не стартует loop молча); gzipBase64 при >512 КБ (те же хелперы сейвов).
+- Хук записи: смена galaxy.id (new game/загрузка/восстановление) → немедленный checkpoint (замена записи; отмена New Game ничего не пишет/не удаляет); активная сессия → стабильный интервал 30 с (не пересоздаётся на тиках); «В меню»/unmount → переходный checkpoint; visibilitychange hidden → попытка; ошибки — console.warn + toast один раз за сессию (квота: «прошлый checkpoint цел»), симуляция не останавливается.
+- Восстановление: холодная async-проверка в меню (не блокирует экран); карточка «Последняя игра (после перезагрузки)» (Seed·тик·дата) + кнопка; restoreFromCheckpoint в store: версия схемы → gunzip/plain → deserializeGameState → ОБЩИЙ с loadGame integrator (вынесен из loadGame — путь переиспользован, не скопирован); currentSaveId=null (серверный ID не приписан); loadWarnings (миграции) как у loadGame; фаза paused — цикл не стартует молча; повреждение/чужая версия/чтение → честные сообщения (RECOVERY_ERROR_MESSAGES) + опция удалить запись (явный выбор).
+- Тесты tests/game-recovery.test.ts 13/13 (мок-бэкенд через интерфейс — новая библиотека не вводилась): write→read с валидным форматом; АТОМАРНОСТЬ при квоте/сбое; storage-unavailable; параллельность (1 начатая запись + ровно 1 отложенная); bad-version; corrupted; read-fail+clear; playing→paused-снапшот без мутации живого; restore — тот же seed/tick/колония, paused, currentSaveId=null, 0 тиков; повреждённый/чужая версия → false + причина; New Game заменяет запись, «отмена» не трогает.
+- Гейты-инциденты (исправлены до коммита): TS2552 gunzipBase64 не импортирован; TS unused RecoveryFailureReason; T5-шлюз в тесте (одноразовый релиз); RecoveryError-wrapping gunzip/parse в store (честные причины вместо сырых DOMException).
+- Браузерный E2E F5-сценария (реально): Launch → колонизация → «В меню» (checkpoint тик 9) → F5 → карточка «Seed 17076 · тик 9 · дата» → «Восстановить» → Tick 9, «Колонии: 1», тик заморожен 4 с (paused, цикл не стартовал молча), 0 ошибок консоли.
+- Гейты: bun test 1003/1003 exit 0 (990+13); lint 0 err/43 warn exit 0 (Δ0); tsc 86 = baseline Δ0 (exit 2, НЕ PASS); validate:all 4/4; git diff --check чисто; bus-map регенерирован, drift зелёный.
+- Публикация: коммиты feat(recovery) + docs(checkpoint), push без force. Issue #22 остаётся OPEN до плейтеста владельца (game state → checkpoint → F5 → Restore → проверка прогресса).
+
+Stage Summary:
+- F5 больше не уничтожает сессию: периодические (30 с) + событийные (меню/hidden/смена галактики) checkpoint'ы в изолированной IndexedDB; карточка восстановления с честными loading/error-состояниями.
+- Восстановление идёт существующими serializeGameState/gunzipBase64/deserializeGameState и общим с loadGame integrator'ом; currentSaveId не фабрикуется; сессия восстанавливается НА ПАУЗЕ (цикл не стартует молча).
+- Recovery отделён от серверных сейвов (другая БД, список сейвов не меняется, автосейвов на сервер нет); сбои квоты/чтения — честные причины, старый пригодный checkpoint не теряется.

@@ -407,91 +407,91 @@
     },
     {
       "file": "src/stores/game-store.ts",
-      "line": 913,
+      "line": 1031,
       "event": "economy:build",
       "publisher": "buildOnHex",
       "receiver": "mediator.getBus()"
     },
     {
       "file": "src/stores/game-store.ts",
-      "line": 930,
+      "line": 1048,
       "event": "economy:upgrade",
       "publisher": "upgradeBuildingOnHex",
       "receiver": "mediator.getBus()"
     },
     {
       "file": "src/stores/game-store.ts",
-      "line": 950,
+      "line": 1068,
       "event": "economy:downgrade",
       "publisher": "downgradeBuildingOnHex",
       "receiver": "mediator.getBus()"
     },
     {
       "file": "src/stores/game-store.ts",
-      "line": 971,
+      "line": 1089,
       "event": "economy:demolish",
       "publisher": "demolishBuildingOnHex",
       "receiver": "mediator.getBus()"
     },
     {
       "file": "src/stores/game-store.ts",
-      "line": 989,
+      "line": 1107,
       "event": "economy:downgrade",
       "publisher": "downgradeBuildingOnSlot",
       "receiver": "mediator.getBus()"
     },
     {
       "file": "src/stores/game-store.ts",
-      "line": 1010,
+      "line": 1128,
       "event": "economy:demolish",
       "publisher": "demolishBuildingOnSlot",
       "receiver": "mediator.getBus()"
     },
     {
       "file": "src/stores/game-store.ts",
-      "line": 1029,
+      "line": 1147,
       "event": "economy:build",
       "publisher": "buildOnAtmosphereSlot",
       "receiver": "mediator.getBus()"
     },
     {
       "file": "src/stores/game-store.ts",
-      "line": 1053,
+      "line": 1171,
       "event": "economy:build",
       "publisher": "buildOnOrbitSlot",
       "receiver": "mediator.getBus()"
     },
     {
       "file": "src/stores/game-store.ts",
-      "line": 1074,
+      "line": 1192,
       "event": "economy:enqueue",
       "publisher": "enqueueProduction",
       "receiver": "mediator.getBus()"
     },
     {
       "file": "src/stores/game-store.ts",
-      "line": 1119,
+      "line": 1237,
       "event": "economy:specialize",
       "publisher": "specializeBuildingOnHex",
       "receiver": "mediator.getBus()"
     },
     {
       "file": "src/stores/game-store.ts",
-      "line": 1144,
+      "line": 1262,
       "event": "economy:upgrade-specialization",
       "publisher": "upgradeSpecializationOnHex",
       "receiver": "mediator.getBus()"
     },
     {
       "file": "src/stores/game-store.ts",
-      "line": 1162,
+      "line": 1280,
       "event": "economy:colonize",
       "publisher": "colonizePlanet",
       "receiver": "mediator.getBus()"
     },
     {
       "file": "src/stores/game-store.ts",
-      "line": 2020,
+      "line": 2109,
       "event": "tech:fundamental-leveled",
       "publisher": "levelUpFundamental",
       "receiver": "getMediatorWithModules().getBus()"
@@ -625,7 +625,7 @@
       "registration": [
         {
           "file": "src/stores/game-store.ts",
-          "line": 360,
+          "line": 389,
           "order": 1
         }
       ],
@@ -876,7 +876,7 @@
       "registration": [
         {
           "file": "src/stores/game-store.ts",
-          "line": 360,
+          "line": 389,
           "order": 2
         }
       ],
@@ -1026,7 +1026,7 @@
       "registration": [
         {
           "file": "src/stores/game-store.ts",
-          "line": 360,
+          "line": 389,
           "order": 3
         }
       ],
@@ -1100,7 +1100,7 @@
       "registration": [
         {
           "file": "src/stores/game-store.ts",
-          "line": 360,
+          "line": 389,
           "order": 4
         }
       ],
@@ -1179,7 +1179,7 @@
       "registration": [
         {
           "file": "src/stores/game-store.ts",
-          "line": 360,
+          "line": 389,
           "order": 5
         }
       ],
@@ -1261,7 +1261,7 @@
       "registration": [
         {
           "file": "src/stores/game-store.ts",
-          "line": 360,
+          "line": 389,
           "order": 6
         }
       ],
@@ -1797,7 +1797,7 @@
       "productionConsumers": [
         {
           "file": "src/stores/game-store.ts",
-          "line": 372,
+          "line": 401,
           "event": "core:state-changed",
           "subscriber": "getMediatorWithModules",
           "receiver": "mediator.getBus()"
@@ -1961,6 +1961,12 @@
           "file": "tests/game-loop.test.ts",
           "lines": [
             73
+          ]
+        },
+        {
+          "file": "tests/game-recovery.test.ts",
+          "lines": [
+            254
           ]
         },
         {
@@ -2168,21 +2174,21 @@
       "productionEmitters": [
         {
           "file": "src/stores/game-store.ts",
-          "line": 913,
+          "line": 1031,
           "event": "economy:build",
           "publisher": "buildOnHex",
           "receiver": "mediator.getBus()"
         },
         {
           "file": "src/stores/game-store.ts",
-          "line": 1029,
+          "line": 1147,
           "event": "economy:build",
           "publisher": "buildOnAtmosphereSlot",
           "receiver": "mediator.getBus()"
         },
         {
           "file": "src/stores/game-store.ts",
-          "line": 1053,
+          "line": 1171,
           "event": "economy:build",
           "publisher": "buildOnOrbitSlot",
           "receiver": "mediator.getBus()"
@@ -2462,7 +2468,7 @@
       "productionEmitters": [
         {
           "file": "src/stores/game-store.ts",
-          "line": 1162,
+          "line": 1280,
           "event": "economy:colonize",
           "publisher": "colonizePlanet",
           "receiver": "mediator.getBus()"
@@ -2506,14 +2512,14 @@
       "productionEmitters": [
         {
           "file": "src/stores/game-store.ts",
-          "line": 971,
+          "line": 1089,
           "event": "economy:demolish",
           "publisher": "demolishBuildingOnHex",
           "receiver": "mediator.getBus()"
         },
         {
           "file": "src/stores/game-store.ts",
-          "line": 1010,
+          "line": 1128,
           "event": "economy:demolish",
           "publisher": "demolishBuildingOnSlot",
           "receiver": "mediator.getBus()"
@@ -2544,14 +2550,14 @@
       "productionEmitters": [
         {
           "file": "src/stores/game-store.ts",
-          "line": 950,
+          "line": 1068,
           "event": "economy:downgrade",
           "publisher": "downgradeBuildingOnHex",
           "receiver": "mediator.getBus()"
         },
         {
           "file": "src/stores/game-store.ts",
-          "line": 989,
+          "line": 1107,
           "event": "economy:downgrade",
           "publisher": "downgradeBuildingOnSlot",
           "receiver": "mediator.getBus()"
@@ -2607,7 +2613,7 @@
       "productionEmitters": [
         {
           "file": "src/stores/game-store.ts",
-          "line": 1074,
+          "line": 1192,
           "event": "economy:enqueue",
           "publisher": "enqueueProduction",
           "receiver": "mediator.getBus()"
@@ -2853,7 +2859,7 @@
       "productionEmitters": [
         {
           "file": "src/stores/game-store.ts",
-          "line": 1119,
+          "line": 1237,
           "event": "economy:specialize",
           "publisher": "specializeBuildingOnHex",
           "receiver": "mediator.getBus()"
@@ -2889,7 +2895,7 @@
       "productionEmitters": [
         {
           "file": "src/stores/game-store.ts",
-          "line": 930,
+          "line": 1048,
           "event": "economy:upgrade",
           "publisher": "upgradeBuildingOnHex",
           "receiver": "mediator.getBus()"
@@ -2932,7 +2938,7 @@
       "productionEmitters": [
         {
           "file": "src/stores/game-store.ts",
-          "line": 1144,
+          "line": 1262,
           "event": "economy:upgrade-specialization",
           "publisher": "upgradeSpecializationOnHex",
           "receiver": "mediator.getBus()"
@@ -3561,7 +3567,7 @@
       "productionEmitters": [
         {
           "file": "src/stores/game-store.ts",
-          "line": 2020,
+          "line": 2109,
           "event": "tech:fundamental-leveled",
           "publisher": "levelUpFundamental",
           "receiver": "getMediatorWithModules().getBus()"
