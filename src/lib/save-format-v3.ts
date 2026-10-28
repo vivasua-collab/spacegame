@@ -82,6 +82,8 @@ interface PlainHex {
   specialization?: unknown;
   specializationLevel?: unknown;
   activeRecipes?: unknown;
+  /** PROC-WORKSHOPS-01: цехи processing-зданий (processor / plant) */
+  workshops?: unknown;
 }
 
 interface PlainBody {
@@ -214,6 +216,26 @@ function compactHex(hex: PlainHex, idxOf: (id: unknown) => number): Plain {
     if (hex.specialization !== undefined) out.specialization = hex.specialization;
     if (hex.specializationLevel !== undefined) out.specializationLevel = hex.specializationLevel;
     if (hex.activeRecipes !== undefined) out.activeRecipes = hex.activeRecipes;
+    // PROC-WORKSHOPS-01: цехи (specialization/batch) — компактная форма:
+    // каждый цех = [specializationRecipeId|null, specializationLevel, batch|null],
+    // batch = [queueItemId|null, recipeId, progress, total].
+    if (Array.isArray(hex.workshops) && hex.workshops.length > 0) {
+      out.workshops = (hex.workshops as Plain[]).map((ws) => {
+        const batch = ws.currentBatch as Plain | undefined;
+        return [
+          (ws.specializationRecipeId as string | undefined) ?? null,
+          (ws.specializationLevel as number | undefined) ?? 0,
+          batch
+            ? [
+                (batch.queueItemId as string | null) ?? null,
+                batch.recipeId as string,
+                batch.progress as number,
+                batch.total as number,
+              ]
+            : null,
+        ];
+      });
+    }
   }
   if (Array.isArray(hex.deposits) && hex.deposits.length > 0) {
     // Истощённые (qty<=0) НЕ пишутся — «проще на поздних стадиях»:
@@ -320,6 +342,27 @@ function expandBody(body: Plain, idOf: (i: unknown) => string): void {
       if (h.specialization !== undefined) out.specialization = h.specialization;
       if (h.specializationLevel !== undefined) out.specializationLevel = h.specializationLevel;
       if (h.activeRecipes !== undefined) out.activeRecipes = h.activeRecipes;
+      // PROC-WORKSHOPS-01: восстановление цехов из компактной формы.
+      if (Array.isArray(h.workshops)) {
+        out.workshops = (h.workshops as unknown[][]).map((ws) => {
+          const spec = (ws[0] as string | null) ?? undefined;
+          const batch = ws[2] as unknown[] | null;
+          return {
+            ...(spec !== undefined ? { specializationRecipeId: spec } : {}),
+            ...(typeof ws[1] === 'number' && ws[1] > 0 ? { specializationLevel: ws[1] } : {}),
+            ...(batch
+              ? {
+                  currentBatch: {
+                    queueItemId: (batch[0] as string | null) ?? null,
+                    recipeId: batch[1] as string,
+                    progress: batch[2] as number,
+                    total: batch[3] as number,
+                  },
+                }
+              : {}),
+          };
+        });
+      }
       return out;
     });
   }

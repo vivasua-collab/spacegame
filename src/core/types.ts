@@ -298,6 +298,14 @@ export interface BuildingDef {
    * Пример: `['mountains', 'hills']` — только горы и холмы.
    */
   terrainTypes?: HexTerrain[];
+  // ─── PROC-WORKSHOPS-01 (Issue #23): цеховая модель переработки ────
+  /**
+   * true для цеховых processing-зданий (processor, construction_materials_plant):
+   * уровень L = L цехов; очередь обслуживается детерминированным
+   * планировщиком пулов (src/economy/workshop-scheduler.ts).
+   * docs/40-buildings.md §3.0 v3.0.
+   */
+  usesWorkshops?: boolean;
   // ─── Block 05: специализация переработчиков ─────────────────────────
   /** true для processor/refinery/synthesizer — они поддерживают специализацию */
   isUniversalProcessor?: boolean;
@@ -428,15 +436,52 @@ export interface Bonus {
   perTechLevel?: boolean;
 }
 
-// ============ Переработчики (Block 05) ============
+// ============ Переработчики (Block 05 + PROC-WORKSHOPS-01) ============
 
 /**
- * Тип переработчика.
- * - 'universal'  — processor без специализации: ЛЮБОЙ вход, низкий коэф. (0.75),
- *                  штраф за мульти-рецепт через sqrt(activeRecipes).
- * - 'specialized' — процессор, специализированный под одну категорию рецептов:
- *                  высокий коэф. (1.0) + purityBonus; или refinery/synthesizer
- *                  (предельные специализированные формы).
+ * PROC-WORKSHOPS-01 (Issue #23): партия цеха processing-здания.
+ *
+ * queueItemId === null → системная АВТО-партия R-27 (кандидат планировщика
+ * строительного пула; заказа игрока нет, прогресс живёт в партии).
+ * Иначе — партия элемента очереди производства игрока: прогресс партии
+ * синхронизируется с ProductionItem.progress каждый тик планировщиком.
+ */
+export interface WorkshopBatch {
+  queueItemId: EntityId | null;
+  recipeId: string;
+  /** Оставшиеся тики партии */
+  progress: number;
+  /** Всего тиков партии */
+  total: number;
+}
+
+/**
+ * PROC-WORKSHOPS-01 (Issue #23): цех processing-здания.
+ *
+ * Номер цеха = индекс в массиве cell.workshops + 1 (стабильная нумерация
+ * 1..buildingLevel; upgrade добавляет обычный цех в конец, понижение
+ * удаляет последний — docs/40-buildings.md §3.0.1/§3.0.4).
+ *
+ * Специализация хранится НА ЦЕХЕ по конкретному recipeId и НЕОБРАТИМА
+ * (§3.0.2): нельзя снять, сменить рецепт или понизить уровень.
+ */
+export interface WorkshopState {
+  /** Профиль-рецепт специализации (например 'smelt_fe'); undefined = обычный цех */
+  specializationRecipeId?: string;
+  /** Уровень специализации 1..5 (имеет смысл только при specializationRecipeId) */
+  specializationLevel?: number;
+  /** Текущая партия; undefined = цех свободен. Начатая партия не прерывается. */
+  currentBatch?: WorkshopBatch;
+}
+
+/**
+ * Тип переработчика (категорийная модель Block 05 — ОСТАЛАСЬ только для
+ * предельных форм refinery/synthesizer; цеховые здания processor /
+ * construction_materials_plant её не используют — PROC-WORKSHOPS-01).
+ * - 'universal'  — базовая комплектация: любой вход, низкий коэф. (0.75),
+ *                  штраф мультирецепта через sqrt(activeRecipes).
+ * - 'specialized' — заточен под одну категорию рецептов: высокий коэф.
+ *                  (1.0) + purityBonus; refinery/synthesizer.
  */
 export type ProcessorType = 'universal' | 'specialized';
 
@@ -635,8 +680,11 @@ export interface HexCell {
   buildingId: string | null;
   buildingLevel: number;
   deposits: ResourceDeposit[];
+  // ─── PROC-WORKSHOPS-01: цехи processing-зданий (processor / plant) ──
+  /** Цехи 1..buildingLevel (индекс i = цех №i+1); только для usesWorkshops-зданий */
+  workshops?: WorkshopState[];
   // ─── Block 05: специализация переработчиков (instance state) ──────────
-  /** Тип переработчика для processor/refinery/synthesizer; undefined для других зданий */
+  /** Тип переработчика для refinery/synthesizer; цеховые здания не используют */
   processorType?: ProcessorType;
   /** Категория специализации (если processorType === 'specialized') */
   specialization?: ProcessorRecipeCategory;
@@ -651,6 +699,8 @@ export interface AtmosphericSlot {
   index: number;
   buildingId: string | null;
   buildingLevel: number;
+  // ─── PROC-WORKSHOPS-01: цехи processing-зданий ──────────
+  workshops?: WorkshopState[];
   // ─── Block 05: специализация переработчиков ──────────
   processorType?: ProcessorType;
   specialization?: ProcessorRecipeCategory;
@@ -663,6 +713,8 @@ export interface OrbitalSlot {
   index: number;
   buildingId: string | null;
   buildingLevel: number;
+  // ─── PROC-WORKSHOPS-01: цехи processing-зданий ──────────
+  workshops?: WorkshopState[];
   // ─── Block 05: специализация переработчиков ──────────
   processorType?: ProcessorType;
   specialization?: ProcessorRecipeCategory;
@@ -974,13 +1026,9 @@ export interface ProductionItem {
   progress: number;    // оставшиеся тики
   total: number;       // всего тиков
   repeat: boolean;
-  /**
-   * R-26 (баги 3–4): экземпляр-исполнитель (ключ: hexIndex >= 0 — гекс
-   * поверхности; -1-i — атмосферный слот; -100-i — орбитальный слот).
-   * Проставляется каруселем производства каждый тик; «липкое» назначение
-   * удерживает задачу на экземпляре в процессе выполнения.
-   */
-  assignedTo?: number;
+  // PROC-WORKSHOPS-01: sticky-привязка assignedTo УДАЛЕНА — исполнитель не
+  // сохраняется; UI находит цех-исполнитель через workshops[].currentBatch
+  // (не редактируемая привязка, планировщик не читает её).
 }
 
 export interface GameState {

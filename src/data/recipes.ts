@@ -29,7 +29,7 @@ export const RECIPES: RecipeDef[] = [
     outputs: { Fe: 7.0, O: 3.0 },
     energyCost: 2,
     time: 5,
-    buildingId: 'processor',
+    buildingId: 'construction_materials_plant',
   },
   {
     id: 'smelt_ti',
@@ -39,7 +39,7 @@ export const RECIPES: RecipeDef[] = [
     outputs: { Fe: 3.7, Ti: 3.2, O: 3.2 },
     energyCost: 3,
     time: 8,
-    buildingId: 'processor',
+    buildingId: 'construction_materials_plant',
   },
   {
     id: 'smelt_cu',
@@ -49,7 +49,7 @@ export const RECIPES: RecipeDef[] = [
     outputs: { Cu: 3.5, Fe: 3.0, S: 3.5 },
     energyCost: 2,
     time: 5,
-    buildingId: 'processor',
+    buildingId: 'construction_materials_plant',
   },
   {
     id: 'smelt_cr',
@@ -192,7 +192,7 @@ export const RECIPES: RecipeDef[] = [
     outputs: { Al: 2.1, Si: 2.2, O: 5.6, H: 0.2 },
     energyCost: 2,
     time: 5,
-    buildingId: 'processor',
+    buildingId: 'construction_materials_plant',
   },
   {
     id: 'smelt_li',
@@ -256,7 +256,7 @@ export const RECIPES: RecipeDef[] = [
     outputs: { Si: 4.7, O: 5.3 },
     energyCost: 2,
     time: 5,
-    buildingId: 'processor',
+    buildingId: 'construction_materials_plant',
   },
   {
     id: 'smelt_c',
@@ -269,7 +269,7 @@ export const RECIPES: RecipeDef[] = [
     outputs: { C: 8.0, slag: 2.0 },
     energyCost: 2,
     time: 5,
-    buildingId: 'processor',
+    buildingId: 'construction_materials_plant',
   },
   {
     id: 'smelt_s',

@@ -37,8 +37,8 @@ import {
   enqueueProduction as engineEnqueueProduction,
   colonizePlanet as engineColonizePlanet,
   recalcEnergyBalance,
-  specializeBuilding as engineSpecializeBuilding,
-  upgradeSpecialization as engineUpgradeSpecialization,
+  specializeWorkshop as engineSpecializeWorkshop,
+  upgradeWorkshopSpecialization as engineUpgradeWorkshopSpecialization,
 } from './engine';
 import { createDefaultWarehouse, applyColonyRole, calculateWarehouseCapacity, getOrbitBufferCapacity, canStoreResource } from '@/data/warehouse';
 
@@ -65,10 +65,10 @@ export class EconomyModule implements IGameModule {
       'economy:resource-depleted',
       'economy:warehouse-full',
       'economy:warehouse-updated',
-      // Block 05 PR7 — specialization events
-      'economy:building-specialized',   // (*) engine.specializeBuilding
-      'economy:specialization-upgraded',// (*) engine.upgradeSpecialization
-      'economy:processor-output-changed',
+      // PROC-WORKSHOPS-01 — события цехов
+      'economy:building-specialized',    // (*) engine.specializeWorkshop
+      'economy:specialization-upgraded', // (*) engine.upgradeWorkshopSpecialization
+      'economy:workshop-batch-started',  // (*) workshop-scheduler (партии цехов)
       'core:state-changed',
     ],
     subscribes: [
@@ -77,8 +77,8 @@ export class EconomyModule implements IGameModule {
       { event: 'economy:upgrade' },
       { event: 'economy:enqueue' },
       { event: 'economy:colonize' },
-      // Block 05 PR7 — specialize/upgrade events (для логирования; основная
-      // обработка идёт через onSpecialize/onUpgrade обработчики ниже)
+      // PROC-WORKSHOPS-01 — specialize/upgrade события цехов (основная
+      // обработка — onSpecialize/onUpgradeSpecialization ниже)
       { event: 'economy:specialize' },
       { event: 'economy:upgrade-specialization' },
     ],
@@ -279,15 +279,17 @@ export class EconomyModule implements IGameModule {
     const newState = produce(currentState, (draft) => {
       const planet = findPlanet(draft, payload.planetId);
       if (!planet) return;
+      // PROC-WORKSHOPS-01: queues передаются в engine — партии удалённых
+      // понижением цехов возвращаются в хвост FIFO-пула с прогрессом.
       if (layer === 'atmosphere') {
         const slotIndex = payload.slotIndex ?? 0;
-        success = engineDowngradeBuilding(planet, 'atmosphere', slotIndex);
+        success = engineDowngradeBuilding(planet, 'atmosphere', slotIndex, draft.productionQueues);
       } else if (layer === 'orbit') {
         const slotIndex = payload.slotIndex ?? 0;
-        success = engineDowngradeBuilding(planet, 'orbit', slotIndex);
+        success = engineDowngradeBuilding(planet, 'orbit', slotIndex, draft.productionQueues);
       } else {
         const hexIndex = payload.hexIndex ?? 0;
-        success = engineDowngradeBuilding(planet, 'surface', hexIndex);
+        success = engineDowngradeBuilding(planet, 'surface', hexIndex, draft.productionQueues);
       }
     });
 
@@ -314,15 +316,16 @@ export class EconomyModule implements IGameModule {
     const newState = produce(currentState, (draft) => {
       const planet = findPlanet(draft, payload.planetId);
       if (!planet) return;
+      // PROC-WORKSHOPS-01: queues — партии цехов сносимого здания в хвост FIFO.
       if (layer === 'atmosphere') {
         const slotIndex = payload.slotIndex ?? 0;
-        success = engineDemolishBuilding(planet, 'atmosphere', slotIndex);
+        success = engineDemolishBuilding(planet, 'atmosphere', slotIndex, draft.productionQueues);
       } else if (layer === 'orbit') {
         const slotIndex = payload.slotIndex ?? 0;
-        success = engineDemolishBuilding(planet, 'orbit', slotIndex);
+        success = engineDemolishBuilding(planet, 'orbit', slotIndex, draft.productionQueues);
       } else {
         const hexIndex = payload.hexIndex ?? 0;
-        success = engineDemolishBuilding(planet, 'surface', hexIndex);
+        success = engineDemolishBuilding(planet, 'surface', hexIndex, draft.productionQueues);
       }
     });
 
@@ -381,14 +384,11 @@ export class EconomyModule implements IGameModule {
   }
 
   /**
-   * Block 05 PR7: обработчик economy:specialize.
-   * Оборачивает engine.specializeBuilding в immer.produce() — создаёт новое
-   * иммутабельное состояние с обновлённым hex (processorType/specialization/
-   * specializationLevel/activeRecipes) и списанной/возвращённой стоимостью.
-   *
-   * engine.specializeBuilding сам эмитит economy:building-specialized и
-   * economy:processor-output-changed на gameBus (после унификации R-39 —
-   * это и есть шина медиатора) — повторный эмит здесь не нужен.
+   * PROC-WORKSHOPS-01: обработчик economy:specialize.
+   * Оборачивает engine.specializeWorkshop в immer.produce() — новое
+   * состояние со специализированным цехом (workshops[n-1]) и списанной
+   * стоимостью. engine.specializeWorkshop сам эмитит
+   * economy:building-specialized на gameBus (= шина медиатора, R-39).
    */
   private onSpecialize(payload: EventPayload<'economy:specialize'>): void {
     const currentState = this.getGameState?.();
@@ -398,7 +398,12 @@ export class EconomyModule implements IGameModule {
     const newState = produce(currentState, (draft) => {
       const planet = findPlanet(draft, payload.planetId);
       if (!planet) return;
-      const result = engineSpecializeBuilding(planet, payload.hexIndex, payload.category);
+      const result = engineSpecializeWorkshop(
+        planet,
+        payload.hexIndex,
+        payload.workshopNumber,
+        payload.recipeId,
+      );
       success = result.success;
     });
 
@@ -408,10 +413,9 @@ export class EconomyModule implements IGameModule {
   }
 
   /**
-   * Block 05 PR7: обработчик economy:upgrade-specialization.
-   * Оборачивает engine.upgradeSpecialization в immer.produce().
-   * engine.upgradeSpecialization сам эмитит economy:specialization-upgraded
-   * и economy:processor-output-changed на gameBus (единая шина R-39).
+   * PROC-WORKSHOPS-01: обработчик economy:upgrade-specialization.
+   * Оборачивает engine.upgradeWorkshopSpecialization в immer.produce().
+   * engine сам эмитит economy:specialization-upgraded (единая шина R-39).
    */
   private onUpgradeSpecialization(payload: EventPayload<'economy:upgrade-specialization'>): void {
     const currentState = this.getGameState?.();
@@ -421,7 +425,11 @@ export class EconomyModule implements IGameModule {
     const newState = produce(currentState, (draft) => {
       const planet = findPlanet(draft, payload.planetId);
       if (!planet) return;
-      const result = engineUpgradeSpecialization(planet, payload.hexIndex);
+      const result = engineUpgradeWorkshopSpecialization(
+        planet,
+        payload.hexIndex,
+        payload.workshopNumber,
+      );
       success = result.success;
     });
 

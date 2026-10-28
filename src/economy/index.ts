@@ -18,8 +18,8 @@ export {
   calculateProcessorOutputMultiplier,
   // R-26 — карусель производства (баги 3–4)
   collectProcessorInstances,
-  specializeBuilding,
-  upgradeSpecialization,
+  specializeWorkshop,
+  upgradeWorkshopSpecialization,
 } from './engine';
 
 // Модуль (для регистрации в ModuleRegistry)

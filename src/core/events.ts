@@ -97,45 +97,58 @@ export interface EconomyEvents {
   'economy:resource-depleted': { planetId: EntityId; elementId: string; hexIndex: number };
   'economy:warehouse-full': { planetId: EntityId };
   'economy:warehouse-updated': { planetId: EntityId; capacity: number; used: number };
-  // ─── Block 05 PR7: входящие события специализации (store → module) ──
-  /** Инициировать специализацию или откат к universal (store → engine.specializeBuilding). */
+  // ─── PROC-WORKSHOPS-01: входящие события цехов (store → module) ────
+  /**
+   * Инициировать специализацию ЦЕХА по конкретному recipeId (store →
+   * engine.specializeWorkshop). Необратимо; цех должен быть свободен.
+   */
   'economy:specialize': {
     planetId: EntityId;
     hexIndex: number;
-    category: ProcessorRecipeCategory | 'universal';
+    /** Номер цеха 1..buildingLevel */
+    workshopNumber: number;
+    /** Профиль-рецепт специализации (например 'smelt_fe') */
+    recipeId: string;
   };
-  /** Повысить specializationLevel (store → engine.upgradeSpecialization). */
-  'economy:upgrade-specialization': { planetId: EntityId; hexIndex: number };
-  // ─── Block 05 PR7: исходящие события специализации (engine → listeners) ──
-  /** Эмитится после specializeBuilding (включая откат к universal). */
+  /** Повысить уровень специализации цеха 1→2→…→5 (store → engine.upgradeWorkshopSpecialization). */
+  'economy:upgrade-specialization': {
+    planetId: EntityId;
+    hexIndex: number;
+    /** Номер цеха 1..buildingLevel */
+    workshopNumber: number;
+  };
+  // ─── PROC-WORKSHOPS-01: исходящие события цехов (engine → listeners) ──
+  /** Эмитится после specializeWorkshop (цех получил профиль-рецепт, уровень 1). */
   'economy:building-specialized': {
     planetId: EntityId;
     hexIndex: number;
-    specialization: ProcessorRecipeCategory | 'universal';
+    /** Номер цеха 1..buildingLevel */
+    workshopNumber: number;
+    /** Профиль-рецепт специализации */
+    recipeId: string;
     specializationLevel: number;
   };
-  /** Эмитится после upgradeSpecialization (+1 уровень). */
+  /** Эмитится после upgradeWorkshopSpecialization (+1 уровень). */
   'economy:specialization-upgraded': {
     planetId: EntityId;
     hexIndex: number;
+    /** Номер цеха 1..buildingLevel */
+    workshopNumber: number;
     specializationLevel: number;
   };
   /**
-   * Эмитится после любого изменения, влияющего на выход процессора
-   * (specialize/upgrade/activeRecipes change) — чтобы UI перерисовал
-   * плашку коэф. выхода и чистоты.
+   * Эмитируется при старте партии цеха (player-партия или авто-кандидат R-27).
+   * UI/телеметрия: фактический исполнитель, не редактируемая привязка.
    */
-  'economy:processor-output-changed': {
+  'economy:workshop-batch-started': {
     planetId: EntityId;
+    /** buildingId цехового здания (processor / construction_materials_plant) */
+    buildingId: string;
     hexIndex: number;
-    yieldMult: number;
-    purity: number;
-  };
-  /** (PR3-full, отложено) При изменении набора активных рецептов здания. */
-  'economy:active-recipes-changed': {
-    planetId: EntityId;
-    hexIndex: number;
-    activeRecipes: string[];
+    workshopNumber: number;
+    recipeId: string;
+    /** null → системная авто-партия R-27 */
+    queueItemId: EntityId | null;
   };
 }
 

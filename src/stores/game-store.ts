@@ -32,6 +32,7 @@ import type { GameMediator } from '@/core/game-mediator'; // R-39: тип для
 import { EconomyModule } from '@/economy/economy-module';
 import { GalaxyModule } from '@/galaxy/galaxy-module';
 import { resetProductionItemCounter, restoreProductionItemCounter } from '@/economy/engine';
+import { BUILDING_MAP } from '@/data/buildings'; // PROC-WORKSHOPS-01: нормализация цехов при загрузке
 import { SerializedGameStateSchema } from '@/lib/schemas/game-state-schema'; // Block 08 gap-9: state validation on deserialize
 import { compactSaveV3, expandSaveV3 } from '@/lib/save-format-v3'; // R-29: ленивые залежи + словарь; R-30: v3 — единственный формат
 import { DEPOSIT_RNG_VERSION, migrateMaterializedBodySummary, needsSummaryMigration, type LazyDepositBody } from '@/galaxy/generate-resources'; // R-37: перепись тел, ожидающих версионную материализацию; R-38: миграция свода материализованных тел
@@ -230,13 +231,19 @@ export interface GameStore {
   demolishBuildingOnSlot: (planetId: EntityId, layer: 'atmosphere' | 'orbit', slotIndex: number) => boolean;
   enqueueProduction: (planetId: EntityId, recipeId: string, repeat?: boolean) => boolean;
   cancelProduction: (planetId: EntityId, queueItemId: string) => boolean;
-  // Block 05 PR7 — специализация переработчиков
-  specializeBuildingOnHex: (
+  // PROC-WORKSHOPS-01 (Issue #23) — специализация ЦЕХОВ (необратимая,
+  // по конкретному recipeId; docs/40-buildings.md §3.0.2)
+  specializeWorkshopOnHex: (
     planetId: EntityId,
     hexIndex: number,
-    category: import('@/core/types').ProcessorRecipeCategory | 'universal',
+    workshopNumber: number,
+    recipeId: string,
   ) => boolean;
-  upgradeSpecializationOnHex: (planetId: EntityId, hexIndex: number) => boolean;
+  upgradeWorkshopSpecializationOnHex: (
+    planetId: EntityId,
+    hexIndex: number,
+    workshopNumber: number,
+  ) => boolean;
 
   // Колонизация
   colonizePlanet: (planetId: EntityId) => boolean;
@@ -815,6 +822,65 @@ export function deserializeGameState(json: string): GameState {
  * (тот же galaxy.id при загрузке сейва той же галактики больше не
  * пропускает немедленную запись).
  */
+/**
+ * PROC-WORKSHOPS-01: защитная нормализация массивов цехов после загрузки.
+ *
+ * Для каждой ячейки цехового здания (usesWorkshops): если workshops отсут-
+ * ствует или его длина ≠ buildingLevel — создать/добрать обычные цехи
+ * (spec/batch существующих сохраняются по индексам). НЕ миграция legacy-
+ * специализаций: категорийные поля processor'а игнорируются цеховой моделью.
+ * Также снимает партии, чьи queueItemId больше не существуют в очередях
+ * (защита от битых сейвов).
+ */
+function normalizeWorkshopsOnLoad(state: GameState): void {
+  for (const sys of state.galaxy.systems) {
+    for (const body of [...sys.planets]) {
+      const cells = [
+        ...body.hexes,
+        ...body.atmosphericSlots,
+        ...body.orbitSlots,
+      ];
+      for (const cell of cells) {
+        const buildingId = cell.buildingId;
+        if (!buildingId) continue;
+        const def = BUILDING_MAP.get(buildingId);
+        if (!def?.usesWorkshops || cell.buildingLevel < 1) continue;
+        if (!Array.isArray(cell.workshops) || cell.workshops.length !== cell.buildingLevel) {
+          const normalized: import('@/core/types').WorkshopState[] = [];
+          for (let i = 0; i < cell.buildingLevel; i++) {
+            normalized.push(cell.workshops?.[i] ?? {});
+          }
+          cell.workshops = normalized;
+        }
+      }
+    }
+  }
+  // Снять партии с исчезнувшими элементами очереди (битые сейвы).
+  const liveIds = new Set<string>();
+  for (const queue of state.productionQueues.values()) {
+    for (const item of queue.items) liveIds.add(item.id);
+  }
+  for (const sys of state.galaxy.systems) {
+    for (const body of [...sys.planets]) {
+      const cells = [
+        ...body.hexes,
+        ...body.atmosphericSlots,
+        ...body.orbitSlots,
+      ];
+      for (const cell of cells) {
+        if (!cell.workshops) continue;
+        for (const ws of cell.workshops) {
+          const qid = ws.currentBatch?.queueItemId;
+          if (qid != null && !liveIds.has(qid)) {
+            ws.currentBatch = undefined;
+          }
+        }
+      }
+    }
+  }
+}
+
+
 function integrateLoadedStateIntoStore(
   set: (partial: Partial<GameStore>) => void,
   loadedState: GameState,
@@ -824,6 +890,13 @@ function integrateLoadedStateIntoStore(
 ): void {
   // R-31 (audit): восстановить счётчик ProductionItem IDs (max суффикс + 1).
   restoreProductionItemCounter(loadedState.productionQueues);
+  // PROC-WORKSHOPS-01: защитная нормализация цехов — у цеховых зданий
+  // (processor / construction_materials_plant) массив workshops обязан
+  // существовать и иметь длину buildingLevel. Старые сейвы (до цеховой
+  // модели) получают обычные цехи: категорийная специализация processor
+  // НЕ мигрируется (задокументированная несовместимость — Issue #23 п.12:
+  // старые сейвы не являются требованием обратной совместимости).
+  normalizeWorkshopsOnLoad(loadedState);
   // Block 02 (F5): reset ship ID counter — newly built ships get fresh IDs.
   resetShipCounter();
   // Audit Pass 1 P1-2 + R-39: mediator видит загруженное состояние; loop
@@ -1252,50 +1325,55 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
       return ok;
     },
 
-    // ─── Block 05 PR7 — специализация переработчиков ─────────────────
+    // ─── PROC-WORKSHOPS-01: специализация ЦЕХОВ ──────────────────────
     // Pattern: emit event → EconomyModule.onSpecialize wraps engine
-    // .specializeBuilding in immer.produce() and commits new state via
+    // .specializeWorkshop in immer.produce() and commits new state via
     // mediator.commitState() → core:state-changed → store subscription
     // syncs the new reference.
-    specializeBuildingOnHex: (planetId, hexIndex, category) => {
+    specializeWorkshopOnHex: (planetId, hexIndex, workshopNumber, recipeId) => {
       const mediator = getMediatorWithModules();
       const gameState = get().gameState;
       if (!gameState) return false;
       const planet = findPlanet(gameState, planetId);
       if (!planet) return false;
-      const before = planet.hexes[hexIndex]?.processorType;
-      const beforeSpec = planet.hexes[hexIndex]?.specialization;
-      mediator.getBus().emit('economy:specialize', { planetId, hexIndex, category });
-      // Re-fetch — engine.specializeBuilding mutates hex; immer produces a
-      // new state reference with the changed hex path.
+      const cell = planet.hexes[hexIndex];
+      if (!cell?.workshops) return false;
+      const before = cell.workshops[workshopNumber - 1]?.specializationRecipeId;
+      mediator.getBus().emit('economy:specialize', {
+        planetId,
+        hexIndex,
+        workshopNumber,
+        recipeId,
+      });
+      // Re-fetch — engine.specializeWorkshop mutates the workshop; immer
+      // produces a new state reference with the changed path.
       const newState = get().gameState;
       if (!newState) return false;
       const newPlanet = findPlanet(newState, planetId);
       if (!newPlanet) return false;
-      const after = newPlanet.hexes[hexIndex]?.processorType;
-      const afterSpec = newPlanet.hexes[hexIndex]?.specialization;
-      // Success criterion: either processorType changed OR (category === 'universal'
-      // AND specialization was non-empty before, now undefined).
-      if (category === 'universal') {
-        return before === 'specialized' && after === 'universal' && beforeSpec !== undefined && afterSpec === undefined;
-      }
-      return after === 'specialized' && afterSpec === category;
+      const ws = newPlanet.hexes[hexIndex]?.workshops?.[workshopNumber - 1];
+      return ws?.specializationRecipeId === recipeId && before === undefined;
     },
 
-    upgradeSpecializationOnHex: (planetId, hexIndex) => {
+    upgradeWorkshopSpecializationOnHex: (planetId, hexIndex, workshopNumber) => {
       const mediator = getMediatorWithModules();
       const gameState = get().gameState;
       if (!gameState) return false;
       const planet = findPlanet(gameState, planetId);
       if (!planet) return false;
-      const before = planet.hexes[hexIndex]?.specializationLevel ?? 0;
-      if (before === 0) return false; // не specialized
-      mediator.getBus().emit('economy:upgrade-specialization', { planetId, hexIndex });
+      const ws = planet.hexes[hexIndex]?.workshops?.[workshopNumber - 1];
+      if (!ws?.specializationRecipeId) return false; // не специализирован
+      const before = ws.specializationLevel ?? 1;
+      mediator.getBus().emit('economy:upgrade-specialization', {
+        planetId,
+        hexIndex,
+        workshopNumber,
+      });
       const newState = get().gameState;
       if (!newState) return false;
       const newPlanet = findPlanet(newState, planetId);
       if (!newPlanet) return false;
-      const after = newPlanet.hexes[hexIndex]?.specializationLevel ?? 0;
+      const after = newPlanet.hexes[hexIndex]?.workshops?.[workshopNumber - 1]?.specializationLevel ?? 0;
       return after > before;
     },
 

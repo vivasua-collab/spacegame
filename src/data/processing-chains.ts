@@ -38,6 +38,7 @@ export type SourceBuildingId =
 /** Здание переработки (null = переработка не нужна, используется напрямую) */
 export type ProcessingBuildingId =
   | 'processor'
+  | 'construction_materials_plant'
   | 'refinery'
   | 'synthesizer'
   | null;
