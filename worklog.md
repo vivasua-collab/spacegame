@@ -4065,3 +4065,22 @@ Stage Summary:
 - Все 4 пункта вердикта аудитора по #16 закрыты: (1) pre-fix доказательства сняты реально (e7ac7fe — точный симптом владельца A=L8/B=C=0; b15bc5b — speed² с банком 2M), (2) новый таймлайн согласован со скриншотами (пауза, тик 861 в кадре == в логе), (3) добавлен воспроизводимый browser-driven E2E (PASS 12/12, только UI-клики), (4) логи console/page errors приложены текстом (0 ошибок в каждом прогоне).
 - Симптом владельца для #15 воспроизведён в точности на e7ac7fe (аудит-база тела Issue #15); на 3cda0f1 канонический сценарий ротируется (smoke Task 55b + 931/931), остаточный гейт hasStartableQueuedTech закрыт f242121; текущий main подтверждён E2E.
 - Runtime-код не менялся; Issue #15 и #16 остаются OPEN до приёмки владельцем.
+
+---
+Task ID: 58 (R-RES-QUEUE-VERIFY follow-up #2 — остаточный scope повторного аудита)
+Agent: coding agent (Z.ai Code)
+Task: Issue #16 — закрыть остаточный scope из повторного аудита 2026-10-28T07:14:55Z (комментарий 6463058493): явные asserts Q_POST == Q_PRE и равенства целевого уровня активной технологии после load; публикация timeline/console артефактов под отслеживаемыми именами (root cause: *.log в .gitignore → 404 из main); повтор E2E; проверка реальной доступности артефактов из main. Runtime не менять.
+
+Work Log:
+- Окружение: HEAD 3a88a20 == origin/main; заглушка песочницы остановлена с :3000, игра перезапущена на :3000 по INSTRUCTIONS.md (double-fork, PID /tmp/next-dev.pid, лог dev2.log); 5 остаточных сеймов прошлых прогонов удалены через API (БД → []).
+- E2E-скрипт scripts/e2e/research-queue-e2e.sh: +2 явных assert в round-trip (Q_POST == Q_PRE с guard от vacuous pass; target_POST == target_PRE), артефакты переименованы timeline.log/console.log → timeline.txt/console.txt (причина задокументирована в самом скрипте); проверок 12 → 14.
+- Прошлые артефакты опубликованы байт-в-бит .txt-копиями (sha256 .log == .txt, таблица в чекпоинте §7.2): resq-20261028T055350Z/timeline.txt+console.txt, evidence-issue16/prefix-e7ac7fe-console.txt, prefix-b15bc5b-console.txt; git check-ignore подтверждает: .txt не игнорируются.
+- Повторный E2E на main 3a88a20 (resq-20261028T072313Z, :3000, seed 424242, только UI-клики): PASS exit 0, 14/14; 9 передач строго A→B→C→A…; пауза Tick 822/Paused, активный L4 332/1687, уровни 3/3/3, очередь [B→L4, C→L4], банк 4720; после load состояние идентично — новые asserts зелёные (Q_POST == Q_PRE, target L4 == L4); 0 ошибок страницы/консоли (console.txt); VLM-сверка кадра 02 == таймлайну по всем ключевым значениям; тестовый сейв удалён, БД [].
+- Гейты: bun test 933/933 exit 0 (Δ0); lint 0 errors/38 warnings (Δ0); tsc --noEmit exit 1, 86/71 src = baseline Δ0; validate:all 4/4; git diff --check чисто.
+- Документация: аддендум §7 в checkpoints/10_28_r_res_queue_verify_followup.md (§0–§6 не переписаны); этот worklog.
+- Публикация: коммиты test(e2e) + docs(checkpoint), push без force; доступность всех .txt-артефактов из main проверена GitHub contents API (200); отчёт-комментарий в Issue #16 — issue остаётся OPEN.
+
+Stage Summary:
+- Остаточный scope повторного аудита закрыт полностью: asserts добавлены и зелёные в реальном прогоне, артефакты опубликованы под .txt и доступны из main (проверено API), E2E повторён PASS 14/14 на 3a88a20.
+- Runtime-код не менялся; пулы/баланс/тесты не тронуты; история не переписывалась.
+- Issue #16 и #15 остаются OPEN — приёмка за владельцем/аудитором.
