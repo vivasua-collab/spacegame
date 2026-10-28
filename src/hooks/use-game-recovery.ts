@@ -4,9 +4,17 @@
  * GAME-RECOVERY-01 (Issue #22): React-хук записи recovery-checkpoint'ов.
  *
  * Монтируется один раз в корне (src/app/page.tsx). Правила записи:
- *  1. Смена галактики (new game / загрузка серверного сейва / восстановление)
+ *  1. ЗАМЕНА сессии (new game / загрузка серверного сейва / восстановление)
  *     → НЕМЕДЛЕННЫЙ checkpoint (новая запись атомарно заменяет старую;
  *     отмена New Game ничего не пишет/не удаляет — состояние не менялось).
+ *     Триггер — store.sessionVersion (монотонный счётчик замен сессии;
+ *     follow-up аудита 2026-10-28): НЕ galaxy.id — при загрузке сейва,
+ *     созданного из ТОЙ ЖЕ галактики, id не менялся и немедленная запись
+ *     пропускалась (checkpoint обновлялся только периодическим таймером —
+ *     до 30 с спустя; F5 в этом окне восстанавливал устаревшее состояние).
+ *     Счётчик инкрементируется store'ом ровно при успешной замене сессии
+ *     (newGame / успешный loadGame / успешный restoreFromCheckpoint) —
+ *     включая ту же галактику с другим tick/состоянием.
  *  2. Активная сессия → периодическая запись каждые RECOVERY_INTERVAL_MS
  *     (стабильный setInterval — не пересоздаётся на тиках/рендерах).
  *  3. Переход в меню («В главное меню», #21) → свежий checkpoint
@@ -31,21 +39,24 @@ import { toast } from '@/hooks/use-toast';
 
 export function useGameRecovery(): void {
   const isInitialized = useGameStore((s) => s.isInitialized);
-  // Идентификатор галактики стабилен в рамках сессии (не меняется на тиках).
-  const galaxyId = useGameStore((s) => s.gameState?.galaxy.id ?? null);
+  // Монотонный счётчик замен сессии (см. комментарий модуля): меняется
+  // ТОЛЬКО при успешной замене сессии — не на тиках/рендерах.
+  const sessionVersion = useGameStore((s) => s.sessionVersion);
   const warnedOnce = useRef(false);
 
-  // Смена галактики → немедленный checkpoint (замена старой записи).
+  // Замена сессии → немедленный checkpoint (замена старой записи).
+  // ВАЖНО: срабатывает и при загрузке серверного сейва из той же галактики
+  // (galaxy.id совпадает) — раньше этот случай был слепой зоной galaxyId.
   useEffect(() => {
-    if (!galaxyId) return;
+    if (!sessionVersion) return; // сессий ещё не было
     const state = useGameStore.getState().gameState;
     if (!state) return;
     getRecoveryService()
       .writeCheckpoint(state)
       .catch((e) => {
-        console.warn('[recovery] checkpoint после смены галактики не записан:', e);
+        console.warn('[recovery] checkpoint после замены сессии не записан:', e);
       });
-  }, [galaxyId]);
+  }, [sessionVersion]);
 
   // Периодическая запись ТОЛЬКО активной сессии (меню не тикает — но
   // приостановленная сессия уже покрыта переходом в меню; после возврата

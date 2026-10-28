@@ -15,6 +15,7 @@
 
 import { test, expect, describe, beforeEach, afterEach } from 'bun:test';
 import '@/core/immer-setup';
+import { produce } from 'immer';
 import {
   RecoveryService,
   InMemoryRecoveryBackend,
@@ -47,7 +48,24 @@ function resetStore(): void {
     suspendedSpeed: null,
     isRestoring: false,
     recoveryError: null,
+    sessionVersion: 0,
   });
+}
+
+/** Заглушить globalThis.fetch. Возвращает restore. */
+function stubFetch(handler: (url: string, init?: RequestInit) => Promise<unknown>): () => void {
+  const original = globalThis.fetch;
+  globalThis.fetch = ((url: string | URL | Request, init?: RequestInit) =>
+    handler(String(url), init)) as typeof fetch;
+  return () => { globalThis.fetch = original; };
+}
+
+/** Ответ «успешный JSON» для fetch-заглушки. */
+function jsonResponse(body: unknown): Promise<Response> {
+  return (async () => new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  }))();
 }
 
 /** Живая игровая сессия (mediator + модули) на 5 системах. */
@@ -325,5 +343,138 @@ describe('GAME-RECOVERY-01: restoreFromCheckpoint — тот же путь ин�
     const before = await svc.readCheckpoint();
     await new Promise((r) => setTimeout(r, 10));
     expect(await svc.readCheckpoint()).toEqual(before);
+  });
+});
+
+// ============ Follow-up аудита: немедленный checkpoint после Load ТОЙ ЖЕ галактики ============
+
+/**
+ * Замечание независимой проверки Issue #22 (2026-10-28): немедленная запись
+ * checkpoint'а была привязана к useEffect([galaxy.id]). При загрузке
+ * серверного сейва, созданного ИЗ ТОЙ ЖЕ галактики, id не меняется — эффект
+ * не срабатывает, checkpoint обновляется только периодическим таймером
+ * (до 30 с спустя). F5 в этом окне восстанавливает УСТАРЕВШЕЕ состояние
+ * вместо только что загруженного сейва.
+ *
+ * Фикс: store инкрементирует монотонный sessionVersion при каждой успешной
+ * замене сессии (newGame / успешный loadGame / успешный restore — общий
+ * integrator); хук подписан на него.
+ *
+ * Контракт хука в тестах воспроизводится дословно: эффект делает
+ * `writeCheckpoint(useGameStore.getState().gameState)` при изменении
+ * sessionVersion (тот же вызов, тот же сервис, без ожидания интервала).
+ */
+describe('GAME-RECOVERY-01 follow-up: sessionVersion — немедленный checkpoint после Load той же галактики', () => {
+  let restoreFetch: (() => void) | null = null;
+  beforeEach(() => { resetGameMediator(); resetStore(); restoreFetch = null; });
+  afterEach(() => {
+    if (restoreFetch) restoreFetch();
+    const gs = useGameStore.getState().gameState;
+    if (gs) getGameMediator().loop.pause();
+    resetGameMediator(); resetStore();
+  });
+
+  test('T14. Load ТОЙ ЖЕ галактики (другой tick/state): sessionVersion растёт, немедленный checkpoint отражает ЗАГРУЖЕННЫЙ сейв — не ждёт 30 с', async () => {
+    const backend = new InMemoryRecoveryBackend();
+    const svc = makeService(backend);
+
+    // 1. Игра (seed 42, 5 систем) → серверный сейв state A (tick 0, без колоний).
+    useGameStore.getState().newGame({ seed: 42, systemCount: 5 });
+    const savedState = useGameStore.getState().gameState!;
+    const galaxyId = savedState.galaxy.id;
+    const savedTick = savedState.time.tick;
+    const savedJson = serializeGameState(savedState); // тело серверного сейва
+    const versionAfterNewGame = useGameStore.getState().sessionVersion;
+    expect(versionAfterNewGame).toBeGreaterThan(0); // newGame — замена сессии
+
+    // 2. Игрок меняет игру: колонизация + 2 ручных тика → state B (тот же
+    //    galaxy.id; другой tick/состояние). Периодический таймер/переход в
+    //    меню записали checkpoint state B (как в реальной сессии).
+    const planet = savedState.galaxy.systems
+      .flatMap((s) => s.planets).find((p) => p.type !== 'gas_giant' && !p.owner && p.hexes.length > 0)!;
+    expect(useGameStore.getState().colonizePlanet(planet.id)).toBe(true);
+    const mediator = getGameMediator();
+    mediator.setSpeed(0); // остановить реальный интервал колонизации
+    const manual = produce(mediator.getGameState()!, (d) => {
+      d.phase = 'playing'; d.speed = 0; // ручной режим: тики только явно
+    });
+    mediator.setGameState(manual);
+    useGameStore.getState().tick();
+    useGameStore.getState().tick();
+    const modified = useGameStore.getState().gameState!;
+    expect(modified.galaxy.id).toBe(galaxyId); // ТО ЖЕ галактика (прецедент бага)
+    expect(modified.time.tick).toBe(savedTick + 2);
+    expect(modified.galaxy.systems.flatMap((s) => s.planets).find((p) => p.id === planet.id)!.owner).not.toBeNull();
+    // Игровые действия НЕ замена сессии — счётчик не двигался:
+    expect(useGameStore.getState().sessionVersion).toBe(versionAfterNewGame);
+
+    await svc.writeCheckpoint(modified);
+    const staleCp = await svc.readCheckpoint();
+    expect(staleCp!.tick).toBe(savedTick + 2); // на диске — устаревший state B
+
+    // 3. «Вернуться в меню → загрузить прежний сейв той же галактики»:
+    //    серверный сейв возвращает state A (тот же galaxy.id, другой tick/состояние).
+    restoreFetch = stubFetch((url) => {
+      expect(url).toContain('/api/save/save-1');
+      return jsonResponse({ state: savedJson, stateEncoding: 'json' });
+    });
+    const ok = await useGameStore.getState().loadGame('save-1');
+    expect(ok).toBe(true);
+    const loaded = useGameStore.getState().gameState!;
+    expect(loaded.galaxy.id).toBe(galaxyId); // СТАРЫЙ триггер [galaxy.id] здесь НЕ сработал бы
+    expect(loaded.time.tick).toBe(savedTick);
+    expect(loaded.galaxy.systems.flatMap((s) => s.planets).find((p) => p.id === planet.id)!.owner).toBeNull();
+
+    // 4. КЛЮЧЕВАЯ регрессия: замена сессии зарегистрирована НЕМЕДЛЕННО —
+    //    sessionVersion инкрементирован (успешный loadGame, та же галактика),
+    //    поэтому немедленный checkpoint хука срабатывает БЕЗ ожидания 30 с.
+    expect(useGameStore.getState().sessionVersion).toBe(versionAfterNewGame + 1);
+    await svc.writeCheckpoint(useGameStore.getState().gameState!); // ровно то, что делает эффект хука
+    const freshCp = await svc.readCheckpoint();
+    expect(freshCp!.tick).toBe(savedTick); // загруженный сейв, НЕ устаревший state B
+    const restored = deserializeGameState(await svc.decodeCheckpointPayload(freshCp!));
+    expect(restored.time.tick).toBe(savedTick);
+    // Колонии из «прошлой жизни» сессии в checkpoint НЕТ — восстановление
+    // после F5 вернёт ровно загруженный сейв, а не прежнее состояние.
+    expect(restored.galaxy.systems.flatMap((s) => s.planets).find((p) => p.id === planet.id)!.owner).toBeNull();
+  });
+
+  test('T15. sessionVersion — монотонный контракт: newGame/успешные load/restore инкрементируют; действия, меню/Continue, НЕУДАЧНЫЙ loadGame — нет', async () => {
+    expect(useGameStore.getState().sessionVersion).toBe(0); // сессий не было
+
+    // newGame → замена сессии.
+    useGameStore.getState().newGame({ seed: 42, systemCount: 5 });
+    const v1 = useGameStore.getState().sessionVersion;
+    expect(v1).toBe(1);
+
+    // Возврат в меню + Continue — сессия НЕ заменяется, счётчик на месте.
+    useGameStore.getState().returnToMainMenu();
+    expect(useGameStore.getState().sessionVersion).toBe(v1);
+    expect(useGameStore.getState().continueGame()).toBe(true);
+    expect(useGameStore.getState().sessionVersion).toBe(v1);
+
+    // НЕУДАЧНЫЙ loadGame (мусорный ответ сервера) — замены нет, счётчик цел;
+    // немедленный checkpoint по такому событию НЕ должен срабатывать.
+    restoreFetch = stubFetch(() => Promise.resolve(new Response('garbage', { status: 500 })));
+    expect(await useGameStore.getState().loadGame('bad-save')).toBe(false);
+    expect(useGameStore.getState().sessionVersion).toBe(v1);
+    if (restoreFetch) { restoreFetch(); restoreFetch = null; }
+
+    // Успешный loadGame (тело текущей сессии — идентичность галактики для
+    // счётчика не важна) → +1: инкремент в общем integrator.
+    const savedJson = serializeGameState(useGameStore.getState().gameState!);
+    restoreFetch = stubFetch(() => jsonResponse({ state: savedJson, stateEncoding: 'json' }));
+    expect(await useGameStore.getState().loadGame('save-any')).toBe(true);
+    const v2 = useGameStore.getState().sessionVersion;
+    expect(v2).toBe(v1 + 1);
+    if (restoreFetch) { restoreFetch(); restoreFetch = null; }
+
+    // Успешный restoreFromCheckpoint → ещё +1 (тот же integrator, что и loadGame).
+    const backend = new InMemoryRecoveryBackend();
+    const svc = makeService(backend);
+    await svc.writeCheckpoint(useGameStore.getState().gameState!);
+    const cp = await svc.readCheckpoint()!;
+    expect(await useGameStore.getState().restoreFromCheckpoint(cp!)).toBe(true);
+    expect(useGameStore.getState().sessionVersion).toBe(v2 + 1);
   });
 });

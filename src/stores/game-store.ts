@@ -163,6 +163,22 @@ export interface GameStore {
    * восстановления (честное сообщение; null — успеха/попытки не было).
    */
   recoveryError: string | null;
+  /**
+   * GAME-RECOVERY-01 (Issue #22, follow-up аудита 2026-10-28): монотонный
+   * счётчик ЗАМЕНЫ сессии. Инкрементируется ровно при успешной замене
+   * игрового состояния на новое: newGame / успешный loadGame / успешный
+   * restoreFromCheckpoint (общий integrator). НЕ меняется на тиках,
+   * UI-действиях, возврате в меню/Continue — только при замене сессии.
+   *
+   * Зачем: немедленный recovery-checkpoint в use-game-recovery раньше был
+   * привязан к galaxy.id — при загрузке серверного сейва, созданного ИЗ ТОЙ
+   * ЖЕ галактики, id не менялся, немедленная запись не срабатывала и
+   * checkpoint обновлялся только периодическим таймером (до 30 с спустя;
+   * F5 в этом окне восстанавливал устаревшее состояние). Счётчик не зависит
+   * от идентичности галактики: загрузка той же галактики с другим
+   * tick/состоянием тоже инкрементирует его.
+   */
+  sessionVersion: number;
 
   // === Действия ===
   /** Сгенерировать новый случайный seed (для кнопки «кости» в главном меню). */
@@ -792,12 +808,19 @@ export function deserializeGameState(json: string): GameState {
  * loadGame; задача прямо требует «тот же корректный путь подключения к
  * mediator/store, который используется для успешного loadGame» — без
  * ручного копирования половины логики.
+ *
+ * Follow-up аудита: сюда же входит инкремент sessionVersion — ЕДИНАЯ
+ * точка «сессия заменена» для обоих путей загрузки. Немедленный
+ * recovery-checkpoint хука подписан на этот счётчик, а не на galaxy.id
+ * (тот же galaxy.id при загрузке сейва той же галактики больше не
+ * пропускает немедленную запись).
  */
 function integrateLoadedStateIntoStore(
   set: (partial: Partial<GameStore>) => void,
   loadedState: GameState,
   warnings: string[],
   saveId: string | null,
+  sessionVersion: number,
 ): void {
   // R-31 (audit): восстановить счётчик ProductionItem IDs (max суффикс + 1).
   restoreProductionItemCounter(loadedState.productionQueues);
@@ -818,6 +841,9 @@ function integrateLoadedStateIntoStore(
     // Локальный recovery-чекпоинт не приписывает серверный save ID.
     currentSaveId: saveId,
     loadWarnings: warnings,
+    // Follow-up аудита: сессия ЗАМЕНЕНА (loadGame/restore — включая ту же
+    // галактику) → немедленный checkpoint хука обязана сработать.
+    sessionVersion,
   });
 }
 
@@ -850,6 +876,8 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
     // GAME-RECOVERY-01 (Issue #22): восстановление не идёт, ошибок нет.
     isRestoring: false,
     recoveryError: null,
+    // Follow-up аудита: сессий ещё не было — счётчик замен с нуля.
+    sessionVersion: 0,
 
     rollGalaxySeed: () => {
       set({ galaxySeed: Math.floor(Math.random() * 1_000_000) + 1 });
@@ -885,6 +913,9 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
         selectedFleetId: null,
         isInitialized: true,
         currentSaveId: null,
+        // Follow-up аудита: сессия заменена новой галактикой → немедленный
+        // recovery-checkpoint (тот же триггер, что у loadGame/restore).
+        sessionVersion: get().sessionVersion + 1,
       });
     },
 
@@ -976,7 +1007,7 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
         const warnings = consumeDeserializeWarnings();
         // Холодный старт (восстановление из меню после F5) — активной
         // игры нет, lookups-защита как в loadGame не нужна.
-        integrateLoadedStateIntoStore(set, loadedState, warnings, null);
+        integrateLoadedStateIntoStore(set, loadedState, warnings, null, get().sessionVersion + 1);
         return true;
       } catch (e) {
         console.error('Recovery restore failed:', e);
@@ -1646,7 +1677,10 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
         // GAME-RECOVERY-01 (Issue #22): интеграция вынесена в общий
         // integrator (тот же путь, что у восстановления из recovery-
         // checkpoint) — поведение loadGame не изменилось.
-        integrateLoadedStateIntoStore(set, loadedState, warnings, id);
+        // Follow-up аудита: успешная загрузка = замена сессии, ДАЖЕ если
+        // сейв из той же галактики (galaxy.id совпадает) — инкремент
+        // sessionVersion заставит немедленный checkpoint хука сработать.
+        integrateLoadedStateIntoStore(set, loadedState, warnings, id, get().sessionVersion + 1);
         return true;
       } catch (e) {
         console.error('Load failed:', e);
