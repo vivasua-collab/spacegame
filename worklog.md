@@ -4084,3 +4084,22 @@ Stage Summary:
 - Остаточный scope повторного аудита закрыт полностью: asserts добавлены и зелёные в реальном прогоне, артефакты опубликованы под .txt и доступны из main (проверено API), E2E повторён PASS 14/14 на 3a88a20.
 - Runtime-код не менялся; пулы/баланс/тесты не тронуты; история не переписывалась.
 - Issue #16 и #15 остаются OPEN — приёмка за владельцем/аудитором.
+
+---
+Task ID: 59 (ARCH-BUS-MAP-01)
+Agent: coding agent (Z.ai Code)
+Task: Issue #17 — карта модулей и фактических контрактов шины: Этап A (инвентаризация docs-only) → Этап B (генератор + generated map + tests) → Этап C (findings) → Этап D (документация). Runtime-код не менять. Порядок: docs/contract schema commit → генератор commit → checkpoint/worklog commit.
+
+Work Log:
+- Этап A: docs/architecture/module-contracts.md — схема полей карты, классификация (7 статусов событий с правилами приоритета; правило резерва §2.4: declared_but_not_observed_published ≠ баг), инвентаризация 6 модулей + 4 reserved + ядро-инфраструктуры, полная таблица 86 событий (43 эмитятся / 43 резерв; 24 «в пустоту»), 9 запросов (0 production-вызовов), 10 findings F-01..F-10. Subagent-инвентаризация (Explore) + личная верификация каждой координаты.
+- Этап B: scripts/gen-module-bus-map.ts (TS Compiler API, read-only): факты только по вызовам с литералом и распознанным получателем; production (src/) отдельно от tests/scripts; unresolvedForms; регистрация new XxxModule + registerAndInit с резолвом переменных; initOrder — реплика recalculateInitOrder; детерминизм (сортировки, без времён). package.json: audit:module-bus (+ --check, exit 1 при дрейфе, демо зафиксировано). Артефакт docs/architecture/module-bus-map.json: 86 событий / 10 модулей / 9 запросов; статусы 10/2/7/24/43.
+- Тесты генератора tests/arch/module-bus-map.test.ts: 16/16 — фикстуры (alias/import, typed emit/on, метод-обработчик, reserved, test-only consumer НЕ маскирует, query register/lookup, переменная → unresolvedForms + понижение только безиздательских, mismatch, топосорт, детерминизм, drift-check) + реальный репо (артефакт актуален; числа == module-contracts §4; initOrder == [galaxy, economy, tech, ships, fleet, ai]).
+- Этап D: modular-bus.md — блок «Фактическая реализация vs дизайн-документ»; !listing.md — строка; артефакт помечен как инвентаризация, не замена контрактов.
+- ИНЦИДЕНТ/восстановление: песочница в 12:24 перегенерировала prisma-клиент по схеме заглушки (tsc 106/76, −2 теста) и откатила локальную ветку к 3cda0f1 (потеря 54b63a8..9c84bb9 локально; origin цел). Обнаружено по bun test 931 vs 933 и merge-base; восстановлено: bun run db:push (клиент с GameSave, tsc 86/71 Δ0), stash → rebase origin/main → pop (commit этапа A переложен на 9c84bb9 = 206e4f7). Все ссылки строк перепроверены на 9c84bb9 (research-module:240/255/262; game-store:830..1892), карта регенерирована.
+- Гейты: bun test 949/949 (60 файлов, exit 0) = 933 + 16; lint 0 errors/38 warnings (Δ0); tsc exit 2 — 86/71 = baseline Δ0, в новых файлах 0; validate:all 4/4; git diff --check чисто; audit:module-bus --check exit 0; детерминизм генерации байт-в-бит.
+- Коммиты: docs/contract schema (206e4f7) → генератор+карта+тесты → checkpoint/worklog. Push без force. Issue #17 не закрывается.
+
+Stage Summary:
+- Карта создана и проверяема: генератор из исходников, drift-check, 16 тестов; runtime не тронут (diff: docs/, scripts/gen-module-bus-map.ts, tests/arch/, package.json).
+- Главные факты: 86 событий (43 эмитятся, у 24 нет потребителей), 2 manifest_vs_runtime_mismatch (economy:downgrade/demolish), query API 9/0, двойной канал тиков (F-01) — все решения за владельцем.
+- Этапы 3б/4 не начинались; пулы/баланс не менялись; CI нет — не заявляется.

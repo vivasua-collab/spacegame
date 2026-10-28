@@ -51,6 +51,7 @@
 | [`04-performance.md`](./04-performance.md) | ~2.2K | 150 | Стратегия оптимизации производительности | ✅ v1.0 |
 | [`05-appendices.md`](./05-appendices.md) | ~2.5K | 94 | Приложения A (сравнение с играми) и B (исправления) | ✅ v1.0 |
 | [`architecture/modular-bus.md`](./architecture/modular-bus.md) | ~26.8K | 2050 | Модульная шина: TypedEventBus, ModuleRegistry, GameMediator | ✅ |
+| [`architecture/module-contracts.md`](./architecture/module-contracts.md) | ~9K | ~440 | Инвентаризация фактических контрактов шины: 86 событий/10 модулей/9 запросов, статусы, findings (ARCH-BUS-MAP-01) | ✅ |
 | [`!listing.md`](./!listing.md) | ~4.1K | 267 | Этот файл — индекс | ✅ |
 
 ### 1x — Галактика (1 документ, ~18K токенов)
