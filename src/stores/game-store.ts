@@ -34,7 +34,8 @@ import { GalaxyModule } from '@/galaxy/galaxy-module';
 import { resetProductionItemCounter, restoreProductionItemCounter } from '@/economy/engine';
 import { BUILDING_MAP } from '@/data/buildings'; // PROC-WORKSHOPS-01: нормализация цехов при загрузке
 import { SerializedGameStateSchema } from '@/lib/schemas/game-state-schema'; // Block 08 gap-9: state validation on deserialize
-import { compactSaveV4, expandSaveV4 } from '@/lib/save-format-v4'; // ORE-POOLS: v4 — планетарные пулы, старые форматы отклоняются
+import { compactSaveV4, expandSaveV4, IncompatibleSaveFormatError } from '@/lib/save-format-v4'; // ORE-POOLS: v4 — планетарные пулы, старые форматы отклоняются; Issue #26: типизированный отказ
+import { classifyLoadFailure, type LoadFailure } from '@/lib/save-load-ux'; // Issue #26: классификация отказа загрузки
 import { buildResourceSummary } from '@/galaxy/generate-resources'; // ORE-POOLS: свод-превью — производная пулов
 import { gzipBase64, gunzipBase64, isBrowserCodecAvailable } from '@/lib/save-codec-browser'; // R-26: сжатый транспорт сейвов
 // GAME-RECOVERY-01 (Issue #22): контракт recovery-checkpoint (без цикла
@@ -137,6 +138,15 @@ export interface GameStore {
    * чистая загрузка без замечаний. UI (page.tsx) показывает тост.
    */
   loadWarnings: string[];
+  /**
+   * SAVE-V4-DOCS-UX-01 (Issue #26): классифицированная причина отказа
+   * ПОСЛЕДНЕЙ загрузки (null в начале каждой попытки). kind
+   * 'legacy-save-format' — старый формат v1..v{N−1} (миграции нет —
+   * начать новую игру); 'other-load-failure' — сеть/404/битый JSON/прочее
+   * (честное общее сообщение, НЕ «старый формат»). detail — первопричина
+   * для диагностики (в консоли loadGame остаётся полный Error).
+   */
+  loadFailure: LoadFailure | null;
   /**
    * Audit 2026-08-28: случайный seed галактики для нового меню.
    * Хранится в Zustand store (НЕ в локальном useState компонента page.tsx),
@@ -833,6 +843,8 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
     isLoading: false,
     // R-39: предупреждения последней загрузки (миграции сейвов) для UI.
     loadWarnings: [],
+    // Issue #26: отказов ещё не было.
+    loadFailure: null,
     // Audit 2026-08-28: стабильный seed в store (не прыгает при перемонтировании).
     // Ленивая инициализация один раз при загрузке страницы.
     galaxySeed: Math.floor(Math.random() * 1_000_000) + 1,
@@ -966,8 +978,13 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
         try {
           loadedState = deserializeGameState(stateJson);
         } catch (e) {
-          // Мусор/невалидная схема (fmt≠4, zod) — тоже повреждение checkpoint'а.
-          throw new RecoveryError('corrupted', e);
+          // Issue #26: fmt≠4 — не «повреждение», а чужая версия сейва
+          // (IndexedDB-checkpoint мог остаться от сборки до миграции v4):
+          // честная причина bad-version вместо corrupted. Прочий мусор
+          // (битый JSON/zod) — corrupted как прежде.
+          throw e instanceof IncompatibleSaveFormatError
+            ? new RecoveryError('bad-version', e)
+            : new RecoveryError('corrupted', e);
         }
         const warnings = consumeDeserializeWarnings();
         // Холодный старт (восстановление из меню после F5) — активной
@@ -1608,7 +1625,7 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
     },
 
     loadGame: async (id: string) => {
-      set({ isLoading: true, loadWarnings: [] });
+      set({ isLoading: true, loadWarnings: [], loadFailure: null });
       // R-39: защита активной игры. deserializeGameState сам не мутирует
       // глобальное состояние ДО zod-валидации (отклонённый сейв бросает ДО
       // setCurrentLookups), но УСПЕШНАЯ десериализация переключает lookups
@@ -1654,6 +1671,10 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
         return true;
       } catch (e) {
         console.error('Load failed:', e);
+        // Issue #26: типизированная классификация причины отказа для UI
+        // (handleLoad выбирает тост по kind). Первопричина остаётся в
+        // консоли (строка выше) — она же в loadFailure.detail.
+        set({ loadFailure: classifyLoadFailure(e) });
         // R-39: откат lookups на модель активной игры — ТОЛЬКО если
         // десериализация успела их переключить (успешный deserialize с
         // последующим падением счётчиков/setLoadedState). Чистый отказ

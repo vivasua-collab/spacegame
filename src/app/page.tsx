@@ -20,7 +20,7 @@ import { getGameMediator } from '@/core/game-mediator';
 import { toast } from '@/hooks/use-toast';
 import { getRecoveryService, type RecoveryCheckpoint } from '@/lib/game-recovery';
 import { useGameRecovery } from '@/hooks/use-game-recovery';
-import { rejectedLegacyVersionsLabel } from '@/lib/save-format-v4';
+import { loadFailureToast, type LoadFailureKind } from '@/lib/save-load-ux';
 
 /**
  * Deterministic pseudo-random number generator (simple LCG).
@@ -159,11 +159,12 @@ export default function Home() {
   }, []);
 
   // Handle load
-  // R-30: отказ загрузки — видимый тост (например, сейв старого формата:
-  // deserializeGameState отклоняет fmt≠4 явной ошибкой). Список отвергаемых
-  // версий — из модуля формата (rejectedLegacyVersionsLabel): текст не может
-  // протухнуть при следующей смене версии (аудит 2026-10-29: тост сообщал
-  // «v1/v2» — остаток эпохи v3 — при отвергаемых v1/v2/v3).
+  // R-30: отказ загрузки — видимый тост, НО не всякая ошибка — «старый формат»
+  // (SAVE-V4-DOCS-UX-01 / Issue #26): loadGame классифицирует причину в
+  // store.loadFailure (kind). Только legacy v1..v{N−1} получают явное
+  // «миграции нет — начните новую игру» (версии из модуля формата —
+  // rejectedLegacyVersionsLabel, не литерал); сеть/404/битый JSON — честное
+  // общее сообщение без формата. Первопричина остаётся в консоли (loadGame).
   // R-39: успешная загрузка С ПРЕДУПРЕЖДЕНИЯМИ МИГРАЦИЙ (store.loadWarnings:
   // отказы пересчёта свода R-38, тела ждущие материализации R-37) —
   // наблюдаемость для пользователя, не только console.warn.
@@ -172,11 +173,8 @@ export default function Home() {
     const ok = await loadGame(id);
     setLoadingSaveId(null);
     if (!ok) {
-      toast({
-        title: 'Не удалось загрузить сейв',
-        description: `Сейв повреждён или записан в старом формате (${rejectedLegacyVersionsLabel()} не поддерживаются). Подробности — в консоли.`,
-        variant: 'destructive',
-      });
+      const failure = useGameStore.getState().loadFailure ?? { kind: 'other-load-failure' as LoadFailureKind };
+      toast({ ...loadFailureToast(failure), variant: 'destructive' });
       return;
     }
     const warnings = useGameStore.getState().loadWarnings;

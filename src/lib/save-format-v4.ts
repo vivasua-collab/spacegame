@@ -68,6 +68,42 @@ export function rejectedLegacyVersionsLabel(): string {
 }
 
 /**
+ * Отказ формата сейва: маркер `fmt` отсутствует или ≠ SAVE_FORMAT_VERSION.
+ *
+ * Типизированный носитель причины (SAVE-V4-DOCS-UX-01 / Issue #26):
+ * `legacy === true` — fmt из REJECTED_LEGACY_FORMAT_VERSIONS (v1..v{N−1},
+ * гекс-залежи): UI обязан явно сообщить «старый формат, миграции нет,
+ * начните новую игру». `legacy === false` — маркер отсутствует или fmt
+ * «новее» текущей сборки (vN+1): это НЕ «старый формат» — UI обязан дать
+ * честное общее сообщение, не подставляя список legacy-версий.
+ */
+export class IncompatibleSaveFormatError extends Error {
+  readonly fmt: number | undefined;
+  readonly legacy: boolean;
+
+  constructor(fmt: number | undefined) {
+    const legacy =
+      fmt !== undefined && (REJECTED_LEGACY_FORMAT_VERSIONS as readonly number[]).includes(fmt);
+    const expected = SAVE_FORMAT_VERSION;
+    const reason =
+      fmt === undefined
+        ? `Несовместимый формат сейва: маркер fmt отсутствует (ожидается ${expected}). `
+          + 'Сейвы предыдущей модели игры (залежи на гексах) не поддерживаются — '
+          + 'начните новую игру.'
+        : `Несовместимый формат сейва: fmt=${fmt} (ожидается ${expected}). `
+          + (legacy
+            ? 'Сейвы предыдущей модели игры (залежи на гексах) не поддерживаются — '
+              + 'начните новую игру.'
+            : 'Формат сейва не поддерживается этой версией игры (миграция '
+              + 'не предусмотрена) — начните новую игру.');
+    super(reason);
+    this.name = 'IncompatibleSaveFormatError';
+    this.fmt = fmt;
+    this.legacy = legacy;
+  }
+}
+
+/**
  * Версия формата, объявленная в УЖЕ распарсенном состоянии (маркер `fmt`,
  * пишется compactSaveV4). Для метаданных БД (GameSave.version): колонка
  * обязана сообщать ФАКТИЧЕСКУЮ версию сохранённого state, а не константу
@@ -252,10 +288,10 @@ function compactHex(hex: PlainHex): Plain {
  */
 export function expandSaveV4<T extends Plain>(raw: T): T {
   if (raw.fmt !== SAVE_FORMAT_VERSION) {
-    throw new Error(
-      `Несовместимый формат сейва: fmt=${String(raw.fmt)} (ожидается ${SAVE_FORMAT_VERSION}). `
-      + 'Сейвы предыдущей модели игры (залежи на гексах) не поддерживаются — '
-      + 'начните новую игру.',
+    // Типизированный отказ (Issue #26): UI отличает legacy v1..v{N−1} от
+    // прочих несовместимостей (см. IncompatibleSaveFormatError.legacy).
+    throw new IncompatibleSaveFormatError(
+      typeof raw.fmt === 'number' ? raw.fmt : undefined,
     );
   }
   const galaxy = raw.galaxy as Plain | undefined;

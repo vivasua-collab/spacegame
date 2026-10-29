@@ -47,7 +47,15 @@ export async function GET() {
  * (`stateEncoding`) — сериализованное состояние 200-системной галактики
  * ~31 МБ превышает лимит шлюза 32 МБ (EntityTooLarge). Сервер декодирует
  * ДО проверки лимита (лимит применяется к raw JSON) и хранит в БД
- * plain JSON (version 1, совместимость с существующими сейвами).
+ * plain JSON.
+ *
+ * SAVE-V4-DOCS-UX-01 (Issue #26): `GameSave.version` — МЕТАДАННЫЕ, зеркалят
+ * фактический маркер `fmt` сохраняемого state (`declaredFormatVersion`;
+ * текущий клиент пишет v4). Совместимость со старыми сейвами НЕ заявляется:
+ * совместимость определяется маркером fmt ВНУТРИ state — v1/v2/v3 при
+ * загрузке отклоняются без миграции (expandSaveV4). API — формат-агностичное
+ * хранилище: отбор чужих версий на загрузке, не здесь (см. PUT — та же
+ * семантика version).
  *
  * The client `saveGame` action in `src/stores/game-store.ts` always sends
  * `{ name, seed, state, stateEncoding?, tick }` — all within the schema's accepted shape.
