@@ -4463,3 +4463,46 @@ Stage Summary:
   обновлён; консоль/ошибки чистые. Скриншоты
   checkpoints/assets/save-metadata-v4-*.png; чекпоинт
   checkpoints/10_29_save_metadata_v4.md.
+
+## Task 73 — 2026-10-29 — SAVE-V4-DOCS-UX-01 / Issue #26: инструкции fmt v4 + честный UX отказа legacy-сейва
+
+- Документация: INSTRUCTIONS.md переписан под v4 (op-кортежи + galaxy.dict;
+  HexCell.deposits удалён; resourceDeposits — производное свод-превью, не
+  запас руды; загрузчик только v4, v1/v2/v3 без миграции; GameSave.version
+  = зеркало объявленного fmt — фактическая совместимость по маркеру fmt
+  внутри state; транспорт gzip-base64 ↔ plain JSON без обещаний
+  совместимости). POST /api/save докблок: убрано «plain JSON (version 1,
+  совместимость с существующими сейвами)», согласован с PUT/
+  declaredFormatVersion; поведение API не менялось.
+- STATUS.md: из текущего статуса снято «Issue #25 blocked by #24»
+  (зависимость ЗАВЕРШЕНА: e22205d + fa50198; #25 — ручная приёмка
+  ORE-POOL-01…09, не блокируется); строка гейтов — по СОБСТВЕННЫМ
+  прогонам (не из отчётов Task 71/72); цепочка «прежде…» сохранена.
+- UX отказа: IncompatibleSaveFormatError(legacy) в save-format-v4;
+  новый src/lib/save-load-ux.ts (LoadFailureKind/classifyLoadFailure/
+  loadFailureToast — рекомендованная формулировка аудита, версии из
+  модуля формата); game-store: loadFailure (kind + detail; сброс на
+  старте попытки; первопричина остаётся в console.error); recovery
+  fmt≠4 → честный bad-version вместо corrupted; page.tsx handleLoad:
+  legacy → «неподдерживаемый старый формат (v1/v2/v3)…начните новую
+  игру», сеть/404/битый JSON → честное общее сообщение без «старого
+  формата» и без «начните новую игру». Единственный call site loadGame
+  (page.tsx) — проверено.
+- Зачистка v3-утверждений о текущем состоянии: ai/types.ts, ai-module.ts
+  (3а-сериализация — прошедшее время), prng.ts (ds — историч., в v4
+  RNG-снимки выведены), README.md (AI-сериализация без «v3»);
+  worklog/checkpoints/plans (история) не переписывались.
+- module-bus-map.json перегенерирован штатно (новые импорты game-store →
+  save-load-ux; diff — только сдвиги строк).
+- Регрессия: tests/save-v4-docs-ux.test.ts — 14 (типизация отказа,
+  classifyLoadFailure, тосты, loadGame integration со stub-fetch,
+  recovery bad-version/corrupted).
+- Гейты (собственный прогон): bun test 1015/1015, lint 0/42 Δ0,
+  validate:all ok, audit:module-bus --check OK, git diff --check чисто,
+  tsc 63 = собственный baseline стартового HEAD fd71996 (diff — только
+  сдвиг строк; предсуществующие ошибки не воспроизведены заново).
+- Браузерный E2E (agent-browser, dev :3000): fmt:3 → тост новой
+  формулировки + IncompatibleSaveFormatError в консоли; битый state →
+  честное общее сообщение; v4-сейв → рантрип успешен. Скриншоты
+  checkpoints/assets/save-v4-docs-ux-*.png; чекпоинт
+  checkpoints/10_29_save_v4_docs_ux.md. Коммит 79625e0 (без force-push).
