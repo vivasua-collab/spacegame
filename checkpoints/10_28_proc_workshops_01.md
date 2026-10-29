@@ -23,7 +23,7 @@
 - **Runtime**: `core/types.ts` (WorkshopState/WorkshopBatch, cell.workshops, BuildingDef.usesWorkshops, ProductionItem −assignedTo), `core/events.ts` (цеховые payload'ы + workshop-batch-started; −processor-output-changed/−active-recipes-changed), `economy/workshop-scheduler.ts` (новый, ~480 строк), `economy/engine.ts` (диспетчер очередей; specializeWorkshop/upgradeWorkshopSpecialization; downgrade/demolish requeue; −processAutoProcessing/−specializeBuilding/−upgradeSpecialization), `economy/economy-module.ts` (новые обработчики; queues в downgrade/demolish), `stores/game-store.ts` (specializeWorkshopOnHex/upgradeWorkshopSpecializationOnHex; нормализация при загрузке), `lib/save-format-v3.ts` (workshops).
 - **UI**: `workshop-panel.tsx` (новый), `workshop-specialize-dialog.tsx` (новый), `production-queue.tsx` (статусы+исполнитель), `planet-view.tsx` (пулы), `building-dialog.tsx` (панель цехов, подсказки); `specialize-dialog.tsx` УДАЛЁН.
 - **Тесты**: `tests/economy/workshops.test.ts` (+25, контракты C1–C12), `auto-processing.test.ts` (переписан, 9), `processors.test.ts` (переписан, 19), адаптированы economy/r39/save-roundtrip-http/module-bus-map; bus-map регенерирован (85 событий), contracts §4 синхронизирован.
-- **Docs**: 40-buildings.md v3.0 (§3.0/§3.1/§3.2/§3.3/§3.4/§3.6/§10.1/§11.3/§11.4/§12), STATUS.md, !listing.md (Stage 1, a1a8078).
+- **Docs**: 40-buildings.md v3.0 (§3.0/§3.1/§3.2/§3.3/§3.4/§3.6/§10.1/§11.3/§11.4/§12), STATUS.md, !listing.md (Stage 1, 155b286 — current rebased SHA).
 
 ## Гейты (реальные прогоны)
 
