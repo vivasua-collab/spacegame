@@ -37,10 +37,10 @@ import { AI_DIFFICULTY_UPDATE_INTERVAL, validateAIConfig } from '@/ai/types';
 // ─── Версия AI-секции сейва ──────────────────────────────
 
 /**
- * Версия контракта AI-секции v3-сейва. Пишется в JSON как `aiFactionsV`
+ * Версия контракта AI-секции сейва (fmt v4). Пишется в JSON как `aiFactionsV`
  * ТОЛЬКО вместе с непустым реестром; при загрузке наличие `aiFactions`
  * требует `aiFactionsV === AI_FACTION_STATE_VERSION` (иначе явная ошибка —
- * контракт «строгая версия», как fmt≠3 в R-30).
+ * контракт «строгая версия», как fmt≠4; прецедент R-30).
  */
 export const AI_FACTION_STATE_VERSION = 1;
 

@@ -636,8 +636,8 @@ export function deserializeGameState(json: string): GameState {
   // ─── Этап 3б.1 (R-44): AI-секция сейва (версионированная) ──────────
   // Маркер aiFactionsV — ТРАНСПОРТНЫЙ (не состояние): при наличии реестра
   // обязан совпадать с AI_FACTION_STATE_VERSION (иначе явная ошибка — как
-  // fmt≠3 в R-30: молчаливая интерпретация чужой версии портила бы
-  // состояние), после проверки удаляется из raw. Отсутствие AI-полей —
+  // fmt≠4 сейчас, прецедент R-30: молчаливая интерпретация чужой версии
+  // портила бы состояние), после проверки удаляется из raw. Отсутствие AI-полей —
   // совместимость: предсказуемый дефолт «реестра нет» (поле в GameState
   // не создаётся; читатели обязаны трактовать отсутствие как пустой реестр).
   if (raw.aiFactions !== undefined) {
@@ -966,7 +966,7 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
         try {
           loadedState = deserializeGameState(stateJson);
         } catch (e) {
-          // Мусор/невалидная схема v3 — тоже повреждение checkpoint'а.
+          // Мусор/невалидная схема (fmt≠4, zod) — тоже повреждение checkpoint'а.
           throw new RecoveryError('corrupted', e);
         }
         const warnings = consumeDeserializeWarnings();
@@ -1657,7 +1657,7 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
         // R-39: откат lookups на модель активной игры — ТОЛЬКО если
         // десериализация успела их переключить (успешный deserialize с
         // последующим падением счётчиков/setLoadedState). Чистый отказ
-        // (мусор/fmt≠3/zod) бросает ДО setCurrentLookups — lookups не
+        // (мусор/fmt≠4/zod) бросает ДО setCurrentLookups — lookups не
         // трогаем, ссылка сохранена.
         if (prevModel) {
           let lookupsNow: ReturnType<typeof getCurrentLookups> | null = null;

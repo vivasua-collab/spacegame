@@ -16,7 +16,7 @@ export interface RecoveryCheckpoint {
   seed: number;
   tick: number;
   encoding: 'gzip-base64' | 'json';
-  /** Сериализованное (и, возможно, сжатое) состояние — формат сейвов v3. */
+  /** Сериализованное (и, возможно, сжатое) состояние — формат сейвов v4. */
   payload: string;
 }
 

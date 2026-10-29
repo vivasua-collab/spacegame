@@ -4,6 +4,7 @@ import { SaveCreateSchema } from '@/lib/schemas/save-schema';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { decodeStatePayload, StateTooLargeDuringDecodingError } from '@/lib/save-codec-server';
 import { MAX_STATE_BYTES } from '@/lib/schemas/save-schema';
+import { declaredFormatVersion } from '@/lib/save-format-v4';
 
 /**
  * GET /api/save — list all saves.
@@ -141,8 +142,9 @@ export async function POST(request: Request) {
     // ─── Аудит 2026-10-26: state обязан быть валидным JSON-объектом ───
     // Раньше сервер сохранял любой декодируемый мусор («this is not json» — 200 OK),
     // и ошибка обнаруживалась только при загрузке (молчаливая порча сейва).
+    let parsedState: unknown;
     try {
-      const parsedState: unknown = JSON.parse(stateJson);
+      parsedState = JSON.parse(stateJson);
       if (typeof parsedState !== 'object' || parsedState === null || Array.isArray(parsedState)) {
         throw new Error('not an object');
       }
@@ -153,7 +155,13 @@ export async function POST(request: Request) {
       );
     }
 
-    // ─── Persist (в БД — plain JSON, version 1) ─────────────────────
+    // ─── Аудит 2026-10-29: метаданные = фактическая версия формата ────
+    // GameSave.version зеркалит маркер fmt В СОХРАНЯЕМОМ state (текущий
+    // клиент всегда пишет v4 — compactSaveV4). Раньше POST хардкодил
+    // version:1 — метаданные БД врали о формате v4-сейвов.
+    const version = declaredFormatVersion(parsedState);
+
+    // ─── Persist (в БД — plain JSON; version = фактический fmt) ─────
     const save = await db.gameSave.create({
       data: {
         name,
@@ -161,7 +169,7 @@ export async function POST(request: Request) {
         settings: settings ?? '{}',
         state: stateJson,
         tick: tick ?? 0,
-        version: 1, // current serialization format version
+        version,
       },
     });
 

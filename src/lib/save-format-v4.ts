@@ -48,6 +48,42 @@ export function roundSig4(v: number): number {
   return Number(v.toPrecision(4));
 }
 
+/**
+ * Отвергаемые устаревшие версии формата: все v1..v{SAVE_FORMAT_VERSION-1}
+ * (при v4 — v1/v2/v3, гекс-залежи; docs/31 §12 — не мигрируются).
+ *
+ * ЕДИНЫЙ источник для сообщений UI об отказе загрузки: текст ошибки строится
+ * из фактической версии формата и не может «протухнуть» при следующей смене
+ * версии (дефект аудита 2026-10-29: тост в page.tsx сообщал «v1/v2» при
+ * фактическом fmt=4 и отвергаемых v1/v2/v3 — текст остался от эпохи v3).
+ */
+export const REJECTED_LEGACY_FORMAT_VERSIONS: readonly number[] = Array.from(
+  { length: SAVE_FORMAT_VERSION - 1 },
+  (_, i) => i + 1,
+);
+
+/** Строка отвергаемых версий для сообщений UI: «v1/v2/v3». */
+export function rejectedLegacyVersionsLabel(): string {
+  return REJECTED_LEGACY_FORMAT_VERSIONS.map((v) => `v${v}`).join('/');
+}
+
+/**
+ * Версия формата, объявленная в УЖЕ распарсенном состоянии (маркер `fmt`,
+ * пишется compactSaveV4). Для метаданных БД (GameSave.version): колонка
+ * обязана сообщать ФАКТИЧЕСКУЮ версию сохранённого state, а не константу
+ * маршрута (дефект аудита 2026-10-29: POST/PUT хардкодили version:1 при
+ * state в формате v4).
+ *
+ * Payload без маркера — legacy/мусор: исторический дефолт 1 (совпадает с
+ * default(1) колонки и всеми домиграционными строками). Загрузка такого
+ * state всё равно отклоняется (fmt≠4 — expandSaveV4), метаданные не врут
+ * и в эту сторону: записано ровно то, что объявлено.
+ */
+export function declaredFormatVersion(parsedState: unknown): number {
+  const fmt = (parsedState as { fmt?: unknown } | null | undefined)?.fmt;
+  return typeof fmt === 'number' && Number.isInteger(fmt) && fmt >= 1 ? fmt : 1;
+}
+
 // ============ Tier ↔ индекс ============
 
 export const TIER_TO_IDX: Record<PlanetOrePool['tier'], number> = {

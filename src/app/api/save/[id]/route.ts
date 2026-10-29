@@ -4,6 +4,7 @@ import { SaveUpdateSchema } from '@/lib/schemas/save-schema';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { decodeStatePayload, encodeStatePayload, STATE_ENCODING_THRESHOLD, StateTooLargeDuringDecodingError } from '@/lib/save-codec-server';
 import { MAX_STATE_BYTES } from '@/lib/schemas/save-schema';
+import { declaredFormatVersion } from '@/lib/save-format-v4';
 import type { Prisma } from '@prisma/client';
 
 type RouteContext = { params: Promise<{ id: string }> };
@@ -49,7 +50,9 @@ export async function GET(_request: Request, context: RouteContext) {
  *      state REQUIRED ≤ 50 MB raw, tick REQUIRED ≤ 10 000 000).
  *
  * R-26 (2026-08-31): `state` может приходить в `gzip-base64` (см. POST).
- * В БД хранится plain JSON (version 1).
+ * В БД хранится plain JSON; GameSave.version зеркалит фактический маркер
+ * fmt НОВОГО state (аудит 2026-10-29: раньше хардкодился 1 «unchanged on
+ * PUT» — вдвойне неверно, PUT заменяет state целиком).
  *
  * The client `saveGame` action in `src/stores/game-store.ts` always sends
  * `{ name, state, stateEncoding?, tick }` when `currentSaveId` is set.
@@ -134,8 +137,9 @@ export async function PUT(request: Request, context: RouteContext) {
     }
 
     // ─── Аудит 2026-10-26: state обязан быть валидным JSON-объектом ───
+    let parsedState: unknown;
     try {
-      const parsedState: unknown = JSON.parse(stateJson);
+      parsedState = JSON.parse(stateJson);
       if (typeof parsedState !== 'object' || parsedState === null || Array.isArray(parsedState)) {
         throw new Error('not an object');
       }
@@ -146,11 +150,17 @@ export async function PUT(request: Request, context: RouteContext) {
       );
     }
 
+    // ─── Аудит 2026-10-29: метаданные = фактическая версия формата ────
+    // PUT заменяет state целиком → version описывает НОВЫЙ state (текущий
+    // клиент пишет v4). Обновление старой строки (version:1) v4-сейвом
+    // корректно меняет метаданные на 4.
+    const version = declaredFormatVersion(parsedState);
+
     // Build the Prisma update payload — only include `name` if provided.
     const data: { state: string; tick: number; version: number; name?: string; settings?: string } = {
       state: stateJson,
       tick,
-      version: 1, // current serialization format version (unchanged on PUT)
+      version, // фактический fmt нового state (аудит 2026-10-29)
     };
     if (name !== undefined) data.name = name;
     if (settings !== undefined) data.settings = settings;

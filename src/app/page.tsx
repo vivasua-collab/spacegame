@@ -20,6 +20,7 @@ import { getGameMediator } from '@/core/game-mediator';
 import { toast } from '@/hooks/use-toast';
 import { getRecoveryService, type RecoveryCheckpoint } from '@/lib/game-recovery';
 import { useGameRecovery } from '@/hooks/use-game-recovery';
+import { rejectedLegacyVersionsLabel } from '@/lib/save-format-v4';
 
 /**
  * Deterministic pseudo-random number generator (simple LCG).
@@ -126,6 +127,19 @@ export default function Home() {
     return () => { active = false; };
   }, [loadSaveList]);
 
+  // Аудит 2026-10-29 (сопутствующее наблюдение E2E верификации): список
+  // сейвов кэшировался с монтирования меню — сейв, созданный в игре, не
+  // появлялся в списке после возврата в меню (до перезагрузки страницы).
+  // Обновляем при каждом открытии таба Load (дешёвый GET /api/save).
+  useEffect(() => {
+    if (activeTab !== 'load') return;
+    let active = true;
+    loadSaveList().then((list) => {
+      if (active) setSaves(list);
+    });
+    return () => { active = false; };
+  }, [activeTab, loadSaveList]);
+
   // GAME-RECOVERY-01 (Issue #22): холодная проверка recovery-checkpoint
   // (IndexedDB) — НЕ блокирует меню: карточка появляется по завершении
   // проверки. Ошибка хранилища — честное объяснение (не молчание).
@@ -146,7 +160,10 @@ export default function Home() {
 
   // Handle load
   // R-30: отказ загрузки — видимый тост (например, сейв старого формата:
-  // deserializeGameState отклоняет fmt≠3 явной ошибкой).
+  // deserializeGameState отклоняет fmt≠4 явной ошибкой). Список отвергаемых
+  // версий — из модуля формата (rejectedLegacyVersionsLabel): текст не может
+  // протухнуть при следующей смене версии (аудит 2026-10-29: тост сообщал
+  // «v1/v2» — остаток эпохи v3 — при отвергаемых v1/v2/v3).
   // R-39: успешная загрузка С ПРЕДУПРЕЖДЕНИЯМИ МИГРАЦИЙ (store.loadWarnings:
   // отказы пересчёта свода R-38, тела ждущие материализации R-37) —
   // наблюдаемость для пользователя, не только console.warn.
@@ -157,7 +174,7 @@ export default function Home() {
     if (!ok) {
       toast({
         title: 'Не удалось загрузить сейв',
-        description: 'Сейв повреждён или записан в старом формате (v1/v2 не поддерживаются). Подробности — в консоли.',
+        description: `Сейв повреждён или записан в старом формате (${rejectedLegacyVersionsLabel()} не поддерживаются). Подробности — в консоли.`,
         variant: 'destructive',
       });
       return;
