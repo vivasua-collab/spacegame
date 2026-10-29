@@ -1,25 +1,21 @@
 /// <reference types="bun-types" />
 /**
- * R-37 (Б1 аудита R-36): порядок инициализации lookups при загрузке сейва.
+ * ORE-POOLS (Issue #25; наследник R-37 Б1): порядок инициализации lookups
+ * при загрузке сейва.
  *
  * Контракт: deserializeGameState обязан установить baked-model ИМЕННО
- * загружаемой галактики (setCurrentLookups) ДО возврата состояния — любая
- * последующая работа с залежами (материализация при колонизации, добыча)
- * видит модель этой галактики.
+ * загружаемой галактики (setCurrentLookups) ДО пересборки свод-превью из
+ * пулов и ДО возврата состояния — любая последующая работа с ресурсами
+ * (свод UI, добыча) видит модель этой галактики.
  *
- * Дефект R-36 (исправлен): загрузочная миграция залежей шла ДО установки
- * lookups:
- *   - холодный старт (процесс без активной игры) → getCurrentLookups()
- *     бросал «BakedLookups не инициализированы» — загрузка старого v3-сейва
- *     крашилась;
- *   - загрузка после активной игры → материализация шла с моделью
- *     ПРЕДЫДУЩЕЙ галактики.
+ * ORE-POOLS v4: гекс-материализация удалена — на загрузке единственная
+ * работа с ресурсами — пересборка свод-превью из планетарных пулов
+ * (buildResourceSummary — она требует lookups загружаемой галактики).
+ * Старые сейвы (fmt≠4) отклоняются ДО установки lookups (docs/31 §12).
  *
- * Хим.модель запечки seed-НЕзависима (проверено: ores/elements/elementToOre
- * идентичны для разных seed), поэтому «чужая модель» проявлялась как краш
- * и рассинхрон ссылок, а не порча данных. Тесты проверяют ССЫЛКИ (какой
- * именно record модели установлен) и работоспособность полного цикла
- * «загрузка → колонизация (материализация)».
+ * Хим.модель запечки seed-НЕзависима, поэтому порядок проверяется ССЫЛКАМИ
+ * (какой record модели установлен) и работоспособностью полного цикла
+ * «загрузка → колонизация → добыча из пулов».
  *
  * Run: bun test tests/save-migration-order.test.ts
  */
@@ -56,20 +52,6 @@ function buildFreshState(seed: number, systemCount: number): GameState {
   };
 }
 
-/** Сейв «до R-37»: поле dv отсутствует у всех тел (v3-кодек трактует как версию 1). */
-function stripDv(json: string): string {
-  const raw = JSON.parse(json) as {
-    galaxy: { systems: Array<{ planets: Array<Record<string, unknown>> }> };
-  };
-  for (const sys of raw.galaxy.systems) {
-    for (const p of sys.planets) {
-      delete p.dv;
-      for (const m of (p.moons as Array<Record<string, unknown>> | undefined) ?? []) delete m.dv;
-    }
-  }
-  return JSON.stringify(raw);
-}
-
 function firstColonizable(state: GameState): Planet {
   for (const sys of state.galaxy.systems) {
     for (const p of sys.planets) {
@@ -81,15 +63,14 @@ function firstColonizable(state: GameState): Planet {
 
 describe('R-37 (Б1): lookups при загрузке — модель загружаемой галактики', () => {
   test('1. Холодный старт: загрузка старого v3-сейва без активной игры — без краша, lookups установлены, колонизация работает', () => {
-    // Имитируем старый сейв (до R-37: без dv) и ХОЛОДНЫЙ процесс:
-    // ни новой игры, ни загрузки до этого момента (lookups = null).
-    const json = stripDv(serializeGameState(buildFreshState(42, 10)));
+    // ХОЛОДНЫЙ процесс: ни новой игры, ни загрузки (lookups = null).
+    const json = serializeGameState(buildFreshState(42, 10));
 
     resetCurrentLookups();
     expect(hasCurrentLookups()).toBe(false);
-    // Раньше (R-36): deserializeGameState → миграция залежей → getCurrentLookups()
-    // → throw «BakedLookups не инициализированы» — загрузка была невозможна.
-    let restored: GameState;
+    // Загрузка НЕ требует предварительных lookups: свод-превью пересобирается
+    // ПОСЛЕ setCurrentLookups (порядок Б1 сохранён в v4).
+    let restored: GameState | undefined;
     expect(() => { restored = deserializeGameState(json); }).not.toThrow();
     restored = deserializeGameState(json);
 
@@ -99,15 +80,16 @@ describe('R-37 (Б1): lookups при загрузке — модель загр�
     expect(getCurrentLookups().elementToOre)
       .toBe(buildLookups(restored.galaxy.bakedModel).elementToOre);
 
-    // тела остались ленивыми (Б2: загрузка не материализует)
+    // свод-превью пересобран из пулов (не сериализован)
     const planet = firstColonizable(restored);
-    expect(planet.depositsMaterialized).toBe(false);
+    expect(planet.orePools.length).toBeGreaterThan(0);
+    expect(planet.resourceDeposits.length).toBeGreaterThan(0);
 
-    // полный цикл работает: колонизация = версионная материализация
-    // (раньше упала бы внутри getCurrentLookups / шла бы без модели)
+    // полный цикл работает: колонизация активирует пулы (без материализации
+    // гексов — ORE-POOLS), добыча из пулов доступна сразу
     expect(colonizePlanet(planet)).toBe(true);
-    expect(planet.depositsMaterialized).toBe(true);
-    expect(planet.hexes.some(h => h.deposits.length > 0)).toBe(true);
+    expect(planet.orePools.length).toBeGreaterThan(0);
+    expect(planet.hexes.some(h => 'deposits' in h && Array.isArray((h as unknown as Record<string, unknown>).deposits))).toBe(false);
   });
 
   test('2. Кросс-галактика: загрузка сейва B после активной игры A — lookups переключаются на B', () => {
@@ -116,8 +98,8 @@ describe('R-37 (Б1): lookups при загрузке — модель загр�
     deserializeGameState(jsonA);
     const lookupsA = getCurrentLookups().elementToOre;
 
-    // Старый сейв галактики B (seed 200, без dv).
-    const jsonB = stripDv(serializeGameState(buildFreshState(200, 8)));
+    // Сейв галактики B (seed 200).
+    const jsonB = serializeGameState(buildFreshState(200, 8));
     const restoredB = deserializeGameState(jsonB);
 
     // lookups = модель ИМЕННО B (ссылка на record модели B из сейва),
@@ -126,28 +108,29 @@ describe('R-37 (Б1): lookups при загрузке — модель загр�
       .toBe(buildLookups(restoredB.galaxy.bakedModel).elementToOre);
     expect(getCurrentLookups().elementToOre).not.toBe(lookupsA);
 
-    // колонизация тела B: материалзиация с корректной моделью — залежи
-    // совпадают с эталоном прямой генерации B (бит-в-бит)
+    // колонизация тела B: пулы совпадают с эталоном прямой генерации B
+    // (бит-в-бит — пулы в сейве, повторной генерации/накидки нет)
     const planetB = firstColonizable(restoredB);
     const truthRef = buildFreshState(200, 8);
     const truthPlanet = truthRef.galaxy.systems
       .flatMap(s => s.planets).find(p => p.id === planetB.id)!;
-    expect(colonizePlanet(truthPlanet)).toBe(true);
     expect(colonizePlanet(planetB)).toBe(true);
-    expect(planetB.hexes.length).toBe(truthPlanet.hexes.length);
-    for (let i = 0; i < truthPlanet.hexes.length; i++) {
-      expect(planetB.hexes[i]!.deposits).toEqual(truthPlanet.hexes[i]!.deposits);
-    }
+    // сравнение по точности сейва (round3 на remaining/availability при encode)
+    const r3 = (v: number): number => Math.round(v * 1000) / 1000;
+    const norm = (pools: Planet['orePools']) =>
+      pools.map((p) => ({ ...p, remainingQuantity: r3(p.remainingQuantity), availability: r3(p.availability) }));
+    expect(norm(planetB.orePools)).toEqual(norm(truthPlanet.orePools));
   });
 
   test('3. Отклонённый сейв (битый формат) НЕ затирает lookups активной игры', () => {
-    // Порядок R-37: zod/формат-валидация ДО установки lookups — отклонённый
-    // сейв не должен оставить процесс с моделью НЕзагруженной галактики.
+    // Порядок ORE-POOLS: формат-валидация (fmt≠4 — docs/31 §12) ДО установки
+    // lookups — отклонённый сейв не должен оставить процесс с моделью
+    // НЕзагруженной галактики.
     const jsonA = serializeGameState(buildFreshState(42, 8));
     deserializeGameState(jsonA);
     const lookupsA = getCurrentLookups().elementToOre;
 
-    expect(() => deserializeGameState('{"fmt":2,"galaxy":{}}')).toThrow('Неподдерживаемый формат');
+    expect(() => deserializeGameState('{"fmt":3,"galaxy":{}}')).toThrow('Несовместимый формат');
     expect(getCurrentLookups().elementToOre).toBe(lookupsA); // модель A не тронута
   });
 

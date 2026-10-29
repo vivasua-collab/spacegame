@@ -33,7 +33,6 @@ function makeTestPlanet(overrides?: Partial<Planet>): Planet {
     terrain: 'plains' as HexTerrain,
     buildingId: 'shipyard',
     buildingLevel: 1,
-    deposits: [],
   };
   return {
     id: 'planet_test',
@@ -54,6 +53,7 @@ function makeTestPlanet(overrides?: Partial<Planet>): Planet {
     atmosphericSlots: [],
     orbitSlots: [],
     resourceDeposits: [],
+    orePools: [],
     resources: { steel: 100000, microchip: 100000 },
     energyBalance: 100,
     owner: 'player',

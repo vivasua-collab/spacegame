@@ -13,7 +13,8 @@ import { getCurrentLookups, hasCurrentLookups } from '@/data/baked-lookups';
 import { GEOLOGICAL_ACTIVITY_BONUS } from '@/data/planet-types'; // R-40: §2.4 40-buildings
 import { isRecipeAllowedForBuildingPool } from '@/data/workshop-specializations';
 import { resolveProcessorCategory } from '@/data/processor-recipe-categories';
-import { materializePlanetDeposits, WATER_DEPOSIT_ID } from '@/galaxy/generate-resources'; // R-29: ленивые залежи
+import { WATER_DEPOSIT_ID } from '@/galaxy/generate-resources'; // ORE-POOLS: водный пул (H2O-ice)
+import { distributeMiningBudget, type PoolCandidate, type MiningSchedulerContext } from '@/economy/mining-scheduler';
 import { gameBus } from '@/core/typed-event-bus';
 import { getEnergyConsumptionMultiplier, getEnergyGenerationMultiplier, getMiningSpeedMultiplier, getProcessingSpeedMultiplier } from '@/economy/adjacency';
 import { runWorkshopPoolTick, createPoolReservations } from '@/economy/workshop-scheduler';
@@ -89,29 +90,64 @@ export function processEconomyTick(planets: Planet[], queues: Map<EntityId, Prod
 }
 
 /**
- * Добыча ресурсов зданиями на планете.
+ * Добыча ресурсов зданиями на планете (ORE-POOLS-RUNTIME-01 / Issue #25).
  * P1-27: Газовый экстрактор требует атмосферу.
  * Руды и соединения кладутся на склад как сырьё —
  * переработка происходит через рецептурную систему (recipes.ts).
  *
- * Task 37 / G-01 (fix): роли добывающих зданий по контракту
- * (docs/40-buildings.md §2 + каталог surface.json + docs/34-ores.md §3):
- *   - mine (шахта) — МЕТАЛЛИЧЕСКИЕ руды (BakedOre.sourceBuildingId='mine');
+ * Роли добывающих зданий по data-driven контракту источников
+ * (docs/40-buildings.md §2 + BakedOre.sourceBuildingId, docs/34-ores.md §3.8):
+ *   - mine (шахта) — МЕТАЛЛИЧЕСКИЕ руды (sourceBuildingId='mine');
  *   - quarry (карьер) — НЕМЕТАЛЛИЧЕСКИЕ ресурсы (sourceBuildingId='quarry');
  *   - gas_extractor (газовый экстрактор) — АТМОСФЕРНЫЕ ГАЗЫ (на поверхности
- *     и в атмосферном слоте — из атмосферы планеты, НЕ из залежей гекса);
+ *     и в атмосферном слоте — из атмосферы планеты, НЕ из планетарных
+ *     рудных пулов, docs/31 §9.3);
  *   - drilling_rig (буровая установка) — ГЛУБИННЫЕ руды
- *     (sourceBuildingId='drilling_rig'). R-36 (вариант «а» владельца):
- *     здание добавлено в MVP-каталог (surface.json) — пулы RARE (Be) и
- *     ULTRA_RARE (Ir,Os,Re,Ru,Rh,Pd,Hf,Ta,Nb,Zr) добываемы; порог глубины —
+ *     (sourceBuildingId='drilling_rig'). R-36: пулы RARE (Be) и ULTRA_RARE
+ *     (Ir,Os,Re,Ru,Rh,Pd,Hf,Ta,Nb,Zr) добываемы; порог —
  *     BakedOre.minSourceLevel (уровень здания ≥ порога руды);
- *   - вода H2O-ice — добывается и шахтой, и карьером (R-27: единственная
- *     залежь-источник H/O, ice_harvester post-MVP — recipes.ts process_H2O).
- * До фикса поверхностная ветка обрабатывала ЛЮБОЕ здание категории extraction
- * со ВСЕМИ залежами гекса: шахта добывала неметаллы, карьер — металлы,
- * поверхностный газовый экстрактор — руды вместо газов.
+ *   - вода H2O-ice — добывается и шахтой, и карьером (R-27: единственный
+ *     коровой пул-источник H/O, ice_harvester post-MVP — process_H2O).
+ *
+ * ORE-POOLS-DOCS-01 (единый бюджет, docs/31 §7.2 / docs/40 §11.2): каждое
+ * геологическое добывающее здание имеет РОВНО ОДИН суммарный бюджет за тик:
+ *   budget = baseRate(1.0) × levelMult × terrainMult × synergyMult
+ *            (× geologicalMult — только буровая, ровно один раз).
+ * Распределение бюджета между совместимыми пулами планеты — детерминированный
+ * планировщик distributeMiningBudget (минимумы → пропорциональный излишек,
+ * src/economy/mining-scheduler.ts, docs/35 §2.7). Число видов руды НЕ
+ * умножает выпуск; availability — вес доли, а не множитель бюджета.
+ * Добыча ведётся из планетарных пулов (Planet.orePools) — привязка залежи
+ * к гексу выведена из модели; положение здания влияет только на terrain
+ * bonus и синергию.
  */
 function processExtraction(planet: Planet): void {
+  // Контекст планировщика: единые для всех зданий планеты чтение состояния
+  // и применение добычи — несколько зданий расходуют ОДИН остаток пулов
+  // (sum(extracted по всем зданиям) ≤ исходного remainingQuantity).
+  const poolByOre = new Map(planet.orePools.map((p) => [p.oreId, p]));
+  const ctx: MiningSchedulerContext = {
+    remaining: (oreId) => poolByOre.get(oreId)?.remainingQuantity ?? 0,
+    stock: (oreId) => planet.resources[oreId] ?? 0,
+    tryExtract: (oreId, amount) => {
+      const pool = poolByOre.get(oreId);
+      if (!pool || !(amount > 0)) return 0;
+      const requested = Math.min(amount, pool.remainingQuantity);
+      if (!(requested > 0)) return 0;
+      // Защита от потери добытого при полном складе (контракт P1-1/P2-1):
+      // из пула вычитается только реально помещённый объём — непомещённое
+      // сырьё НЕ расходует месторождение (docs/31 §7.2.5).
+      const storable = canStoreResource(planet, oreId, requested);
+      const actual = Math.min(requested, storable);
+      if (!(actual > 0)) return 0;
+      pool.remainingQuantity -= actual;
+      if (pool.remainingQuantity < 0) pool.remainingQuantity = 0;
+      // Кладём руду на склад как сырьё (переработка через рецепты)
+      planet.resources[oreId] = (planet.resources[oreId] ?? 0) + actual;
+      return actual;
+    },
+  };
+
   // Surface buildings
   for (let i = 0; i < planet.hexes.length; i++) {
     const hex = planet.hexes[i];
@@ -125,87 +161,51 @@ function processExtraction(planet: Planet): void {
     }
 
     if (buildingDef.category === 'extraction') {
-      const levelMult = 1 + hex.buildingLevel * 0.15;
-      const terrainMult = hex.terrain in (buildingDef.terrainBonus ?? {})
-        ? (buildingDef.terrainBonus as Record<string, number>)[hex.terrain] ?? 1
-        : 1;
-      // R-SYNERGY v2 mining_cluster (Задача 24): экстракторы одного
-      // подтипа ускоряют добычу друг друга (+10% за смежного, стекинг
-      // ×0.5^(n−1)) — добывающие здания дают бонус СКОРОСТИ ДОБЫЧИ.
-      const miningMult = getMiningSpeedMultiplier(planet, i);
-
-      // R-40 (docs/40-buildings.md §2.4): бонус геологической активности
-      // планеты — ТОЛЬКО для буровой установки, по ТИПУ планеты (Planet.type,
-      // не по террейну гекса). Применяется РОВНО ОДИН РАЗ в формуле ниже;
-      // terrainMult каталога и синергия mining_cluster НЕ удваиваются.
-      // У остальных добытчиков (mine/quarry) множителя нет — их формула
-      // не меняется при любом типе планеты.
-      const geologicalMult = buildingDef.id === 'drilling_rig'
-        ? (GEOLOGICAL_ACTIVITY_BONUS[planet.type] ?? 1)
-        : 1;
-
       if (buildingDef.id === 'gas_extractor') {
         // G-01 (fix): газовый экстрактор на ПОВЕРХНОСТИ добывает атмосферу
         // (та же логика, что и в атмосферном слоте газового гиганта), а не
-        // залежи гекса. Формула docs/40 §2.3: уровень × эффективность
-        // атмосферы (бонус местности не применяется — у экстрактора его нет).
-        extractAtmosphericGases(planet, hex.buildingLevel, miningMult);
+        // планетарные рудные пулы. Формула docs/40 §2.3: уровень ×
+        // эффективность атмосферы (бонус местности не применяется —
+        // у экстрактора его нет).
+        extractAtmosphericGases(planet, hex.buildingLevel, getMiningSpeedMultiplier(planet, i));
       } else {
-        for (const deposit of hex.deposits) {
-          if (deposit.quantity <= 0) continue;
-          // G-01 (fix): только залежи, принадлежащие роли этого здания.
-          // R-36: + порог глубины minSourceLevel (уровень здания ≥ порога руды;
-          // у всех mine/quarry-руд порог 1 — поведение не меняется).
-          if (!canMineDeposit(buildingDef.id, deposit.elementId, hex.buildingLevel)) continue;
+        // Единый бюджет здания за тик (docs/40 §11.2) — рассчитывается
+        // ОДИН раз на здание из существующих множителей.
+        const levelMult = 1 + hex.buildingLevel * 0.15;
+        const terrainMult = hex.terrain in (buildingDef.terrainBonus ?? {})
+          ? (buildingDef.terrainBonus as Record<string, number>)[hex.terrain] ?? 1
+          : 1;
+        // R-SYNERGY v2 mining_cluster (Задача 24): экстракторы одного
+        // подтипа ускоряют добычу друг друга (+10% за смежного, стекинг
+        // ×0.5^(n−1)) — бонус СКОРОСТИ ДОБЫЧИ внутри бюджета здания.
+        const miningMult = getMiningSpeedMultiplier(planet, i);
 
-          // 1 тик = 1 день. Базовая скорость: ~1 единица/день при availability=0.5
-          // R-40 (§2.4): для буровой × geological_activity_bonus (один раз;
-          // скаляр 1 для остальных — формула прежняя).
-          const baseRate = 1.0 * deposit.availability;
-          const amount = baseRate * levelMult * terrainMult * miningMult * geologicalMult;
-          const requested = Math.min(amount, deposit.quantity);
+        // R-40 (docs/40 §2.4): бонус геологической активности планеты —
+        // ТОЛЬКО для буровой, по ТИПУ планеты, РОВНО ОДИН РАЗ; terrainMult
+        // каталога и синергия mining_cluster НЕ удваиваются. У остальных
+        // добытчиков (mine/quarry) множителя нет.
+        const geologicalMult = buildingDef.id === 'drilling_rig'
+          ? (GEOLOGICAL_ACTIVITY_BONUS[planet.type] ?? 1)
+          : 1;
 
-          // Audit Pass 2 P1-1 (fix): only debit the deposit for the portion
-          // we can actually store. Previously we debited `requested` (full
-          // amount) BEFORE the canStoreResource check — if the warehouse was
-          // full the extracted units silently evaporated (deposit decremented,
-          // nothing added to planet.resources). Now the leftover stays in the
-          // deposit for the next tick.
-          const canStore = canStoreResource(planet, deposit.elementId, requested);
-          const actual = Math.min(requested, canStore);
-          if (actual > 0) {
-            deposit.quantity -= actual;
-            // Кладём руду на склад как сырьё (переработка через рецепты)
-            planet.resources[deposit.elementId] = (planet.resources[deposit.elementId] ?? 0) + actual;
-          }
-        }
+        const budget = 1.0 * levelMult * terrainMult * miningMult * geologicalMult;
+        const candidates = collectPoolCandidates(planet, buildingDef.id, hex.buildingLevel);
+        distributeMiningBudget(budget, candidates, ctx);
       }
     }
 
-    // Colony hub: базовая добыча поверхностных залежей (mine ∪ quarry, вкл.
-    // воду) со скоростью 50% от шахты. G-01 (fix): глубинные руды
-    // (drilling_rig) и атмосферные соединения хаб не добывает — это
-    // специализированная добыча, а не «базовые ресурсы колонии».
+    // Colony hub: малая пассивная добыча поверхностных пулов (mine ∪ quarry,
+    // вкл. воду) по ОБЩЕПЛАНЕТАРНОМУ пулу — ORE-POOLS-DOCS-01: локальная
+    // добыча «только под своим гексом» отменена (docs/40 §2.7). Ориентир —
+    // 50% базовой скорости шахты (0.5) с текущим множителем уровня хаба
+    // (1+ур.×0.1); без terrain-бонусов и синергии; глубинные руды и
+    // атмосферные газы хаб не добывает. Здание на любом гексе не блокируется
+    // отсутствием локального депозита.
     if (buildingDef.id === 'colony_hub') {
       const levelMult = 1 + hex.buildingLevel * 0.1;
-      for (const deposit of hex.deposits) {
-        if (deposit.quantity <= 0) continue;
-        if (!isSurfaceMinable(deposit.elementId)) continue;
-
-        // 50% от скорости шахты (1 тик = 1 день)
-        const baseRate = 0.5 * deposit.availability;
-        const amount = baseRate * levelMult;
-        const requested = Math.min(amount, deposit.quantity);
-
-        // Audit Pass 2 P2-1 (fix, same bug as P1-1 above): only debit what
-        // can actually be stored, leaving the remainder in the deposit.
-        const canStore = canStoreResource(planet, deposit.elementId, requested);
-        const actual = Math.min(requested, canStore);
-        if (actual > 0) {
-          deposit.quantity -= actual;
-          planet.resources[deposit.elementId] = (planet.resources[deposit.elementId] ?? 0) + actual;
-        }
-      }
+      const budget = 0.5 * levelMult;
+      const candidates = collectPoolCandidates(planet, 'colony_hub', hex.buildingLevel);
+      distributeMiningBudget(budget, candidates, ctx);
     }
   }
 
@@ -229,6 +229,43 @@ function processExtraction(planet: Planet): void {
   // Автоматическая конвертация чистых газов (не требующих переработки)
   // H2→H, N2→N, O2→O, He→He, Ne→Ne, Ar→Ar — 1:1 прямое преобразование
   convertDirectAtmosphericElements(planet);
+}
+
+/**
+ * Кандидаты планировщика добычи для здания (ORE-POOLS-DOCS-01, docs/35 §2.7.1):
+ * совместимые, неистощённые пулы планеты, разрешённые data-driven контрактом
+ * источника (BakedOre.sourceBuildingId / minSourceLevel — единый источник
+ * истины ролей, docs/34 §3.8).
+ *
+ * Гейты роли:
+ *   - mine/quarry/drilling_rig — canMineDeposit (роль руды + порог уровня);
+ *   - colony_hub — isSurfaceMinable (mine ∪ quarry ∪ вода; пороги
+ *     поверхностных руд = 1; глубинные руды/газы хабу недоступны).
+ *
+ * Минимум/приоритет кандидата — существующие резервы склада
+ * (WarehouseReserve.minimum/priority; выполнение минимума считается по
+ * складскому запасу, docs/35 §1.4). Кандидаты сортируются по oreId —
+ * детерминизм планировщика не зависит от порядка пулов в состоянии.
+ */
+function collectPoolCandidates(planet: Planet, buildingId: string, buildingLevel: number): PoolCandidate[] {
+  const reserves = planet.warehouse?.reserves ?? {};
+  const candidates: PoolCandidate[] = [];
+  for (const pool of planet.orePools) {
+    if (pool.remainingQuantity <= 0) continue;
+    const ok = buildingId === 'colony_hub'
+      ? isSurfaceMinable(pool.oreId)
+      : canMineDeposit(buildingId, pool.oreId, buildingLevel);
+    if (!ok) continue;
+    const reserve = reserves[pool.oreId];
+    candidates.push({
+      oreId: pool.oreId,
+      availability: pool.availability,
+      minimum: reserve?.minimum ?? 0,
+      priority: reserve?.priority ?? 0,
+    });
+  }
+  candidates.sort((a, b) => (a.oreId < b.oreId ? -1 : a.oreId > b.oreId ? 1 : 0));
+  return candidates;
 }
 
 /**
@@ -1689,14 +1726,15 @@ export function colonizePlanet(planet: Planet, system?: StarSystem): boolean {
   if (planet.type === 'gas_giant') return false;
   if (planet.owner) return false;
 
-  // R-29: ленивая материализация залежей — ТОЛЬКО при колонизации.
-  // До этого момента гексы «не разведаны» (в сейве их нет), известен лишь
-  // свод-пул; replay assignResourceDeposits из depositRngState даёт те же
-  // залежи, что прогон при генерации. Идемпотентно (depositsMaterialized).
-  materializePlanetDeposits(planet);
+  // ORE-POOLS-DOCS-01: колонизация АКТИВИРУЕТ уже рассчитанные планетарные
+  // пулы (Planet.orePools — сгенерированы при создании планеты). Залежи НЕ
+  // материализуются в координаты гексов и ресурс НЕ накидывается повторно —
+  // добыча с первого тика идёт из общепланетарных пулов (docs/31 §10.4).
 
-  // Найти лучший гекс для colony_hub:
-  // Предпочтение: не-ocean гекс с максимальным количеством deposits
+  // Найти гекс для colony_hub по действующим критериям ТЕРРИТОРИИ/РАЗМЕЩЕНИЯ
+  // (ORE-POOLS-DOCS-01: НЕ по количеству подземных залежей). Детерминированный
+  // выбор: предпочтение — свободный не-океанский гекс с наибольшим числом
+  // не-океанских соседей (качество размещения/синергии), затем порядок сетки.
   let bestHex = -1;
   let bestScore = -1;
 
@@ -1705,7 +1743,7 @@ export function colonizePlanet(planet: Planet, system?: StarSystem): boolean {
     if (hex.buildingId) continue;
     if (hex.terrain === 'ocean') continue;
 
-    const score = hex.deposits.length * 10 + (hex.deposits.reduce((s, d) => s + d.availability, 0));
+    const score = countNonOceanNeighbors(planet, i);
     if (score > bestScore) {
       bestScore = score;
       bestHex = i;
@@ -1748,6 +1786,26 @@ export function colonizePlanet(planet: Planet, system?: StarSystem): boolean {
   gameBus.emit('economy:planet-colonized', { planetId: planet.id, hexIndex: bestHex });
 
   return true;
+}
+
+/**
+ * Число не-океанских соседей гекса (качество размещения colony_hub —
+ * ORE-POOLS-DOCS-01: выбор по территории, не по подземным залежам).
+ */
+function countNonOceanNeighbors(planet: Planet, index: number): number {
+  const hex = planet.hexes[index];
+  if (!hex) return 0;
+  let count = 0;
+  for (const other of planet.hexes) {
+    if (other === hex) continue;
+    const dq = other.coord.q - hex.coord.q;
+    const dr = other.coord.r - hex.coord.r;
+    // Axial-соседи: (±1,0),(0,±1),(1,−1),(−1,1) ⇔ |dq|≤1, |dr|≤1, dq+dr≠0
+    const isNeighbor = Math.abs(dq) <= 1 && Math.abs(dr) <= 1 && dq + dr !== 0;
+    if (!isNeighbor) continue;
+    if (other.terrain !== 'ocean') count++;
+  }
+  return count;
 }
 
 /**

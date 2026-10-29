@@ -24,7 +24,7 @@ export type {
   ProcessorType, ProcessorRecipeCategory,
   HullSize, HullArmorThickness, SlotType, ModuleCategory, DamageType, FuelType,
   HullType, HullDef, ShipModule, ModuleDef,
-  ResourceDeposit, HexCell, AtmosphericSlot, OrbitalSlot, Planet, PlanetResourceDeposit,
+  PlanetOrePool, HexCell, AtmosphericSlot, OrbitalSlot, Planet, PlanetResourceDeposit,
   WarehouseReserve, WarehouseSpecialization, ColonyRole, PlanetWarehouse,
   WarehouseCapacities,
   Star, JumpPoint, StarSystem, Galaxy,

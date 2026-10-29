@@ -40,9 +40,9 @@ function makePlanet(buildings: Array<{ idx: number; id: string; level: number }>
     orbitalRadius: 1,
     orbitalPeriod: 365,
     hexes: [
-      { coord: { q: 0, r: 0 }, terrain: 'plains', buildingId: null, buildingLevel: 0, deposits: [] },
-      { coord: { q: 1, r: 0 }, terrain: 'plains', buildingId: null, buildingLevel: 0, deposits: [] },
-      { coord: { q: 2, r: 0 }, terrain: 'plains', buildingId: null, buildingLevel: 0, deposits: [] },
+      { coord: { q: 0, r: 0 }, terrain: 'plains', buildingId: null, buildingLevel: 0 },
+      { coord: { q: 1, r: 0 }, terrain: 'plains', buildingId: null, buildingLevel: 0 },
+      { coord: { q: 2, r: 0 }, terrain: 'plains', buildingId: null, buildingLevel: 0 },
     ],
     atmosphericSlots: [
       { buildingId: null, buildingLevel: 0 },
@@ -51,6 +51,7 @@ function makePlanet(buildings: Array<{ idx: number; id: string; level: number }>
     orbitSlots: [{ buildingId: null, buildingLevel: 0 }],
     moons: [],
     resourceDeposits: [],
+    orePools: [],
     resources: {},
     energyBalance: 0,
     owner: 'player',

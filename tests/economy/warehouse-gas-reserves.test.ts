@@ -44,7 +44,6 @@ function makePlanet(
     terrain: 'plains' as HexTerrain,
     buildingId: null,
     buildingLevel: 0,
-    deposits: [],
   }));
   const base = createDefaultWarehouse();
   return {
@@ -67,6 +66,7 @@ function makePlanet(
     orbitSlots: [],
     moons: [],
     resourceDeposits: [],
+    orePools: [],
     resources: { ...resources },
     warehouse: {
       ...base,
@@ -220,7 +220,6 @@ describe('R-27: регрессия жалобы №7 — газовый экст
         terrain: 'plains' as HexTerrain,
         buildingId: 'mine',
         buildingLevel: 1,
-        deposits: [{ elementId: 'Fe-ore', availability: 1.0, quantity: 100000, depth: 1 }],
       },
     ];
     const slot: AtmosphericSlot = {
@@ -231,6 +230,7 @@ describe('R-27: регрессия жалобы №7 — газовый экст
     const planet: Planet = {
       ...makePlanet(),
       hexes,
+      orePools: [{ oreId: 'Fe-ore', initialQuantity: 100000, remainingQuantity: 100000, availability: 1.0, tier: 'profile' as const }],
       atmosphericSlots: [slot],
       atmosphere: { type: 'toxic', pressure: 5, composition: [] },
     };

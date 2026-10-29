@@ -26,7 +26,6 @@ function makeHex(i: number): HexCell {
     terrain: 'plains' as HexTerrain,
     buildingId: null,
     buildingLevel: 0,
-    deposits: [],
   };
 }
 

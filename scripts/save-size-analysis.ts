@@ -23,7 +23,6 @@ import '@/core/immer-setup'; // enableMapSet + setAutoFreeze(false) — нуже
 import { gzipSync } from 'node:zlib';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { generateGalaxy } from '@/galaxy';
-import { materializePlanetDeposits } from '@/galaxy/generate-resources';
 import { colonizePlanet } from '@/economy/engine';
 import { serializeGameState } from '@/stores/game-store';
 import { createDefaultResearchState } from '@/research/engine';
@@ -90,8 +89,8 @@ interface Counts {
   moons: number;
   hexes: number;
   moonHexes: number;
-  deposits: number;
-  moonDeposits: number;
+  orePools: number;
+  moonOrePools: number;
   orbitSlots: number;
   atmosSlots: number;
   builtSlots: number;
@@ -104,7 +103,7 @@ interface Counts {
 
 function collectCounts(root: any): Counts {
   const c: Counts = {
-    systems: 0, planets: 0, moons: 0, hexes: 0, moonHexes: 0, deposits: 0, moonDeposits: 0,
+    systems: 0, planets: 0, moons: 0, hexes: 0, moonHexes: 0, orePools: 0, moonOrePools: 0,
     orbitSlots: 0, atmosSlots: 0, builtSlots: 0, planetsWithWarehouse: 0, jumpPoints: 0,
     stars: 0, emptyOrbitSlots: 0, planetsBySize: {},
   };
@@ -115,7 +114,7 @@ function collectCounts(root: any): Counts {
     for (const p of sys.planets) {
       c.planets++;
       c.hexes += p.hexes.length;
-      c.deposits += p.hexes.reduce((n: number, h: any) => n + h.deposits.length, 0);
+      c.orePools += p.orePools.length;
       c.orbitSlots += p.orbitSlots.length;
       c.atmosSlots += p.atmosphericSlots.length;
       c.builtSlots += p.orbitSlots.filter((s: any) => s.buildingId !== null).length;
@@ -126,7 +125,7 @@ function collectCounts(root: any): Counts {
       for (const m of p.moons) {
         c.moons++;
         c.moonHexes += m.hexes.length;
-        c.moonDeposits += m.hexes.reduce((n: number, h: any) => n + h.deposits.length, 0);
+        c.moonOrePools += m.orePools.length;
       }
     }
   }
@@ -148,7 +147,7 @@ function analyze(root: any): { agg: Agg; counts: Counts } {
       addEntity(agg, 'life', p.life);
       for (const h of p.hexes) {
         addEntity(agg, 'hex', h);
-        for (const d of h.deposits) addEntity(agg, 'deposit', d);
+
       }
       for (const s of p.orbitSlots) addEntity(agg, 'orbitSlot', s);
       for (const s of p.atmosphericSlots) addEntity(agg, 'atmosSlot', s);
@@ -158,7 +157,7 @@ function analyze(root: any): { agg: Agg; counts: Counts } {
         addEntity(agg, 'moon', m);
         for (const h of m.hexes) {
           addEntity(agg, 'moonHex', h);
-          for (const d of h.deposits) addEntity(agg, 'moonDeposit', d);
+
         }
         for (const rd of m.resourceDeposits) addEntity(agg, 'moonResDeposit', rd);
       }
@@ -171,7 +170,7 @@ function analyze(root: any): { agg: Agg; counts: Counts } {
 
 function main(): void {
   console.log('═════════════════════════════════════════════════════════════');
-  console.log('  R-29: Анализ размера сейва (ленивые залежи, fmt v3)');
+  console.log('  ORE-POOLS: Анализ размера сейва (планетарные пулы, fmt v4)');
   console.log('═════════════════════════════════════════════════════════════');
 
   const state = buildFreshState(200, 42);
@@ -194,15 +193,11 @@ function main(): void {
   const earlyJson = serializeGameState(state);
   const earlyGz = gzipSync(Buffer.from(earlyJson, 'utf8'));
 
-  // Сценарий В: верхняя граница — материализуем ВСЕ тела (как до R-29)
-  for (const sys of state.galaxy.systems) {
-    for (const p of sys.planets) {
-      materializePlanetDeposits(p);
-      for (const m of p.moons) materializePlanetDeposits(m);
-    }
-  }
-  const fullJson = serializeGameState(state);
-  const fullGz = gzipSync(Buffer.from(fullJson, 'utf8'));
+  // Сценарий В (ORE-POOLS v4): верхняя граница отсутствует как отдельный
+  // сценарий — пулы сериализуются всегда (ленивость R-29 отменена решением
+  // ORE-POOLS-DOCS-01: пулы малы и являются авторитетным состоянием).
+  const fullJson = earlyJson;
+  const fullGz = earlyGz;
 
   // Объектная форма (для полевого разбора) — на СВЕЖЕМ ленивом состоянии
   const lazyState = buildFreshState(200, 42);
@@ -218,7 +213,7 @@ function main(): void {
   const root = JSON.parse(plainJson);
   const { agg, counts } = analyze(root);
 
-  console.log('  ── Сценарии (fmt v3, кодек serializeGameState) ──');
+  console.log('  ── Сценарии (fmt v4, кодек serializeGameState) ──');
   console.log(`  А. Свежая игра (лениво):   ${mb(freshJson.length)} МБ plain · ${mb(freshGz.length)} МБ gzip`);
   console.log(`  Б. 5 колоний:              ${mb(earlyJson.length)} МБ plain · ${mb(earlyGz.length)} МБ gzip`);
   console.log(`  В. ВСЁ материализовано:    ${mb(fullJson.length)} МБ plain · ${mb(fullGz.length)} МБ gzip (≈ до R-29)`);
@@ -238,7 +233,7 @@ function main(): void {
   console.log('  ── Байты по сущностям (объектная форма свежего состояния) ──');
   const lines: string[] = [];
   lines.push('# R-29: Анализ размера сейва (ленивые залежи)', '');
-  lines.push(`- Свежая игра: seed 42, 200 систем (конфиг newGame), tick 0, fmt v3`);
+  lines.push(`- Свежая игра: seed 42, 200 систем (конфиг newGame), tick 0, fmt v4`);
   lines.push(`- А. Свежая игра (лениво): **${mb(freshJson.length)} МБ** plain · ${mb(freshGz.length)} МБ gzip`);
   lines.push(`- Б. 5 колоний: **${mb(earlyJson.length)} МБ** plain · ${mb(earlyGz.length)} МБ gzip`);
   lines.push(`- В. Все тела материализованы (верхняя граница, ≈ до R-29): **${mb(fullJson.length)} МБ** plain · ${mb(fullGz.length)} МБ gzip`);
@@ -295,7 +290,7 @@ function main(): void {
   lines.push(`| Объектная форма (эталон полей) | ${mb(plainJson.length)} | — |`);
   lines.push('', '- Залежи → кортежи `[elementId, availability(3 зн.), quantity, depth]` — убраны ~11 МБ имён ключей (×276 тыс.) и ~8 МБ хвостов availability (ср. 18.4 симв. → 5).');
   lines.push('- Свод resourceDeposits → кортежи `[elementId, total, avg, tierIdx, hexCount, max]` — RNG-контент агрегата (гарантированные элементы + ультраредкие) сохраняется полностью, меняется только форма.');
-  lines.push('- Гексы: без `coord` (восстановление из сетки по индексу массива), без `buildingId:null`/`buildingLevel:0` и `deposits:[]` у пустых.');
+  lines.push('- Гексы: без `coord` (восстановление из сетки по индексу массива), без `buildingId:null`/`buildingLevel:0` у пустых; залежи гексов выведены (ORE-POOLS v4) — пулы пишутся кортежами `op`.');
   lines.push('- Звёзды: mass/luminosity/temperature/radius → 4 значащих цифры (хвосты float-арифметики).');
   lines.push('- Слоты НЕ сжимаются: 0.6% выгоды, а количество ГГ-слотов RNG-зависимо (нужно поле-счётчик) — слоп не стоит сложности.');
   lines.push('- ВНИМАНИЕ: агрегат resourceDeposits НЕ выводится из гексов — aggregateResourceDeposits() добавляет RNG-контент; дропнуть его нельзя.');

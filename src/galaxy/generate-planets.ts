@@ -24,7 +24,7 @@ import type { Star, Planet, Moon, PlanetSize, BinaryType, Atmosphere, Atmosphere
 import { PLANET_TYPES, ORBIT_SLOTS, ORBIT_SLOTS_BY_SIZE, GAS_GIANT_ATMOSPHERE_SLOTS, PLANET_DENSITY, PLANET_TYPE_RADIUS, getSizeFromRadius, getPlanetGravityForRadius, getMoonGravityForRadius, LIFE_LEVEL_WEIGHTS, TYPE_NAMES, GAS_GIANT_MOON_COUNT, MOON_RADIUS, MOON_DENSITY, MOON_ORBIT_RADIUS_KM, MOON_TYPE_WEIGHTS, MOON_SIZE_HEX_COUNT } from '@/data/planet-types';
 import { genId } from './gen-context';
 import { generateHexGrid } from './hex-grid';
-import { assignResourceDeposits, aggregateResourceDeposits, DEPOSIT_RNG_VERSION, DEPOSIT_SUMMARY_VERSION } from './generate-resources';
+import { generatePlanetOrePools, buildResourceSummary } from './generate-resources';
 
 // ============ Конвертация чисел ============
 
@@ -589,33 +589,19 @@ export function generatePlanet(
     ? []
     : generateHexGrid(size, planetDef.terrainWeights, rng.derive('hexes'));
 
-  // Ресурсные залежи на гексах — R-29: ЛЕНИВАЯ материализация.
-  // Прогон assignResourceDeposits на реальной сетке нужен только для расчёта
-  // свода-пула (aggregateResourceDeposits); снимок RNG берётся ДО прогона и
-  // хранится в depositRngState — materializePlanetDeposits() при колонизации
-  // воспроизводит те же залежи бит-в-бит. Сами залежи из гексов СТИРАЮТСЯ:
-  // «мёртвые» (не разведанные) гексы не попадают в сейв.
+  // Планетарные пулы сырьевых руд — ORE-POOLS-DOCS-01: ПРЯМАЯ генерация
+  // из seed и профиля планеты (без раскладки залежей по гексам; гексы —
+  // только размещение/террейн/синергия). Свод-превью — производная пулов
+  // (buildResourceSummary, без RNG).
   //
-  // R-37 (Б2/Б3): свод-пул считается продолжением ТОГО ЖЕ deposit-потока
-  // (rng ПОСЛЕ assign) — та же точка, из которой materializePlanetDeposits
-  // пересчитывает пул при материализации ⇒ пул при генерации и при replay
-  // бит-в-бит идентичен, согласованность «пул ↔ физика» — по построению.
-  // Для ГГ (гексов нет) assign не вызывается — пул = гарантия элементов
-  // от свежего derive('deposits') (детерминизм тот же). ВАЖНО: derive() НЕ
-  // потребляет родительский поток — замена derive('ultra') на продолжение
-  // deposit-потока не сдвигает нележебную генерацию (типы/орбиты/луны).
-  const depositRng = rng.derive('deposits');
-  let depositRngState: number[] | null = null;
-  if (hexes.length > 0) {
-    depositRngState = depositRng.snapshotState();
-    assignResourceDeposits(hexes, depositRng, planetDef.type);
-  }
-  // R-36: версия генерации пишется ТОЛЬКО вместе со снимком (как ds) —
-  // для тел без гексов (ГГ) поле не имеет смысла и не пишется (рантрип).
-  const depositRngVersion = depositRngState ? DEPOSIT_RNG_VERSION : undefined;
-  // R-38: пул при генерации считается текущим контрактом агрегации —
-  // помечаем версию свода (как dv, только вместе со снимком/гексами).
-  const depositSummaryVersion = depositRngState ? DEPOSIT_SUMMARY_VERSION : undefined;
+  // derive('ore-pools') НЕ потребляет родительский поток — замена
+  // derive('deposits') не сдвигает нележебную генерацию (типы/орбиты/луны).
+  // Масштаб поверхности — число не-океанских гексов (0 у ГГ и у полностью
+  // океанских миров: поверхности для коровой добычи нет, docs/31 §8.2/§9.3 —
+  // G-07: модель морской добычи отсутствует; пул честно остаётся оценкой).
+  const surfaceScale = hexes.filter(h => h.terrain !== 'ocean').length;
+  const orePools = generatePlanetOrePools(rng.derive('ore-pools'), planetDef.type, surfaceScale);
+  const resourceDeposits = buildResourceSummary(orePools, planetDef.type);
 
   // Атмосферные слоты (только для газовых гигантов)
   const atmosphericSlots: AtmosphericSlot[] = planetDef.type === 'gas_giant'
@@ -643,14 +629,8 @@ export function generatePlanet(
   const typeName = TYPE_NAMES[planetDef.type] ?? planetDef.type;
   const planetName = `${systemName} ${toRoman(orbit)} — ${typeName}`;
 
-  // Сводная таблица ресурсов (верхнеуровневый пул — вычисляется из прогона,
-  // ДО стирания залежей: «сколько всего» известно и без колонизации).
-  // R-37: rng — продолжение deposit-потока (см. комментарий выше).
-  const resourceDeposits = aggregateResourceDeposits(hexes, planetDef.type, depositRng);
-
-  // R-29: залежи стираются — планета хранит пул + RNG-снимок; гексовые
-  // залежи материализуются при колонизации (materializePlanetDeposits).
-  for (const hex of hexes) hex.deposits = [];
+  // Сводная таблица ресурсов — производная пулов (см. выше; пересчитывается
+  // динамически по мере истощения пулов — «свод = добыча» на пуловой модели).
 
   // Луны (только для газовых гигантов — Audit 2026-08-28)
   // Юпитер=95, Сатурн=146, Уран=28, Нептун=16. Для MVP — 2-7 лун.
@@ -678,10 +658,7 @@ export function generatePlanet(
     orbitSlots,
     moons,
     resourceDeposits,
-    depositsMaterialized: false,
-    depositRngState,
-    depositRngVersion, // R-36: версия генерации (только при наличии ds)
-    depositSummaryVersion, // R-38: версия контракта свод-пула (как dv — только при наличии ds)
+    orePools,
     resources: {},
     energyBalance: 0,
     owner: null,
@@ -787,22 +764,10 @@ function generateMoons(
         ? { plains: 40, mountains: 30, desert: 20, ice: 0, ocean: 0, volcano: 0, jungle: 10 }
         : { plains: 50, mountains: 30, desert: 0, ice: 20, ocean: 0, volcano: 0, jungle: 0 };
     const hexes = generateHexGrid(size, terrainWeights, moonRng.derive('hexes'), MOON_SIZE_HEX_COUNT);
-    // R-29: ленивая материализация (как у планет) — снимок ДО прогона,
-    // прогон для свода-пула, затем стирание. Материализация — при будущей
-    // колонизации лун (materializePlanetDeposits работает и для лун).
-    // R-37: пул — продолжение deposit-потока (как у планет выше).
-    const moonDepositRng = moonRng.derive('deposits');
-    let moonDepositRngState: number[] | null = null;
-    if (hexes.length > 0) {
-      moonDepositRngState = moonDepositRng.snapshotState();
-      assignResourceDeposits(hexes, moonDepositRng, moonType);
-    }
-    // R-36: версия — только вместе со снимком (как у планет выше).
-    const moonDepositRngVersion = moonDepositRngState ? DEPOSIT_RNG_VERSION : undefined;
-    // R-38: версия контракта свод-пула — как у планет (пул считаем текущим кодом).
-    const moonDepositSummaryVersion = moonDepositRngState ? DEPOSIT_SUMMARY_VERSION : undefined;
-    const resourceDeposits = aggregateResourceDeposits(hexes, moonType, moonDepositRng);
-    for (const hex of hexes) hex.deposits = [];
+    // ORE-POOLS-DOCS-01: планетарные пулы луны — прямая генерация (как у планет;
+    // материалazy при колонизации не требуется — пулы уже рассчитаны).
+    const moonOrePools = generatePlanetOrePools(moonRng.derive('ore-pools'), moonType, hexes.length);
+    const resourceDeposits = buildResourceSummary(moonOrePools, moonType);
 
     // Имя: «Epsilon Tauri IV-a», «Epsilon Tauri IV-b», ...
     // Audit Task 36 (C3): конвенция именования — «<имя системы> <римский
@@ -827,10 +792,7 @@ function generateMoons(
       orbitPeriodDays,
       hexes,
       resourceDeposits,
-      depositsMaterialized: false,
-      depositRngState: moonDepositRngState,
-      depositRngVersion: moonDepositRngVersion, // R-36 (только при наличии ds)
-      depositSummaryVersion: moonDepositSummaryVersion, // R-38: версия свод-контракта (как у планет)
+      orePools: moonOrePools,
       owner: null,
     });
   }

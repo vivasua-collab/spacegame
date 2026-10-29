@@ -129,25 +129,9 @@ export interface Moon {
   hexes: HexCell[];
   /** Ресурсные залежи (как у планет — упрощённо) */
   resourceDeposits: PlanetResourceDeposit[];
-  // ─── R-29: ленивая материализация залежей ──────────
-  /** Залежи гексов материализованы (колонизация/старый сейв)? undefined = false */
-  depositsMaterialized?: boolean;
-  /** Снимок состояния RNG залежей (4×uint32) для воспроизводимой материализации; null — нет гексов/не применимо */
-  depositRngState?: number[] | null;
-  /**
-   * R-36: версия семантики генерации залежей, с которой записан depositRngState
-   * (DEPOSIT_RNG_VERSION). Тела сейва с другой версией материализуются при
-   * загрузке (явная миграция). undefined в живом состоянии = версия текущая.
-   */
-  depositRngVersion?: number;
-  /**
-   * R-38: версия КОНТРАКТА свод-пула resourceDeposits (DEPOSIT_SUMMARY_VERSION,
-   * в сейве — поле `sv`). Отлична от dv: dv описывает ФИЗИКУ (кем сгенерированы
-   * залежи), sv — СВОД (по каким правилам агрегирован пул). Проставляется при
-   * материализации (replay текущим кодом) и при R-38-миграции старых
-   * материализованных тел (физика сохраняется, свод пересчитывается из неё).
-   */
-  depositSummaryVersion?: number;
+  // ─── ORE-POOLS-DOCS-01: планетарные пулы сырьевых руд (как у планет) ──
+  /** Канонический остаток недр луны по точному ID руды (docs/31 §10.1) */
+  orePools: PlanetOrePool[];
   /** Владелец (factionId / playerId / null) */
   owner: EntityId | null;
 }
@@ -667,11 +651,28 @@ export type ModuleDef = ShipModule;
 
 // ============ Runtime-модели ============
 
-export interface ResourceDeposit {
-  elementId: string;
-  availability: number;  // 0-1, лёгкость добычи
-  quantity: number;      // оставшееся количество
-  depth: number;         // уровень глубины (1-5)
+/**
+ * Планетарный пул сырьевой руды (ORE-POOLS-DOCS-01 / Issue #24, docs/31 §10.1).
+ *
+ * Авторитетный остаток недр планеты по ТОЧНОМУ ID руды (`Fe-ore`, `H2O-ice`,
+ * `Os-ore`…). Ключ — oreId, НЕ элемент: разные руды с общим элементом должны
+ * оставаться различимы (роль источника, побочные выходы).
+ *
+ * Роль источника (`sourceBuildingId`) и порог `minSourceLevel` НЕ хранятся в
+ * пуле — разрешаются по oreId из data-driven ore-каталога (BakedOre,
+ * src/data/chemistry/ore-specs.ts — единственный источник истины ролей).
+ */
+export interface PlanetOrePool {
+  /** Точный ID сырой руды ('Fe-ore', 'H2O-ice', 'Os-ore'…) */
+  oreId: string;
+  /** Начальный объём пула (ед. руды) */
+  initialQuantity: number;
+  /** АВТОРИТЕТНЫЙ остаток в недрах (ед. руды); уменьшается добычей */
+  remainingQuantity: number;
+  /** 0–1 — вес/лёгкость добычи (нормализуемый вес планировщика, НЕ множитель бюджета) */
+  availability: number;
+  /** Категория записи (docs/31 §8.2) */
+  tier: 'profile' | 'rare' | 'ultra_rare';
 }
 
 export interface HexCell {
@@ -679,7 +680,9 @@ export interface HexCell {
   terrain: HexTerrain;
   buildingId: string | null;
   buildingLevel: number;
-  deposits: ResourceDeposit[];
+  // ─── ORE-POOLS-DOCS-01: залежи выведены из гексов ─────────────
+  // Гекс определяет размещение здания, террейн-бонусы и синергию
+  // соседства; планетарные запасы руд живут в Planet.orePools.
   // ─── PROC-WORKSHOPS-01: цехи processing-зданий (processor / plant) ──
   /** Цехи 1..buildingLevel (индекс i = цех №i+1); только для usesWorkshops-зданий */
   workshops?: WorkshopState[];
@@ -762,34 +765,15 @@ export interface Planet {
   moons: Moon[];
   /** Сводная таблица ресурсных залежей планеты (агрегация из гексов + атмосферных) */
   resourceDeposits: PlanetResourceDeposit[];
-  // ─── R-29: ленивая материализация залежей ──────────
+  // ─── ORE-POOLS-DOCS-01: планетарные пулы сырьевых руд ─────────────
   /**
-   * Залежи гексов материализованы? undefined/false — нет (свежая планета:
-   * известен только свод-пул resourceDeposits). true — колонизирована
-   * (materializePlanetDeposits) либо загружена из старого сейва с запечёнными
-   * залежами. Предотвращает повторную материализацию (дубли залежей).
+   * Канонический остаток недр по точному ID руды (docs/31 §10.1).
+   * Генерируется напрямую из seed и профиля планеты (без раскладки
+   * по гексам); добыча уменьшает `remainingQuantity` и кладёт руду в
+   * `resources[oreId]`. Свод-превью `resourceDeposits` — производная
+   * (агрегация пулов по химическому составу руд, UI), не инвентарь.
    */
-  depositsMaterialized?: boolean;
-  /**
-   * Снимок состояния Xoshiro128StarStar (4×uint32) ДО прогона генерации залежей.
-   * materializePlanetDeposits() воспроизводит залежи бит-в-бит.
-   * null/undefined — материализация невозможна (ГГ без гексов, старые сейвы).
-   */
-  depositRngState?: number[] | null;
-  /**
-   * R-36: версия семантики генерации залежей, с которой записан depositRngState
-   * (DEPOSIT_RNG_VERSION). Тела сейва с другой версией материализуются при
-   * загрузке (явная миграция). undefined в живом состоянии = версия текущая.
-   */
-  depositRngVersion?: number;
-  /**
-   * R-38: версия КОНТРАКТА свод-пула resourceDeposits (DEPOSIT_SUMMARY_VERSION,
-   * в сейве — поле `sv`). Отлична от dv: dv описывает ФИЗИКУ (кем сгенерированы
-   * залежи), sv — СВОД (по каким правилам агрегирован пул). Проставляется при
-   * материализации (replay текущим кодом) и при R-38-миграции старых
-   * материализованных тел (физика сохраняется, свод пересчитывается из неё).
-   */
-  depositSummaryVersion?: number;
+  orePools: PlanetOrePool[];
   resources: Record<string, number>; // elementId → количество на складе
   /**
    * Block 05 (PR3-min): средневзвешенная чистота ресурсов на складе.
@@ -805,22 +789,27 @@ export interface Planet {
 }
 
 /**
- * Сводная залежь ресурса на планете.
- * Агрегирует все залежи одного элемента со всех гексов.
- * Три уровня: профильный, редкий, ультраредкий (уникальный для планеты).
+ * Свод-превью ресурсов планеты (ORE-POOLS-DOCS-01, docs/31 §10.2).
+ *
+ * Геологическое превью для UI: элементный агрегат планетарных пулов по
+ * химическому составу руд. НЕ является инвентарём сырой руды — остаток
+ * недр живёт в Planet.orePools по ID руды, складской запас — в resources.
+ * Поля гекс-модели (hexCount/maxAvailability) выведены.
  */
 export interface PlanetResourceDeposit {
   elementId: string;
-  /** Суммарное количество ресурса (тыс. тонн) */
+  /** Расчётный объём в элементном выражении (ед.) */
   totalQuantity: number;
-  /** Средняя доступность (0-1) */
+  /** Средняя доступность соответствующих пулов (0-1) */
   avgAvailability: number;
   /** Категория: 'profile' | 'rare' | 'ultra_rare' */
   tier: 'profile' | 'rare' | 'ultra_rare';
-  /** Количество гексов, где ресурс присутствует */
-  hexCount: number;
-  /** Максимальная доступность среди всех залежей этого элемента */
-  maxAvailability: number;
+  /**
+   * «Геологическая оценка с орбиты»: элемент без планетарных пулов
+   * (атмосферные газы, океанские миры/ГГ) — физически доступной добычи
+   * нет; UI помечает такие записи, не обещая физику (docs/31 §10.2).
+   */
+  estimated?: boolean;
 }
 
 // ============ Склад планеты ============

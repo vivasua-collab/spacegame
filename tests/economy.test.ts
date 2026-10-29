@@ -34,18 +34,19 @@ setCurrentLookups(bakedModel);
 
 /** Helper: build a minimal rocky planet with one hex containing Fe-ore deposit. */
 function makeTestPlanet(overrides?: Partial<Planet>): Planet {
-  const feDeposit = {
-    elementId: 'Fe-ore',
+  // ORE-POOLS: руда — планетарный пул (не залежь на гексе)
+  const fePool = {
+    oreId: 'Fe-ore',
+    initialQuantity: 1000,
+    remainingQuantity: 1000,
     availability: 0.7,
-    quantity: 1000,
-    depth: 1,
+    tier: 'profile' as const,
   };
   const hex: HexCell = {
     coord: { q: 0, r: 0 },
     terrain: 'plains' as HexTerrain,
     buildingId: null,
     buildingLevel: 0,
-    deposits: [feDeposit],
   };
   return {
     id: 'test-planet' as EntityId,
@@ -65,7 +66,9 @@ function makeTestPlanet(overrides?: Partial<Planet>): Planet {
     hexes: [hex],
     atmosphericSlots: [],
     orbitSlots: [],
+    moons: [],
     resourceDeposits: [],
+    orePools: [fePool],
     resources: {},
     warehouse: {
       totalCapacity: 10000,
@@ -118,7 +121,6 @@ describe('Block 01 T3: Economy — extraction → production → energy', () => 
       terrain: 'plains' as HexTerrain,
       buildingId: null,
       buildingLevel: 0,
-      deposits: [],
     };
     planet.hexes.push(hex2);
     buildOnHex(planet, 1, 'construction_materials_plant'); // PROC-WORKSHOPS-01: smelt_fe — завод
@@ -148,7 +150,6 @@ describe('Block 01 T3: Economy — extraction → production → energy', () => 
       terrain: 'plains' as HexTerrain,
       buildingId: null,
       buildingLevel: 0,
-      deposits: [],
     };
     planet.hexes.push(hex2);
     buildOnHex(planet, 1, 'solar_plant');
@@ -174,7 +175,6 @@ describe('Block 01 T3: Economy — extraction → production → energy', () => 
       terrain: 'plains' as HexTerrain,
       buildingId: null,
       buildingLevel: 0,
-      deposits: [],
     };
     planet.hexes.push(hex2);
     buildOnHex(planet, 1, 'construction_materials_plant'); // PROC-WORKSHOPS-01
@@ -205,7 +205,6 @@ describe('Block 01 T3: Economy — extraction → production → energy', () => 
       terrain: 'plains' as HexTerrain,
       buildingId: null,
       buildingLevel: 0,
-      deposits: [],
     };
     planet.hexes.push(hex2);
     buildOnHex(planet, 1, 'construction_materials_plant'); // PROC-WORKSHOPS-01

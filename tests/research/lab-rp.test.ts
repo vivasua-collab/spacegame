@@ -127,7 +127,6 @@ describe('Block 03 T-R3 — Laboratory + RP/sec', () => {
         terrain: 'plains',
         buildingId: 'laboratory',
         buildingLevel: level,
-        deposits: [],
       }));
       // Pad with empty hexes
       while (hexes.length < 3) {
@@ -136,7 +135,6 @@ describe('Block 03 T-R3 — Laboratory + RP/sec', () => {
           terrain: 'plains',
           buildingId: null,
           buildingLevel: 0,
-          deposits: [],
         });
       }
       return {
@@ -157,7 +155,9 @@ describe('Block 03 T-R3 — Laboratory + RP/sec', () => {
         hexes,
         atmosphericSlots: [],
         orbitSlots: [],
+        moons: [],
         resourceDeposits: [],
+        orePools: [],
         resources: {},
         energyBalance: 0,
         owner,

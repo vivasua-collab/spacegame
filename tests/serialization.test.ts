@@ -35,6 +35,7 @@ import { getGameMediator, resetGameMediator, GameMediator } from '@/core';
 import { EconomyModule } from '@/economy/economy-module';
 import { GalaxyModule } from '@/galaxy/galaxy-module';
 import { serializeGameState, deserializeGameState } from '@/stores/game-store';
+import { SAVE_FORMAT_VERSION } from '@/lib/save-format-v4';
 import {
   SerializedGameStateSchema,
   validateGameState,
@@ -174,8 +175,8 @@ describe('Block 01 T5: Serialization round-trip', () => {
       productionQueues: unknown;
     };
 
-    // R-29: новый формат v3 (ленивые залежи + словарь) — маркер присутствует.
-    expect(parsed.fmt).toBe(3);
+    // ORE-POOLS: формат v4 (планетарные пулы + словарь) — маркер присутствует.
+    expect(parsed.fmt).toBe(SAVE_FORMAT_VERSION);
 
     // `serializeGameState` destructures `systemMap` and `bakedModel` out of
     // state.galaxy before JSON.stringify — so neither key should appear.
@@ -196,9 +197,9 @@ describe('Block 01 T5: Serialization round-trip', () => {
 
   test('3. R-26 — текущий формат (dayInYear) читается как есть; старый v0 (day) отклоняется', () => {
     // Текущий формат: uses `time.dayInYear` — should be used as-is.
-    // R-30: ручные fixtures оборачиваются маркером fmt:3 (v3 — единственный формат).
+    // ORE-POOLS: ручные fixtures оборачиваются маркером fmt:4 (v4 — единственный формат).
     const v1Json = JSON.stringify({
-      fmt: 3,
+      fmt: 4,
       time: { tick: 100, dayInYear: 200, year: 1 },
       speed: 1,
       phase: 'playing',
@@ -220,7 +221,7 @@ describe('Block 01 T5: Serialization round-trip', () => {
     // совместимости удалён (старые сейвы потерты). deserialize бросает
     // ошибку валидации вместо молчаливой миграции.
     const v0Json = JSON.stringify({
-      fmt: 3,
+      fmt: 4,
       time: { tick: 100, day: 400, year: 1 },
       speed: 1,
       phase: 'playing',
@@ -326,7 +327,7 @@ describe('Block 01 T5: Serialization round-trip', () => {
     // совместимости. Конструкция JSON, который парсится синтаксически,
     // но не проходит схему (невалидный `phase`) — теперь это ошибка.
     const schemaInvalidJson = JSON.stringify({
-      fmt: 3,
+      fmt: 4,
       time: { tick: 0, dayInYear: 0, year: 1 },
       speed: 1,
       phase: 'NOT_A_REAL_PHASE', // invalid literal — schema rejects

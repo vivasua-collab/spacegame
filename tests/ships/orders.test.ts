@@ -242,6 +242,7 @@ function makeMockPlanet(overrides: Partial<Planet> = {}): Planet {
     atmosphericSlots: [],
     orbitSlots: [],
     resourceDeposits: [],
+    orePools: [],
     resources: {},
     energyBalance: 0,
     owner: null,

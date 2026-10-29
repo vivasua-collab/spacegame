@@ -1,23 +1,30 @@
 /// <reference types="bun-types" />
 /**
- * Task 37 / D1 (G-01) tests: роли добывающих зданий в processExtraction.
+ * Task 37 / D1 (G-01) + ORE-POOLS-RUNTIME-01 (Issue #25): роли добывающих
+ * зданий и ЕДИНЫЙ БЮДЖЕТ Добычи в processExtraction.
  *
- * Контракт (docs/40-buildings.md §2 + каталог surface.json + docs/34-ores.md §3
- * + docs/31-resources.md §5.2):
+ * Контракт (docs/40-buildings.md §2 + BakedOre.sourceBuildingId, docs/34 §3.8
+ * + docs/31 §6/§7/§11 + docs/35 §2.7):
  *   - mine (шахта)       — металлические руды (sourceBuildingId='mine');
  *   - quarry (карьер)    — неметаллические ресурсы (sourceBuildingId='quarry');
- *   - gas_extractor      — атмосферные газы (поверхность И слот — из атмосферы);
- *   - drilling_rig       — глубинные руды (deep_ore). R-36 (вариант «а»
- *     владельца): здание в MVP-каталоге; базовые добытчики (mine/quarry/hub)
- *     глубокие руды НЕ извлекают (негативные тесты), буровая извлекает все
- *     (позитивные), порог глубины — BakedOre.minSourceLevel;
+ *   - gas_extractor      — атмосферные газы (поверхность И слот — из атмосферы,
+ *                          НЕ из планетарных рудных пулов, docs/31 §9.3);
+ *   - drilling_rig       — глубинные руды (deep_ore); порог —
+ *                          BakedOre.minSourceLevel (R-36);
  *   - H2O-ice (вода)     — R-27: добывается и шахтой, и карьером;
- *   - colony_hub         — базовая добыча (mine ∪ quarry ∪ вода) на 50% шахты.
+ *   - colony_hub         — малый планетарный бюджет (50% baseRate) поверхностных
+ *                          пулов (mine ∪ quarry ∪ вода); локальной добычи
+ *                          «под своим гексом» больше нет (ORE-POOLS-DOCS-01).
  *
- * Дополнительно (найдено в Task 37): тождественные маппинги DIRECT_GAS_MAP
- * (He→He, Ne→Ne, Ar→Ar) раньше аннигилировали добытый газ.
+ * ORE-POOLS (Issue #25): руды — планетарные пулы (Planet.orePools); каждое
+ * здание имеет ОДИН бюджет за тик, распределяемый планировщиком
+ * «минимумы → пропорциональный излишек». В этих тестах минимумы резервов
+ * заданы = 0 (роль-гейты проверяются изолированно от фазы A планировщика —
+ * фаза A покрыта tests/economy/mining-scheduler.test.ts). При равных весах
+ * пулов пропорциональное деление бюджета воспроизводит прежние числа
+ * «1.0 × availability × множители» для двух равных кандидатов.
  *
- * Все планеты — синтетические с ИЗВЕСТНЫМ составом залежей (не генерация).
+ * Все планеты — синтетические с ИЗВЕСТНЫМ составом пулов (не генерация).
  *
  * Run: bun test tests/economy/extraction-roles.test.ts
  */
@@ -31,19 +38,27 @@ import { ULTRA_RARE_ELEMENTS } from '@/data/planet-types';
 import { BUILDING_MAP } from '@/data/buildings';
 import { createDefaultWarehouse, getUsedCapacityByType } from '@/data/warehouse';
 import { ATMOSPHERE_GAS_MAP, DIRECT_GAS_MAP } from '@/data/atmosphere-gases';
-import type { Planet, HexCell, HexTerrain, EntityId, ProductionQueue, AtmosphericSlot, ResourceDeposit } from '@/core/types';
+import type { Planet, HexCell, HexTerrain, EntityId, ProductionQueue, AtmosphericSlot, PlanetOrePool, WarehouseReserve } from '@/core/types';
 
 // Initialize baked lookups once for all tests (deterministic seed).
 setCurrentLookups(bakeGalaxyModel(42, ELEMENTS));
 
-/** Смешанная залежь: по одному представителю каждой роли + вода + газ. */
-function mixedDeposits(): ResourceDeposit[] {
+/** Смешанные пулы: по одному представителю каждой роли + вода. */
+function mixedPools(): PlanetOrePool[] {
+  const mk = (oreId: string, tier: PlanetOrePool['tier']): PlanetOrePool => ({
+    oreId, initialQuantity: 1000, remainingQuantity: 1000, availability: 0.5, tier,
+  });
   return [
-    { elementId: 'Fe-ore', availability: 0.5, quantity: 1000, depth: 1 },  // mine (metal_ore)
-    { elementId: 'Si-ore', availability: 0.5, quantity: 1000, depth: 1 },  // quarry (nonmetal_ore)
-    { elementId: 'Y-ore', availability: 0.5, quantity: 1000, depth: 4 },   // drilling_rig (deep_ore)
-    { elementId: 'H2O-ice', availability: 0.5, quantity: 1000, depth: 1 }, // вода (R-27: mine+quarry)
+    mk('Fe-ore', 'profile'),   // mine (metal_ore)
+    mk('Si-ore', 'rare'),      // quarry (nonmetal_ore)
+    mk('Y-ore', 'ultra_rare'), // drilling_rig (deep_ore)
+    mk('H2O-ice', 'rare'),     // вода (R-27: mine+quarry)
   ];
+}
+
+/** Резервы с нулевыми минимумами: фаза A планировщика отключена (роль-гейты изолированы). */
+function zeroReserves(pools: PlanetOrePool[]): Record<string, WarehouseReserve> {
+  return Object.fromEntries(pools.map((p) => [p.oreId, { resourceId: p.oreId, minimum: 0, priority: 1 }]));
 }
 
 interface MkOptions {
@@ -52,20 +67,20 @@ interface MkOptions {
   terrain?: HexTerrain;
   atmosphere?: string;
   planetType?: string;
-  deposits?: ResourceDeposit[];
+  pools?: PlanetOrePool[];
   hexCount?: number;
   warehouseOverride?: Planet['warehouse'];
   extraHexes?: Array<{ buildingId: string | null; buildingLevel?: number; terrain?: HexTerrain; coord: { q: number; r: number } }>;
 }
 
-/** Минимальная планета с настраиваемым гексом/зданием/атмосферой. */
+/** Минимальная планета с настраиваемым зданием/пулами/атмосферой. */
 function makePlanet(opts: MkOptions = {}): Planet {
+  const pools = opts.pools ?? mixedPools();
   const hexes: HexCell[] = [{
     coord: { q: 0, r: 0 },
     terrain: opts.terrain ?? ('plains' as HexTerrain),
     buildingId: opts.buildingId ?? null,
     buildingLevel: opts.buildingId ? (opts.buildingLevel ?? 1) : 0,
-    deposits: opts.deposits ?? mixedDeposits(),
   }];
   for (const extra of opts.extraHexes ?? []) {
     hexes.push({
@@ -73,9 +88,12 @@ function makePlanet(opts: MkOptions = {}): Planet {
       terrain: extra.terrain ?? ('plains' as HexTerrain),
       buildingId: extra.buildingId,
       buildingLevel: extra.buildingId ? (extra.buildingLevel ?? 1) : 0,
-      deposits: [],
     });
   }
+  const baseWarehouse = opts.warehouseOverride ?? createDefaultWarehouse();
+  const warehouse = opts.warehouseOverride
+    ? baseWarehouse
+    : { ...baseWarehouse, reserves: { ...baseWarehouse.reserves, ...zeroReserves(pools) } };
   return {
     id: 'p1' as EntityId,
     systemId: 's1' as EntityId,
@@ -96,8 +114,9 @@ function makePlanet(opts: MkOptions = {}): Planet {
     orbitSlots: [],
     moons: [],
     resourceDeposits: [],
+    orePools: pools,
     resources: {},
-    warehouse: opts.warehouseOverride ?? createDefaultWarehouse(),
+    warehouse,
     energyBalance: 1000,
     owner: 'player' as EntityId,
   };
@@ -108,65 +127,73 @@ function runTicks(planet: Planet, ticks: number): void {
   for (let i = 0; i < ticks; i++) processEconomyTick([planet], queues);
 }
 
-function depositQty(planet: Planet, elementId: string): number {
-  return planet.hexes[0]!.deposits.find(d => d.elementId === elementId)?.quantity ?? -1;
+/** Остаток планетарного пула (недра). */
+function poolQty(planet: Planet, oreId: string): number {
+  return planet.orePools.find(p => p.oreId === oreId)?.remainingQuantity ?? -1;
 }
 
-describe('D1/G-01: роли поверхностных добытчиков (фильтр залежей)', () => {
+describe('D1/G-01: роли поверхностных добытчиков (планетарные пулы)', () => {
   test('1. Шахта добывает ТОЛЬКО металлические руды + воду (R-27)', () => {
     const p = makePlanet({ buildingId: 'mine' });
     runTicks(p, 10);
-    expect(p.resources['Fe-ore']).toBeCloseTo(10 * 1.0 * 0.5 * 1.15, 5); // 5.75
-    expect(p.resources['H2O-ice']).toBeCloseTo(10 * 1.0 * 0.5 * 1.15, 5);
+    // Единый бюджет L1 = 1.15; два равных кандидата (Fe, H2O; веса по
+    // remaining×availability равны) → по 0.575/тик каждому.
+    expect(p.resources['Fe-ore']).toBeCloseTo(10 * 1.15 / 2, 5);
+    expect(p.resources['H2O-ice']).toBeCloseTo(10 * 1.15 / 2, 5);
     expect(p.resources['Si-ore']).toBeUndefined(); // неметалл — карьер
-    expect(p.resources['Y-ore']).toBeUndefined();  // глубинная — drilling_rig (post-MVP)
-    expect(depositQty(p, 'Si-ore')).toBe(1000);    // залежи чужих ролей не тратятся
-    expect(depositQty(p, 'Y-ore')).toBe(1000);
-    expect(depositQty(p, 'Fe-ore')).toBeCloseTo(1000 - 5.75, 5);
+    expect(p.resources['Y-ore']).toBeUndefined();  // глубинная — drilling_rig
+    expect(poolQty(p, 'Si-ore')).toBe(1000);       // пулы чужих ролей не тратятся
+    expect(poolQty(p, 'Y-ore')).toBe(1000);
+    expect(poolQty(p, 'Fe-ore')).toBeCloseTo(1000 - 5.75, 5);
   });
 
   test('2. Карьер добывает ТОЛЬКО неметаллические руды + воду', () => {
     const p = makePlanet({ buildingId: 'quarry' });
     runTicks(p, 10);
-    // plains-бонус карьера 1.3 (каталог surface.json)
-    expect(p.resources['Si-ore']).toBeCloseTo(10 * 1.0 * 0.5 * 1.15 * 1.3, 5); // 7.475
-    expect(p.resources['H2O-ice']).toBeCloseTo(10 * 1.0 * 0.5 * 1.15 * 1.3, 5);
+    // plains-бонус карьера 1.3 (каталог surface.json): бюджет 1.15×1.3 = 1.495
+    expect(p.resources['Si-ore']).toBeCloseTo(10 * 1.15 * 1.3 / 2, 5);
+    expect(p.resources['H2O-ice']).toBeCloseTo(10 * 1.15 * 1.3 / 2, 5);
     expect(p.resources['Fe-ore']).toBeUndefined();
     expect(p.resources['Y-ore']).toBeUndefined();
-    expect(depositQty(p, 'Fe-ore')).toBe(1000);
-    expect(depositQty(p, 'Y-ore')).toBe(1000);
+    expect(poolQty(p, 'Fe-ore')).toBe(1000);
+    expect(poolQty(p, 'Y-ore')).toBe(1000);
   });
 
   test('3. Глубинные руды drilling_rig недоступны НИ ОДНОМУ базовому добытчику', () => {
-    // docs/31-resources.md §5.2: глубинная руда — drilling_rig.
-    // R-36: drilling_rig теперь ЕСТЬ в MVP — но mine/quarry/hub по-прежнему
-    // не добывают deep_ore (роль залежи ≠ роль здания).
+    // docs/31 §5.2: глубинная руда — drilling_rig. R-36: drilling_rig есть
+    // в MVP — но mine/quarry/hub по-прежнему не добывают deep_ore.
     for (const b of ['mine', 'quarry', 'colony_hub'] as const) {
       const p = makePlanet({ buildingId: b });
       runTicks(p, 5);
       expect(p.resources['Y-ore'], `${b}`).toBeUndefined();
-      expect(depositQty(p, 'Y-ore'), `${b}`).toBe(1000);
+      expect(poolQty(p, 'Y-ore'), `${b}`).toBe(1000);
     }
   });
 
-  test('4. Colony hub: базовая добыча mine ∪ quarry ∪ вода на 50% шахты', () => {
+  test('4. Colony hub: малый общий бюджет поверхностных пулов (50% baseRate)', () => {
     const p = makePlanet({ buildingId: 'colony_hub' });
     runTicks(p, 10);
-    // 0.5 (скорость хаба) × 0.5 (availability) × 1.1 (levelMult L1) = 0.275/тик
-    expect(p.resources['Fe-ore']).toBeCloseTo(10 * 0.5 * 0.5 * 1.1, 5);
-    expect(p.resources['Si-ore']).toBeCloseTo(10 * 0.5 * 0.5 * 1.1, 5);
-    expect(p.resources['H2O-ice']).toBeCloseTo(10 * 0.5 * 0.5 * 1.1, 5);
-    expect(p.resources['Y-ore']).toBeUndefined(); // глубинная добыча — не «базовые ресурсы»
+    // ORE-POOLS: один бюджет хаба 0.5×1.1 = 0.55 делится между ТРЕМЯ
+    // поверхностными пулами (Fe, Si, H2O) — по 0.55/3 на каждого.
+    // Глубинная Y-ore хабу недоступна; локальной добычи «под гексом» нет.
+    const perOre = 10 * (0.5 * 1.1) / 3;
+    expect(p.resources['Fe-ore']).toBeCloseTo(perOre, 5);
+    expect(p.resources['Si-ore']).toBeCloseTo(perOre, 5);
+    expect(p.resources['H2O-ice']).toBeCloseTo(perOre, 5);
+    expect(p.resources['Y-ore']).toBeUndefined();
+    // Сумма добытого всеми рудами за тик ≤ бюджет хаба (единый бюджет).
+    const total = (p.resources['Fe-ore'] ?? 0) + (p.resources['Si-ore'] ?? 0) + (p.resources['H2O-ice'] ?? 0);
+    expect(total).toBeCloseTo(10 * 0.55, 5);
   });
 
   test('5. Colony hub L3: levelMult 1 + 3×0.1 = 1.3', () => {
     const p = makePlanet({ buildingId: 'colony_hub', buildingLevel: 3 });
     runTicks(p, 10);
-    expect(p.resources['Fe-ore']).toBeCloseTo(10 * 0.5 * 0.5 * 1.3, 5);
+    expect(p.resources['Fe-ore']).toBeCloseTo(10 * (0.5 * 1.3) / 3, 5);
   });
 });
 
-describe('D1/G-01: газовый экстрактор — атмосфера, а не залежи', () => {
+describe('D1/G-01: газовый экстрактор — атмосфера, а не планетарные пулы', () => {
   test('6. Поверхностный экстрактор добывает газы АТМОСФЕРЫ (standard: Ar,N2,CO2,O2)', () => {
     const p = makePlanet({ buildingId: 'gas_extractor', atmosphere: 'standard' });
     runTicks(p, 10);
@@ -177,8 +204,8 @@ describe('D1/G-01: газовый экстрактор — атмосфера, �
     expect(p.resources['O']).toBeCloseTo(expected, 5);
     expect(p.resources['CO2']).toBeCloseTo(expected, 5);
     expect(p.resources['Ar']).toBeCloseTo(expected, 5); // тождественный газ НЕ аннигилирует
-    // Залежи гекса не тронуты (экстрактор не рудник)
-    for (const d of p.hexes[0]!.deposits) expect(d.quantity).toBe(1000);
+    // Планетарные пулы не тронуты (экстрактор не рудник, docs/31 §9.3)
+    for (const pool of p.orePools) expect(pool.remainingQuantity).toBe(1000);
     expect(p.resources['Fe-ore']).toBeUndefined();
   });
 
@@ -186,7 +213,7 @@ describe('D1/G-01: газовый экстрактор — атмосфера, �
     const p = makePlanet({ buildingId: 'gas_extractor', atmosphere: 'none' });
     runTicks(p, 10);
     expect(Object.keys(p.resources).length).toBe(0);
-    for (const d of p.hexes[0]!.deposits) expect(d.quantity).toBe(1000);
+    for (const pool of p.orePools) expect(pool.remainingQuantity).toBe(1000);
   });
 
   test('8. Набор газов = ATMOSPHERE_GAS_MAP для каждого типа атмосферы', () => {
@@ -202,7 +229,7 @@ describe('D1/G-01: газовый экстрактор — атмосфера, �
   test('9. Атмосферный слот газового гиганта: эффективность 1.0 (P1-01)', () => {
     const p = makePlanet({
       buildingId: null, atmosphere: 'methane', planetType: 'gas_giant',
-      deposits: [],
+      pools: [],
     });
     p.hexes = []; // у ГГ нет поверхности
     const slot: AtmosphericSlot = { index: 0, buildingId: 'gas_extractor', buildingLevel: 1 };
@@ -216,8 +243,6 @@ describe('D1/G-01: газовый экстрактор — атмосфера, �
   });
 
   test('10. Регрессия Task 37: He/Ne/Ar (тождественные DIRECT_GAS_MAP) не исчезают', () => {
-    // inert: He, Ne, Ar, N2 — раньше вся добыча He/Ne/Ar аннигилировалась
-    // в convertDirectAtmosphericElements (gasId === elementId перезапись)
     const p = makePlanet({ buildingId: 'gas_extractor', atmosphere: 'inert' });
     runTicks(p, 10);
     const expected = 10 * 2.0 * 1.15 * 0.5; // inert efficiency 0.5
@@ -228,11 +253,9 @@ describe('D1/G-01: газовый экстрактор — атмосфера, �
   });
 
   test('11. Поверхностный и слотовый экстракторы дают одинаковую скорость на одной планете', () => {
-    // rocky-планета с атмосферой: поверхность против слота (случай невозможный
-    // для реальной генерации, но контракт единый — extractAtmosphericGases)
-    const pSlot = makePlanet({ buildingId: null, atmosphere: 'toxic', deposits: [] });
+    const pSlot = makePlanet({ buildingId: null, atmosphere: 'toxic', pools: [] });
     pSlot.atmosphericSlots = [{ index: 0, buildingId: 'gas_extractor', buildingLevel: 1 }];
-    const pSurface = makePlanet({ buildingId: 'gas_extractor', atmosphere: 'toxic', deposits: [] });
+    const pSurface = makePlanet({ buildingId: 'gas_extractor', atmosphere: 'toxic', pools: [] });
     runTicks(pSlot, 10);
     runTicks(pSurface, 10);
     expect(pSurface.resources['N']).toBeCloseTo(pSlot.resources['N'] ?? 0, 5);
@@ -241,38 +264,53 @@ describe('D1/G-01: газовый экстрактор — атмосфера, �
   });
 });
 
-describe('D1: модификаторы добычи (уровень, местность, синергия, склад)', () => {
+describe('D1: единый бюджет добычи (уровень, местность, синергия, склад)', () => {
   test('12. Уровень шахты: L3/L1 = (1+3×0.15)/(1+1×0.15) = 1.45/1.15', () => {
-    const p1 = makePlanet({ buildingId: 'mine', buildingLevel: 1 });
-    const p3 = makePlanet({ buildingId: 'mine', buildingLevel: 3 });
+    // Одиночный кандидат получает весь бюджет → множители видны напрямую.
+    const soloPool = (): PlanetOrePool[] => [{ oreId: 'Fe-ore', initialQuantity: 1000, remainingQuantity: 1000, availability: 0.5, tier: 'profile' }];
+    const p1 = makePlanet({ buildingId: 'mine', buildingLevel: 1, pools: soloPool() });
+    const p3 = makePlanet({ buildingId: 'mine', buildingLevel: 3, pools: soloPool() });
     runTicks(p1, 10);
     runTicks(p3, 10);
     expect(p3.resources['Fe-ore']! / p1.resources['Fe-ore']!).toBeCloseTo(1.45 / 1.15, 5);
   });
 
   test('13. Местность: шахта на горах ×1.5 (terrainBonus каталога)', () => {
-    const plainsP = makePlanet({ buildingId: 'mine', terrain: 'plains' });
-    const mountP = makePlanet({ buildingId: 'mine', terrain: 'mountains' });
+    const soloPool = (): PlanetOrePool[] => [{ oreId: 'Fe-ore', initialQuantity: 100000, remainingQuantity: 100000, availability: 0.5, tier: 'profile' }];
+    const plainsP = makePlanet({ buildingId: 'mine', terrain: 'plains', pools: soloPool() });
+    const mountP = makePlanet({ buildingId: 'mine', terrain: 'mountains', pools: soloPool() });
     runTicks(plainsP, 10);
     runTicks(mountP, 10);
     expect(mountP.resources['Fe-ore']! / plainsP.resources['Fe-ore']!).toBeCloseTo(1.5, 5);
   });
 
-  test('14. Синергия mining_cluster: смежная шахта +10% к скорости (docs §5.1)', () => {
-    const solo = makePlanet({ buildingId: 'mine' });
-    const paired = makePlanet({
+  test('14. Синергия mining_cluster: смежные шахты +10% к бюджету каждой (docs §5.1)', () => {
+    // ORE-POOLS: обе шахты добывают ОДИН планетарный пул, поэтому сравниваем
+    // ПАРЫ (смежные vs удалённые) при одинаковом числе зданий/пулов.
+    const soloPool = (): PlanetOrePool[] => [{ oreId: 'Fe-ore', initialQuantity: 1000000, remainingQuantity: 1000000, availability: 0.5, tier: 'profile' }];
+    const adjacent = makePlanet({
       buildingId: 'mine',
+      pools: soloPool(),
       extraHexes: [{ buildingId: 'mine', coord: { q: 1, r: 0 } }],
     });
-    runTicks(solo, 10);
-    runTicks(paired, 10);
-    expect(paired.resources['Fe-ore']! / solo.resources['Fe-ore']!).toBeCloseTo(1.1, 5);
+    const apart = makePlanet({
+      buildingId: 'mine',
+      pools: soloPool(),
+      extraHexes: [{ buildingId: 'mine', coord: { q: 5, r: 0 } }],
+    });
+    runTicks(adjacent, 10);
+    runTicks(apart, 10);
+    expect(adjacent.resources['Fe-ore']! / apart.resources['Fe-ore']!).toBeCloseTo(1.1, 5);
   });
 
   test('15. Синергия mine≠quarry: разные подтипы НЕ бустят друг друга', () => {
-    const solo = makePlanet({ buildingId: 'mine' });
+    // Fe-ore добывает только шахта → добыча Fe отражает бюджет шахты;
+    // присутствие карьера (другой подтип) не должно её увеличивать.
+    const soloPool = (): PlanetOrePool[] => [{ oreId: 'Fe-ore', initialQuantity: 1000000, remainingQuantity: 1000000, availability: 0.5, tier: 'profile' }];
+    const solo = makePlanet({ buildingId: 'mine', pools: soloPool() });
     const mixed = makePlanet({
       buildingId: 'mine',
+      pools: soloPool(),
       extraHexes: [{ buildingId: 'quarry', coord: { q: 1, r: 0 } }],
     });
     runTicks(solo, 10);
@@ -280,26 +318,26 @@ describe('D1: модификаторы добычи (уровень, местн�
     expect(mixed.resources['Fe-ore']! / solo.resources['Fe-ore']!).toBeCloseTo(1.0, 5);
   });
 
-  test('16. Полный рудный склад: добыча останавливается, залежь НЕ испаряется', () => {
+  test('16. Полный рудный склад: добыча останавливается, пул НЕ испаряется', () => {
     // Рудный склад (база 5000) почти заполнен Si-ore (4990) — для Fe-ore
-    // остаётся ровно 10. Вместимость считается по зданиям
-    // (calculateWarehouseCapacities), поэтому заполняем ресурсами, не оверрайдом.
+    // остаётся ровно 10. Из пула вычитается только помещённый объём
+    // (docs/31 §7.2.5: непомещённое сырьё НЕ расходует месторождение).
     const p = makePlanet({
       buildingId: 'mine',
-      deposits: [{ elementId: 'Fe-ore', availability: 1.0, quantity: 1000, depth: 1 }],
+      pools: [{ oreId: 'Fe-ore', initialQuantity: 1000, remainingQuantity: 1000, availability: 1.0, tier: 'profile' }],
     });
     p.resources['Si-ore'] = 4990; // другой тип руды занимает склад
-    runTicks(p, 200); // 1.15/тик → 10 ед. доберутся за ~9 тиков, дальше стоп
+    runTicks(p, 200); // бюджет 1.15/тик → 10 ед. доберутся за ~9 тиков, дальше стоп
     expect(p.resources['Fe-ore']).toBeCloseTo(10, 8);
-    expect(depositQty(p, 'Fe-ore')).toBeCloseTo(990, 8); // ровно 10 добыто, ничего не исчезло
-    const qBefore = depositQty(p, 'Fe-ore');
-    runTicks(p, 50); // склад полон — залежь дальше не тратится
-    expect(depositQty(p, 'Fe-ore')).toBeCloseTo(qBefore, 8);
+    expect(poolQty(p, 'Fe-ore')).toBeCloseTo(990, 8); // ровно 10 добыто, ничего не исчезло
+    const qBefore = poolQty(p, 'Fe-ore');
+    runTicks(p, 50); // склад полон — пул дальше не тратится
+    expect(poolQty(p, 'Fe-ore')).toBeCloseTo(qBefore, 8);
     expect(p.resources['Fe-ore']).toBeCloseTo(10, 8);
   });
 
   test('17. Полный газовый склад: экстрактор останавливается на пределе (2000)', () => {
-    const p = makePlanet({ buildingId: 'gas_extractor', atmosphere: 'standard', deposits: [] });
+    const p = makePlanet({ buildingId: 'gas_extractor', atmosphere: 'standard', pools: [] });
     runTicks(p, 3000); // 4 газа × 1.38/тик — газовый склад 2000 заполнится
     expect(getUsedCapacityByType(p, 'gas')).toBeLessThanOrEqual(2000 + 1e-6);
   });
@@ -310,33 +348,34 @@ describe('D1: модификаторы добычи (уровень, местн�
 /** Все 10 руд спека-пула ultra_rare (docs/31 §2, вариант «а»). */
 const SPEC_ULTRA_ORES = ULTRA_RARE_ELEMENTS.map(el => `${el}-ore`);
 
-describe('R-36: буровая установка — глубокие руды пулов RARE/ULTRA_RARE', () => {
+describe('R-36: буровая установка — глубокие руды планетарных пулов', () => {
   test('R1. Негатив: mine/quarry/colony_hub НЕ добывают НИ ОДНУ из 10 спековых руд', () => {
-    const deposits: ResourceDeposit[] = SPEC_ULTRA_ORES.map(oreId => ({
-      elementId: oreId, availability: 0.5, quantity: 1000, depth: 5,
+    const pools: PlanetOrePool[] = SPEC_ULTRA_ORES.map(oreId => ({
+      oreId, initialQuantity: 1000, remainingQuantity: 1000, availability: 0.5, tier: 'ultra_rare' as const,
     }));
     for (const b of ['mine', 'quarry', 'colony_hub'] as const) {
-      const p = makePlanet({ buildingId: b, deposits });
+      const p = makePlanet({ buildingId: b, pools });
       runTicks(p, 10);
       for (const oreId of SPEC_ULTRA_ORES) {
         expect(p.resources[oreId], `${b} / ${oreId}`).toBeUndefined();
       }
-      // залежи не тратятся
-      for (const d of p.hexes[0]!.deposits) expect(d.quantity, `${b} / ${d.elementId}`).toBe(1000);
+      // пулы не тратятся
+      for (const pool of p.orePools) expect(pool.remainingQuantity, `${b} / ${pool.oreId}`).toBe(1000);
     }
   });
 
-  test('R2. Позитив: буровая L10 извлекает КАЖДУЮ из 10 спековых руд (глубина 5)', () => {
+  test('R2. Позитив: буровая L10 извлекает КАЖДУЮ из 10 спековых руд', () => {
     for (const oreId of SPEC_ULTRA_ORES) {
       const p = makePlanet({
         buildingId: 'drilling_rig',
         buildingLevel: 10, // покрывает все minSourceLevel ≤ 8 (Re)
-        deposits: [{ elementId: oreId, availability: 0.5, quantity: 1000, depth: 5 }],
+        pools: [{ oreId, initialQuantity: 1000, remainingQuantity: 1000, availability: 0.5, tier: 'ultra_rare' }],
       });
       runTicks(p, 10);
-      // L10: 0.5 × (1 + 10×0.15) × 1 (plains без бонуса) = 1.25/тик → 12.5 за 10 тиков
-      expect(p.resources[oreId], `${oreId} добыта буровой`).toBeCloseTo(12.5, 5);
-      expect(depositQty(p, oreId), `${oreId} залежь истощается`).toBeCloseTo(1000 - 12.5, 5);
+      // Единый бюджет L10: 1.0 × (1 + 10×0.15) = 2.5/тик (одиночный кандидат —
+      // весь бюджет) → 25 за 10 тиков. availability — вес, не множитель бюджета.
+      expect(p.resources[oreId], `${oreId} добыта буровой`).toBeCloseTo(25, 5);
+      expect(poolQty(p, oreId), `${oreId} пул истощается`).toBeCloseTo(1000 - 25, 5);
     }
   });
 
@@ -345,40 +384,32 @@ describe('R-36: буровая установка — глубокие руды 
       const p = makePlanet({
         buildingId: 'drilling_rig',
         buildingLevel: level,
-        deposits: [{ elementId: 'Re-ore', availability: 0.5, quantity: 1000, depth: 5 }],
+        pools: [{ oreId: 'Re-ore', initialQuantity: 1000, remainingQuantity: 1000, availability: 0.5, tier: 'ultra_rare' }],
       });
       runTicks(p, 10);
       if (extracted) {
-        // L8: 0.5 × (1 + 8×0.15) = 1.1/тик
-        expect(p.resources['Re-ore'], `L${level}`).toBeCloseTo(11, 5);
+        // L8: бюджет 1.0 × (1 + 8×0.15) = 2.2/тик
+        expect(p.resources['Re-ore'], `L${level}`).toBeCloseTo(22, 5);
       } else {
         expect(p.resources['Re-ore'], `L${level}`).toBeUndefined();
-        expect(depositQty(p, 'Re-ore'), `L${level}: залежь не тратится`).toBe(1000);
+        expect(poolQty(p, 'Re-ore'), `L${level}: пул не тратится`).toBe(1000);
       }
     }
   });
 
   test('R4. Порог глубины: Y-ore (minSourceLevel 2) — L1 нет, L2 да; Ba-ore (1) — L1 да', () => {
-    const y1 = makePlanet({
-      buildingId: 'drilling_rig', buildingLevel: 1,
-      deposits: [{ elementId: 'Y-ore', availability: 0.5, quantity: 1000, depth: 4 }],
-    });
+    const mkPool = (oreId: string): PlanetOrePool[] => [{ oreId, initialQuantity: 1000, remainingQuantity: 1000, availability: 0.5, tier: 'ultra_rare' }];
+    const y1 = makePlanet({ buildingId: 'drilling_rig', buildingLevel: 1, pools: mkPool('Y-ore') });
     runTicks(y1, 10);
     expect(y1.resources['Y-ore'], 'Y-ore L1 (порог 2)').toBeUndefined();
 
-    const y2 = makePlanet({
-      buildingId: 'drilling_rig', buildingLevel: 2,
-      deposits: [{ elementId: 'Y-ore', availability: 0.5, quantity: 1000, depth: 4 }],
-    });
+    const y2 = makePlanet({ buildingId: 'drilling_rig', buildingLevel: 2, pools: mkPool('Y-ore') });
     runTicks(y2, 10);
-    expect(y2.resources['Y-ore'], 'Y-ore L2').toBeCloseTo(10 * 0.5 * 1.3, 5);
+    expect(y2.resources['Y-ore'], 'Y-ore L2').toBeCloseTo(10 * 1.3, 5);
 
-    const ba1 = makePlanet({
-      buildingId: 'drilling_rig', buildingLevel: 1,
-      deposits: [{ elementId: 'Ba-ore', availability: 0.5, quantity: 1000, depth: 4 }],
-    });
+    const ba1 = makePlanet({ buildingId: 'drilling_rig', buildingLevel: 1, pools: mkPool('Ba-ore') });
     runTicks(ba1, 10);
-    expect(ba1.resources['Ba-ore'], 'Ba-ore L1 (порог 1)').toBeCloseTo(10 * 0.5 * 1.15, 5);
+    expect(ba1.resources['Ba-ore'], 'Ba-ore L1 (порог 1)').toBeCloseTo(10 * 1.15, 5);
   });
 
   test('R5. Каталог: drilling_rig — extraction/surface/10 уровней; у ВСЕХ deep_ore порог ≤ 10', () => {
@@ -406,17 +437,19 @@ describe('R-36: буровая установка — глубокие руды 
   });
 
   test('R7. Синергия mining_cluster: две смежные буровые +10% (тот же подтип)', () => {
-    const deposits: ResourceDeposit[] = [
-      { elementId: 'Zr-ore', availability: 0.5, quantity: 100000, depth: 4 },
-    ];
-    const solo = makePlanet({ buildingId: 'drilling_rig', buildingLevel: 3, deposits });
-    const paired = makePlanet({
-      buildingId: 'drilling_rig', buildingLevel: 3, deposits,
+    // Сравнение пар (смежные vs удалённые) — обе буровые добывают один пул.
+    const soloPool = (): PlanetOrePool[] => [{ oreId: 'Zr-ore', initialQuantity: 1000000, remainingQuantity: 1000000, availability: 0.5, tier: 'ultra_rare' }];
+    const adjacent = makePlanet({
+      buildingId: 'drilling_rig', buildingLevel: 3, pools: soloPool(),
       extraHexes: [{ buildingId: 'drilling_rig', buildingLevel: 1, coord: { q: 1, r: 0 } }],
     });
-    runTicks(solo, 10);
-    runTicks(paired, 10);
+    const apart = makePlanet({
+      buildingId: 'drilling_rig', buildingLevel: 3, pools: soloPool(),
+      extraHexes: [{ buildingId: 'drilling_rig', buildingLevel: 1, coord: { q: 5, r: 0 } }],
+    });
+    runTicks(adjacent, 10);
+    runTicks(apart, 10);
     // Zr-ore minSourceLevel 3 — L3 обеих буровых проходит порог
-    expect(paired.resources['Zr-ore']! / solo.resources['Zr-ore']!).toBeCloseTo(1.1, 5);
+    expect(adjacent.resources['Zr-ore']! / apart.resources['Zr-ore']!).toBeCloseTo(1.1, 5);
   });
 });

@@ -67,7 +67,7 @@ import {
   ensureReservesForResources,
   canStoreResource,
 } from '@/data/warehouse';
-import { compactSaveV3, expandSaveV3 } from '@/lib/save-format-v3';
+import { compactSaveV4, expandSaveV4 } from '@/lib/save-format-v4';
 import type {
   Planet,
   EntityId,
@@ -87,7 +87,6 @@ function makePlanet(): Planet {
     terrain: 'plains' as HexTerrain,
     buildingId: null,
     buildingLevel: 0,
-    deposits: [],
   }));
   return {
     id: 'ws-planet' as EntityId,
@@ -109,6 +108,7 @@ function makePlanet(): Planet {
     orbitSlots: [],
     moons: [],
     resourceDeposits: [],
+    orePools: [],
     // Стартовые ресурсы: постройки/апгрейды/специализации + реактор +
     // сырьё. Сумма processed-запаса обязана быть < PROCESSED_WAREHOUSE_BASE
     // (3500) — иначе getRecipeRunability даёт no-output-space.
@@ -629,7 +629,7 @@ describe('C11 — R-27: автоматическое производство п
 describe('C12 — save/load: цехи, партии, очереди', () => {
   beforeEach(() => queues.clear());
 
-  test('Раундтрип compactSaveV3↔expandSaveV3: специализации/партии/прогресс без потерь', () => {
+  test('Раундтрип compactSaveV4↔expandSaveV4: специализации/партии/прогресс без потерь', () => {
     const planet = makePlanet();
     buildWorkshopBuilding(planet, 0, 'construction_materials_plant', 3);
     expect(specializeWorkshop(planet, 0, 2, 'smelt_si').success).toBe(true);
@@ -658,8 +658,8 @@ describe('C12 — save/load: цехи, партии, очереди', () => {
       galaxy: { systems: [{ planets: [planet] }] },
       productionQueues: Array.from(queues.entries()),
     };
-    const packed = compactSaveV3(payload as never) as unknown as Record<string, unknown>;
-    const unpacked = expandSaveV3(JSON.parse(JSON.stringify(packed))) as never as typeof payload;
+    const packed = compactSaveV4(payload as never) as unknown as Record<string, unknown>;
+    const unpacked = expandSaveV4(JSON.parse(JSON.stringify(packed))) as never as typeof payload;
     const loadedPlanet = (unpacked.galaxy.systems[0].planets[0]) as Planet;
     const loadedQueue = new Map(unpacked.productionQueues as [string, ProductionQueue][]);
 

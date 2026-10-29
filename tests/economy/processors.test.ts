@@ -66,6 +66,7 @@ function makePlanet(): Planet {
     atmosphericSlots: [],
     orbitSlots: [],
     resourceDeposits: [],
+    orePools: [],
     resources: {},
     energyBalance: 1000,
     owner: 'player',
@@ -78,7 +79,6 @@ function makeHex(buildingId: string, level: number): HexCell {
     terrain: 'plains',
     buildingId,
     buildingLevel: level,
-    deposits: [],
   };
 }
 

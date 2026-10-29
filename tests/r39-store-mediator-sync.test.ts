@@ -511,17 +511,17 @@ describe('R-39: Store→Mediator sync (P0-1) + GameLoop lifecycle + saveGame rac
     expect(useGameStore.getState().buildOnHex(planetId, freeHexIndex, 'mine')).toBe(true);
   });
 
-  test('T13. loadGame(fmt≠3) и zod-невалидный: false, активная игра не тронута', async () => {
+  test('T13. loadGame(fmt≠4) и zod-невалидный: false, активная игра не тронута', async () => {
     const { planetId } = startGameAndColonize();
     const before = useGameStore.getState().gameState!;
 
-    // fmt≠3 — компактный формат с чужой версией
-    const bogus = JSON.stringify({ fmt: 2, galaxy: {}, time: { tick: 0 } });
+    // fmt≠4 — старый формат (гекс-залежи, ORE-POOLS: без миграции — docs/31 §12)
+    const bogus = JSON.stringify({ fmt: 3, galaxy: {}, time: { tick: 0 } });
     restoreFetch = stubFetch(() => jsonResponse({ state: bogus }));
     expect(await useGameStore.getState().loadGame('old-fmt')).toBe(false);
 
-    // zod-невалидный: fmt=3, но структура сломана
-    const broken = JSON.stringify({ fmt: 3, galaxy: { systems: 'not-an-array' } });
+    // zod-невалидный: fmt=4, но структура сломана
+    const broken = JSON.stringify({ fmt: 4, galaxy: { systems: 'not-an-array' } });
     restoreFetch = stubFetch(() => jsonResponse({ state: broken }));
     expect(await useGameStore.getState().loadGame('broken')).toBe(false);
 
@@ -529,38 +529,26 @@ describe('R-39: Store→Mediator sync (P0-1) + GameLoop lifecycle + saveGame rac
     expect(getGameMediator().getGameState()).toBe(before);
   });
 
-  // ─── 8. Наблюдаемость миграций (loadWarnings) ────────────────────────
+  // ─── 8. Наблюдаемость повреждённых сейвов (loadWarnings) ─────────────
 
-  test('T14. loadGame со старым материализованным телом (отказ миграции NaN): предупреждение в store.loadWarnings', async () => {
+  test('T14. loadGame с повреждённым индексом словаря пулов (op): отказ загрузки, активная игра не тронута', async () => {
     const { planetId } = startGameAndColonize();
+    const before = useGameStore.getState().gameState!;
 
-    // Строим «старый сейв»: сериализуем текущий, сносим sv/dv у
-    // материализованного тела (миграция понадобится) и портим quantity
-    // (агрегация даст NaN → отказ, тело сохранит прежний свод).
+    // Строим повреждённый v4-сейв: кортеж пулов op ссылается ЗА пределы
+    // словаря id (строгий контракт v4: явная ошибка — R-31/ORE-POOLS,
+    // никакой молчаливой порчи данных).
     const raw = JSON.parse(serializeGameState(useGameStore.getState().gameState!)) as Record<string, any>;
-    let dmBody: Record<string, any> | null = null;
-    const scan = (bodies: any[]) => {
-      for (const b of bodies) {
-        if (b.dm === 1) { dmBody = b; break; }
-        if (Array.isArray(b.moons)) scan(b.moons);
-      }
-    };
-    scan(raw.galaxy.systems.flatMap((s: any) => s.planets));
-    expect(dmBody).not.toBeNull();
-    delete (dmBody as any).sv;
-    delete (dmBody as any).dv;
-    // портим числовые данные первого непустого гекса → NaN
-    const hexWithDeps = (dmBody as any).hexes.find((h: any) => (h.deposits?.length ?? 0) > 0);
-    (hexWithDeps.deposits[0] as unknown[])[2] = 'oops-not-a-number';
+    const sys0 = raw.galaxy.systems[0];
+    const p0 = (sys0.planets as any[]).find((p: any) => Array.isArray(p.op) && p.op.length > 0)
+      ?? (sys0.planets as any[])[0];
+    (p0.op as unknown[][])[0]![0] = 999999; // индекс вне dict
 
     restoreFetch = stubFetch(() => jsonResponse({ state: JSON.stringify(raw) }));
-    expect(await useGameStore.getState().loadGame('failing-migration')).toBe(true);
+    expect(await useGameStore.getState().loadGame('corrupt-op')).toBe(false);
 
-    // Наблюдаемость (R-39): отказ виден в store, не только в console
-    const warnings = useGameStore.getState().loadWarnings;
-    expect(warnings.some((w) => w.includes('R-38') && w.includes('отказ'))).toBe(true);
-    expect(warnings.some((w) => w.includes(planetId))).toBe(true);
-    // Загрузка всё равно успешна: игра жива
+    // Активная игра не тронута (отказ загрузки не портит состояние)
+    expect(useGameStore.getState().gameState).toBe(before);
     expect(planetById(useGameStore.getState().gameState!, planetId)).toBeDefined();
   });
 

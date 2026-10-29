@@ -259,27 +259,27 @@ describe('Task 36 C2: жизнь (docs §2.5 + G-01/G-09/G-10/G-11)', () => {
 });
 
 describe('Task 36 C2: гекс-сетки и слоты', () => {
-  test('планеты: hexes.length = сетка размера (grids.json), ГГ = 0; R-29 — залежи стёрты', () => {
+  test('планеты: hexes.length = сетка размера (grids.json), ГГ = 0; ORE-POOLS — пулы без гекс-залежей', () => {
     for (const p of corpus.planets) {
       const expected = p.type === 'gas_giant' ? 0 : SIZE_HEX_COUNT[p.size];
       expect(p.hexes.length, `${p.name} (${p.size}): ${p.hexes.length} гексов ≠ ${expected}`).toBe(expected);
-      for (const h of p.hexes) {
-        expect(h.deposits.length, `${p.name} гекс (${h.coord.q},${h.coord.r}): залежи не стёрты (R-29)`).toBe(0);
+      // ORE-POOLS (docs/31 §10.4): пулы ⟺ есть поверхность (у ГГ коровых пулов нет);
+      // пулы сгенерированы напрямую (remaining = initial), гекс-залежей не существует.
+      expect(p.orePools.length > 0, `${p.name}: пулы при ${p.hexes.length} гексах`).toBe(p.hexes.length > 0);
+      for (const pool of p.orePools) {
+        expect(pool.remainingQuantity, `${p.name}/${pool.oreId}: remaining=initial при генерации`).toBe(pool.initialQuantity);
+        expect(pool.availability, `${p.name}/${pool.oreId}: availability 0..1`).toBeGreaterThanOrEqual(0);
+        expect(pool.availability, `${p.name}/${pool.oreId}: availability 0..1 (верх)`).toBeLessThanOrEqual(1);
       }
-      // R-29: RNG-снимок залежей ⟺ есть поверхность
-      expect(p.depositRngState !== null, `${p.name}: depositRngState при ${p.hexes.length} гексах`).toBe(p.hexes.length > 0);
-      expect(p.depositsMaterialized, `${p.name}: materialized=false при генерации`).toBe(false);
     }
   });
 
-  test('луны: малые сетки 7/19 (grids.json); залежи стёрты', () => {
+  test('луны: малые сетки 7/19 (grids.json); планетарные пулы сгенерированы', () => {
     for (const m of corpus.moons) {
       const expected = MOON_SIZE_HEX_COUNT[m.size];
       expect(expected, `луна ${m.id}: размер ${m.size} — малая сетка`).toBeDefined();
       expect(m.hexes.length, `луна ${m.id} (${m.size}): ${m.hexes.length} ≠ ${expected}`).toBe(expected!);
-      for (const h of m.hexes) {
-        expect(h.deposits.length, `луна ${m.id} гекс (${h.coord.q},${h.coord.r}): залежи не стёрты (R-29)`).toBe(0);
-      }
+      expect(m.orePools.length > 0, `луна ${m.id}: пулы сгенерированы`).toBe(true);
     }
   });
 

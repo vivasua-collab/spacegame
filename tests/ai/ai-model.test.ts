@@ -62,6 +62,7 @@ function planet(id: string, systemId: string, owner: string | null): Planet {
     orbitSlots: [],
     moons: [],
     resourceDeposits: [],
+    orePools: [],
     resources: {},
     energyBalance: 0,
     owner,

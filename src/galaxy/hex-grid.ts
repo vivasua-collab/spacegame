@@ -43,8 +43,7 @@ export function generateHexGrid(
       terrain,
       buildingId: null,
       buildingLevel: 0,
-      deposits: [],
-    };
+      };
   });
 }
 

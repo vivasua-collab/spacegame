@@ -39,7 +39,6 @@ function makePlanet(): Planet {
       terrain: 'plains' as const,
       buildingId: null,
       buildingLevel: 0,
-      deposits: [],
     })),
     atmosphericSlots: [],
     orbitSlots: Array.from({ length: 3 }, (_, i) => ({
@@ -49,6 +48,7 @@ function makePlanet(): Planet {
     })),
     moons: [],
     resourceDeposits: [],
+    orePools: [],
     // Достаточно ресурсов для mine (Fe5,Si3), synthesizer (Fe6,Si4,Cu2),
     // refinery (Fe12,Si8,Cu4), spaceport (Fe50,Si30,Al20,Ti10).
     resources: { Fe: 200, Si: 100, Al: 50, Cu: 30, Ti: 20, C: 10 },

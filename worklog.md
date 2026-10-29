@@ -4410,3 +4410,26 @@ Stage Summary:
   на богатом гексе») по каноническим документам — чисто.
 - Отчёт в issue #24 приложен (точный diff + чеклист проверки); задача готова
   к приёмке владельцем. Следующая — ORE-POOLS-RUNTIME-01 / Issue #25.
+
+## Task 71 — 2026-10-29 — ORE-POOLS-RUNTIME-01 / Issue #25 (runtime)
+
+- Планетарные пулы сырьевых руд — единственный runtime-источник конечной
+  геологической руды; per-hex deposits и материализация удалены целиком.
+- Генерация напрямую в пулы (ORE_POOLS_GENERATION_VERSION=1; surfaceScale =
+  не-океанские гексы; ГГ/океанские миры без пулов); свод-превью — чистая
+  производная без RNG; единый бюджет здания за тик; планировщик
+  «минимумы → пропорциональный излишек» (минимум fulfillment → priority →
+  oreId; доли ∝ remaining × availability; детерминизм сортировкой oreId);
+  colony_hub — 0.5×baseRate поверхностных пулов, гекс по территории;
+  сейвы v4 (op-кортежи полной точности; старые форматы отклоняются явно);
+  UI «Планетарные пулы руды» + удаление гекс-индикаторов залежей.
+- Гейты: bun test 993/993 (+28 новых: планировщик ORE-POOL-01…12 ×17,
+  save-v4 ×11; переписаны deposits/unique-resource-contract/extraction-roles/
+  r40-stage2/save-migration-order/r39), lint 0/42 Δ0, tsc 63 (baseline 75),
+  validate:all ok, bus-map drift=0, git diff --check чисто.
+- Браузерный E2E (agent-browser, dev :3000): колонизация → секция пулов
+  (роли источников, % истощения) → шахта x15 → пул Al истощён 16%,
+  склад растёт, минимумы выравниваются фазой A; консоль чистая.
+  Скриншоты checkpoints/ore-pools-e2e*.png; чекпоинт
+  checkpoints/10_29_ore_pools_runtime_issue25.md.
+- playtest-checklist §4.2: ORE-POOL-01…09 pending (ручная приёмка владельца).

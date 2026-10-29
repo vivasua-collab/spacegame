@@ -390,6 +390,10 @@ function ResourcesTabContent({ planet }: { planet: Planet }) {
           Содержимое склада → кнопка «Склад» сверху
         </div>
 
+        {/* ORE-POOLS-DOCS-01: планетарные пулы сырьевых руд — авторитетный
+            остаток недр по ID руды (НЕ смешивается со складом). */}
+        <OrePoolsSection planet={planet} />
+
         {/* Profile resources */}
         <ResourceSection
           title="Профильные ресурсы"
@@ -416,6 +420,77 @@ function ResourcesTabContent({ planet }: { planet: Planet }) {
       </div>
     </ScrollArea>
   );
+}
+
+/**
+ * Планетарные пулы сырьевых руд (ORE-POOLS-DOCS-01, docs/31 §10.1):
+ * остаток недр / начальный объём, доступность и роль источника — по ID
+ * сырой руды. Запас склада (planet.resources) показывается отдельно —
+ * недра и склад НЕ смешиваются (docs/35 §2.2.1).
+ */
+function OrePoolsSection({ planet }: { planet: Planet }) {
+  if (!hasCurrentLookupsSafe() || planet.orePools.length === 0) return null;
+  const lookups = getCurrentLookups();
+
+  const sourceName = (sb: string): string => ({ mine: 'Шахта', quarry: 'Карьер', drilling_rig: 'Буровая', gas_extractor: 'Газ. экстрактор', ice_harvester: 'Ледодобыча' })[sb] ?? sb;
+
+  return (
+    <div>
+      <div className="flex items-center gap-2 mb-1">
+        <Gem className="size-4 text-amber-400" />
+        <span className="text-sm font-semibold text-white">Планетарные пулы руды</span>
+        <Badge className="text-[9px] h-4 px-1 bg-amber-500/20 text-amber-400 border-0">
+          {planet.orePools.length}
+        </Badge>
+      </div>
+      <div className="text-[10px] text-slate-500 mb-2">
+        Остаток в недрах планеты (не склад); добыча из общепланетарных пулов — размещение зданий не ограничено залежами
+      </div>
+      <div className="space-y-1">
+        {planet.orePools.map((pool) => {
+          const resourceInfo = findResourceDisplay(lookups, pool.oreId);
+          const pureId = pool.oreId.replace('-ore', '');
+          const elDef = ELEMENT_MAP.get(pureId);
+          const displayName = resourceInfo?.name ?? (elDef ? `${elDef.name} (руда)` : pool.oreId);
+          const oreDef = lookups.oreMap.get(pool.oreId);
+          const source = oreDef ? `${sourceName(oreDef.sourceBuildingId)}${oreDef.minSourceLevel > 1 ? ` L${oreDef.minSourceLevel}+` : ''}` : '—';
+          const depletion = pool.initialQuantity > 0 ? 1 - pool.remainingQuantity / pool.initialQuantity : 0;
+          const depleted = pool.remainingQuantity <= 0;
+          return (
+            <div
+              key={pool.oreId}
+              className="flex items-center gap-2 px-2 py-1.5 rounded bg-white/[0.03] hover:bg-white/[0.06] transition-colors"
+            >
+              <div className="w-8 h-8 rounded flex items-center justify-center text-[9px] font-bold bg-amber-500/20 text-amber-300 shrink-0 truncate px-0.5">
+                {elDef?.symbol ?? pool.oreId.slice(0, 3)}
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="text-xs text-slate-200 font-medium">{displayName}</div>
+                <div className="text-[9px] text-slate-500">
+                  источник: {source}{depleted ? ' • пул исчерпан' : ` • истощено ${(depletion * 100).toFixed(0)}%`}
+                </div>
+              </div>
+              <div className="text-right shrink-0">
+                <div className="text-xs font-mono text-slate-300">{formatQuantity(pool.remainingQuantity)}</div>
+                <div className="text-[9px] text-slate-500">
+                  из {formatQuantity(pool.initialQuantity)} • дост. {(pool.availability * 100).toFixed(0)}%
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/** Безопасная проверка lookups (UI-хелпер; не бросает на холодном старте). */
+function hasCurrentLookupsSafe(): boolean {
+  try {
+    return getCurrentLookups() !== undefined;
+  } catch {
+    return false;
+  }
 }
 
 function ResourceSection({
@@ -459,13 +534,11 @@ function ResourceSection({
                 <div className="text-xs text-slate-200 font-medium">{elDef.name}</div>
                 <div className="text-[9px] text-slate-500">
                   {CATEGORY_NAMES[elDef.category] ?? elDef.category}
-                  {/* R-37: hexCount=0 — «геологическая оценка с орбиты»:
-                      физических залежей в разведанных гексах НЕТ (атмосферные
-                      газы, полностью океанские миры, ГГ). Пул не обещает
-                      физику, которой нет (контракт «свод = добыча»). */}
-                  {dep.hexCount > 0
-                    ? ` • ${dep.hexCount} гексов`
-                    : ' • геол. оценка'}
+                  {/* ORE-POOLS: estimated — «геологическая оценка с орбиты»:
+                      планетарных пулов у элемента НЕТ (атмосферные газы,
+                      полностью океанские миры, ГГ). Свод не обещает
+                      физику, которой нет (docs/31 §10.2). */}
+                  {dep.estimated ? ' • геол. оценка' : ''}
                 </div>
               </div>
               {/* Quantity */}
@@ -743,16 +816,9 @@ function HexGrid({ hexes, onHexClick, onHexHover, hoveredHexIndex }: HexGridProp
               </>
             )}
 
-            {/* Deposit indicators (small dots) */}
-            {!hex.buildingId && hex.deposits.length > 0 && (
-              <circle
-                cx={pos.x + HEX_SIZE * 0.3}
-                cy={pos.y + HEX_SIZE * 0.25}
-                r={2}
-                fill="#fbbf24"
-                opacity={0.5}
-              />
-            )}
+            {/* ORE-POOLS-DOCS-01: индикаторы залежей на гексах удалены —
+                запасы руд планетарные (Planet.orePools), гекс показывает
+                только здание/террейн. */}
           </g>
         );
       })}
@@ -814,71 +880,9 @@ function HexInfoCard({ hex, starLuminosity, orbitalRadius }: {
           </div>
         )}
 
-        {hex.deposits.length > 0 && (
-          <div className="space-y-1">
-            <div className="text-[10px] text-slate-500 uppercase">Залежи</div>
-            {hex.deposits.map((dep, i) => {
-              // Ищем отображаемое название руды/соединения через BakedGalaxyModel
-              const lookups = getCurrentLookups();
-              const resourceInfo = findResourceDisplay(lookups, dep.elementId);
-              const displayName = resourceInfo?.name
-                ?? (() => {
-                  // Fallback: strip '-ore' suffix, lookup element
-                  const pureId = dep.elementId.replace('-ore', '');
-                  const elDef = ELEMENT_MAP.get(pureId);
-                  return elDef ? `${elDef.name} (руда)` : dep.elementId;
-                })();
-              // Показываем формулу руды если есть
-              const formula = resourceInfo?.formula ?? '';
-
-              // Ищем данные о цепочке переработки
-              const oreDef = lookups.oreMap.get(dep.elementId);
-              const atmoDef = lookups.atmosphericMap.get(dep.elementId);
-              const iceDef = lookups.iceMap.get(dep.elementId);
-              const contained = oreDef?.containedElements
-                ?? atmoDef?.containedElements
-                ?? iceDef?.containedElements
-                ?? null;
-              const processingBuilding = oreDef?.processingBuildingId
-                ?? atmoDef?.processingBuildingId
-                ?? iceDef?.processingBuildingId
-                ?? null;
-              const buildingNames: Record<string, string> = {
-                processor: 'Переработчик',
-                refinery: 'Очистительный комплекс',
-              };
-
-              return (
-                <div key={i} className="space-y-0.5">
-                  <div className="flex justify-between text-xs text-slate-400">
-                    <span className="truncate" title={formula ? `${displayName} (${formula})` : displayName}>
-                      {displayName}
-                    </span>
-                    <span className="font-mono shrink-0 ml-2">{Math.floor(dep.quantity)}</span>
-                  </div>
-                  {/* Цепочка переработки */}
-                  {contained && contained.length > 0 && (
-                    <div className="text-[10px] text-slate-500 pl-2">
-                      {processingBuilding && (
-                        <span className="text-slate-600">→ {buildingNames[processingBuilding] ?? processingBuilding} → </span>
-                      )}
-                      {contained.map((ce, j) => {
-                        const elName = ELEMENT_MAP.get(ce.elementId)?.name ?? ce.elementId;
-                        return (
-                          <span key={j}>
-                            {j > 0 && <span className="text-slate-700"> + </span>}
-                            <span className="text-emerald-600">{elName}</span>
-                            <span className="text-slate-700">×{ce.yield}</span>
-                          </span>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
+        {/* ORE-POOLS-DOCS-01: список «залежи этого гекса» удалён — руды
+            планетарные (см. вкладку «Ресурсы» → «Планетарные пулы руды»);
+            гекс описывает местность и здание. */}
       </CardContent>
     </Card>
   );

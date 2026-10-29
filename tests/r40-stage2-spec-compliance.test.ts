@@ -48,7 +48,7 @@ import {
   deserializeGameState,
 } from '@/stores/game-store';
 import { getGameMediator, resetGameMediator } from '@/core/game-mediator';
-import type { Planet, HexCell, HexTerrain, EntityId, ProductionQueue, ResourceDeposit, GameState } from '@/core/types';
+import type { Planet, HexCell, HexTerrain, EntityId, ProductionQueue, PlanetOrePool, GameState } from '@/core/types';
 
 // Baked lookups — детерминированный seed (как в extraction-roles).
 setCurrentLookups(bakeGalaxyModel(42, ELEMENTS));
@@ -60,7 +60,7 @@ interface MkOptions {
   buildingLevel?: number;
   terrain?: HexTerrain;
   planetType?: string;
-  deposits?: ResourceDeposit[];
+  pools?: PlanetOrePool[];
   extraHexes?: Array<{ buildingId: string | null; buildingLevel?: number; terrain?: HexTerrain; coord: { q: number; r: number } }>;
   resources?: Record<string, number>;
 }
@@ -72,7 +72,6 @@ function makePlanet(opts: MkOptions = {}): Planet {
     terrain: opts.terrain ?? ('plains' as HexTerrain),
     buildingId: opts.buildingId ?? null,
     buildingLevel: opts.buildingId ? (opts.buildingLevel ?? 1) : 0,
-    deposits: opts.deposits ?? [],
   }];
   for (const extra of opts.extraHexes ?? []) {
     hexes.push({
@@ -80,7 +79,6 @@ function makePlanet(opts: MkOptions = {}): Planet {
       terrain: extra.terrain ?? ('plains' as HexTerrain),
       buildingId: extra.buildingId,
       buildingLevel: extra.buildingId ? (extra.buildingLevel ?? 1) : 0,
-      deposits: [],
     });
   }
   return {
@@ -103,6 +101,7 @@ function makePlanet(opts: MkOptions = {}): Planet {
     orbitSlots: [],
     moons: [],
     resourceDeposits: [],
+    orePools: opts.pools ?? [],
     resources: opts.resources ?? { Fe: 500, Ti: 100, Cu: 100 },
     warehouse: createDefaultWarehouse(),
     energyBalance: 1000,
@@ -115,100 +114,110 @@ function runTicks(planet: Planet, ticks: number): void {
   for (let i = 0; i < ticks; i++) processEconomyTick([planet], queues);
 }
 
-/** Глубинная залежь буровой (ultra-пул, порог ≤ 10 покрывается L10). */
-function deepDeposit(availability = 0.5, quantity = 1000): ResourceDeposit[] {
-  return [{ elementId: 'Zr-ore', availability, quantity, depth: 5 }];
+/** Глубинный пул буровой (ORE-POOLS; порог ≤ 10 покрывается L10). */
+function deepPool(availability = 0.5, quantity = 1000): PlanetOrePool[] {
+  return [{ oreId: 'Zr-ore', initialQuantity: quantity, remainingQuantity: quantity, availability, tier: 'ultra_rare' }];
+}
+
+/** Одиночный поверхностный пул Fe (для шахтных проверок). */
+function fePool(availability = 0.5, quantity = 1000): PlanetOrePool[] {
+  return [{ oreId: 'Fe-ore', initialQuantity: quantity, remainingQuantity: quantity, availability, tier: 'profile' }];
 }
 
 // ============ G: геологические коэффициенты (§2.4) ============
 
-describe('R-40 G: геологическая активность планеты (docs/40-buildings.md §2.4)', () => {
-  // Буровая L10 на plains (terrainMult = 1), availability 0.5:
-  // per tick = 0.5 × (1 + 10×0.15) × geo = 1.25 × geo; за 10 тиков ×10.
+describe('R-40 G: геологическая активность планеты (docs/40-buildings.md §2.4, ORE-POOLS)', () => {
+  // Буровая L10 на plains, ОДИНОКИЙ пул (весь бюджет): per tick =
+  // 1.0 × (1 + 10×0.15) × geo = 2.5 × geo; за 10 тиков ×10.
+  // availability — вес планировщика, НЕ множитель бюджета (docs/35 §2.2).
 
   test('G1. Вулканическая ×1.5 (спека §2.4)', () => {
-    const p = makePlanet({ planetType: 'volcanic', buildingId: 'drilling_rig', buildingLevel: 10, deposits: deepDeposit() });
+    const p = makePlanet({ planetType: 'volcanic', buildingId: 'drilling_rig', buildingLevel: 10, pools: deepPool() });
     runTicks(p, 10);
-    expect(p.resources['Zr-ore']).toBeCloseTo(10 * 1.25 * 1.5, 5); // 18.75
+    expect(p.resources['Zr-ore']).toBeCloseTo(10 * 2.5 * 1.5, 5); // 37.5
   });
 
   test('G2. Скалистая ×1.0 — формула прежняя (базовая линия)', () => {
-    const p = makePlanet({ planetType: 'rocky', buildingId: 'drilling_rig', buildingLevel: 10, deposits: deepDeposit() });
+    const p = makePlanet({ planetType: 'rocky', buildingId: 'drilling_rig', buildingLevel: 10, pools: deepPool() });
     runTicks(p, 10);
-    expect(p.resources['Zr-ore']).toBeCloseTo(12.5, 5); // идентично R-36 R2
+    expect(p.resources['Zr-ore']).toBeCloseTo(25, 5); // идентично R-36 R2
   });
 
   test('G3. Океаническая ×0.8 (спека §2.4)', () => {
-    const p = makePlanet({ planetType: 'oceanic', buildingId: 'drilling_rig', buildingLevel: 10, deposits: deepDeposit() });
+    const p = makePlanet({ planetType: 'oceanic', buildingId: 'drilling_rig', buildingLevel: 10, pools: deepPool() });
     runTicks(p, 10);
-    expect(p.resources['Zr-ore']).toBeCloseTo(10 * 1.25 * 0.8, 5); // 10.0
+    expect(p.resources['Zr-ore']).toBeCloseTo(10 * 2.5 * 0.8, 5); // 20.0
   });
 
   test('G4. Пустынная ×1.1 (спека §2.4)', () => {
-    const p = makePlanet({ planetType: 'desert', buildingId: 'drilling_rig', buildingLevel: 10, deposits: deepDeposit() });
+    const p = makePlanet({ planetType: 'desert', buildingId: 'drilling_rig', buildingLevel: 10, pools: deepPool() });
     runTicks(p, 10);
-    expect(p.resources['Zr-ore']).toBeCloseTo(10 * 1.25 * 1.1, 5); // 13.75
+    expect(p.resources['Zr-ore']).toBeCloseTo(10 * 2.5 * 1.1, 5); // 27.5
   });
 
   test('G5. Ледяная ×0.6 (спека §2.4)', () => {
-    const p = makePlanet({ planetType: 'ice', buildingId: 'drilling_rig', buildingLevel: 10, deposits: deepDeposit() });
+    const p = makePlanet({ planetType: 'ice', buildingId: 'drilling_rig', buildingLevel: 10, pools: deepPool() });
     runTicks(p, 10);
-    expect(p.resources['Zr-ore']).toBeCloseTo(10 * 1.25 * 0.6, 5); // 7.5
+    expect(p.resources['Zr-ore']).toBeCloseTo(10 * 2.5 * 0.6, 5); // 15.0
   });
 
   test('G6. Dwarf — ×1.0 (вне спеки §2.4, явное предположение R-40: нейтральные условия)', () => {
-    const p = makePlanet({ planetType: 'dwarf', buildingId: 'drilling_rig', buildingLevel: 10, deposits: deepDeposit() });
+    const p = makePlanet({ planetType: 'dwarf', buildingId: 'drilling_rig', buildingLevel: 10, pools: deepPool() });
     runTicks(p, 10);
-    expect(p.resources['Zr-ore']).toBeCloseTo(12.5, 5);
+    expect(p.resources['Zr-ore']).toBeCloseTo(25, 5);
     expect(GEOLOGICAL_ACTIVITY_BONUS.dwarf).toBe(1.0);
   });
 
   test('G7. НЕ удваивается: шахта на вулканической планете — формула БЕЗ гео-множителя', () => {
-    const p = makePlanet({ planetType: 'volcanic', buildingId: 'mine', buildingLevel: 1, deposits: [
-      { elementId: 'Fe-ore', availability: 0.5, quantity: 1000, depth: 1 },
-    ] });
+    const p = makePlanet({ planetType: 'volcanic', buildingId: 'mine', buildingLevel: 1, pools: fePool() });
     runTicks(p, 10);
-    // Точно как на rocky (существующий тест D1.1) — гео НЕ применяется к шахте.
-    expect(p.resources['Fe-ore']).toBeCloseTo(10 * 0.5 * 1.15, 5); // 5.75
+    // Точно как на rocky — гео НЕ применяется к шахте; бюджет 1.15/тик.
+    expect(p.resources['Fe-ore']).toBeCloseTo(10 * 1.15, 5);
   });
 
   test('G8. Геология × террейн каталога: оба применены РОВНО ОДИН РАЗ (volcanic + mountains)', () => {
-    const p = makePlanet({ planetType: 'volcanic', terrain: 'mountains', buildingId: 'drilling_rig', buildingLevel: 10, deposits: deepDeposit() });
+    const p = makePlanet({ planetType: 'volcanic', terrain: 'mountains', buildingId: 'drilling_rig', buildingLevel: 10, pools: deepPool() });
     runTicks(p, 10);
-    // 0.5 × 2.5 × 1.3 (terrainMult каталога, один раз) × 1.5 (гео, один раз)
-    expect(p.resources['Zr-ore']).toBeCloseTo(10 * 1.25 * 1.3 * 1.5, 5); // 24.375
+    // 1.0 × 2.5 × 1.3 (terrainMult каталога, один раз) × 1.5 (гео, один раз)
+    expect(p.resources['Zr-ore']).toBeCloseTo(10 * 2.5 * 1.3 * 1.5, 5); // 48.75
   });
 
   test('G9. Геология × синергия mining_cluster: гео не удваивается между буровыми', () => {
-    const solo = makePlanet({ planetType: 'volcanic', buildingId: 'drilling_rig', buildingLevel: 3, deposits: deepDeposit(0.5, 100000) });
-    const paired = makePlanet({
-      planetType: 'volcanic', buildingId: 'drilling_rig', buildingLevel: 3, deposits: deepDeposit(0.5, 100000),
+    // ORE-POOLS: обе буровые добывают ОДИН пул → сравнение ПАР (смежные vs удалённые).
+    const solo = makePlanet({ planetType: 'volcanic', buildingId: 'drilling_rig', buildingLevel: 3, pools: deepPool(0.5, 1000000) });
+    const adjacent = makePlanet({
+      planetType: 'volcanic', buildingId: 'drilling_rig', buildingLevel: 3, pools: deepPool(0.5, 1000000),
       extraHexes: [{ buildingId: 'drilling_rig', buildingLevel: 1, coord: { q: 1, r: 0 } }],
     });
+    const apart = makePlanet({
+      planetType: 'volcanic', buildingId: 'drilling_rig', buildingLevel: 3, pools: deepPool(0.5, 1000000),
+      extraHexes: [{ buildingId: 'drilling_rig', buildingLevel: 1, coord: { q: 5, r: 0 } }],
+    });
     runTicks(solo, 10);
-    runTicks(paired, 10);
-    // solo: 0.5 × (1+3×0.15) × 1.5 = 1.0875/тик
-    expect(solo.resources['Zr-ore']).toBeCloseTo(10 * 0.5 * 1.45 * 1.5, 5);
-    // paired/solo = 1.1 (синергия одна; гео одинакова в обоих — НЕ стекается второй раз)
-    expect(paired.resources['Zr-ore']! / solo.resources['Zr-ore']!).toBeCloseTo(1.1, 5);
+    runTicks(adjacent, 10);
+    runTicks(apart, 10);
+    // solo: 1.0 × (1+3×0.15) × 1.5 = 2.175/тик (одиночный кандидат — весь бюджет)
+    expect(solo.resources['Zr-ore']).toBeCloseTo(10 * 1.45 * 1.5, 5);
+    // adjacent/apart = 1.1 (синергия одна; гео одинакова в обоих — НЕ стекается второй раз)
+    expect(adjacent.resources['Zr-ore']! / apart.resources['Zr-ore']!).toBeCloseTo(1.1, 5);
   });
 
-  test('G10. Истощение: добыча ограничена количеством залежи, сверх не добывается; пустая залежь молчит', () => {
-    // Малая залежь: 3 единицы. rocky L10: 1.25/тик → тик3 добирает остаток 0.5.
-    const small = makePlanet({ planetType: 'rocky', buildingId: 'drilling_rig', buildingLevel: 10, deposits: deepDeposit(0.5, 3) });
+  test('G10. Истощение: добыча ограничена остатком пула, сверх не добывается; пустой пул молчит', () => {
+    // Малый пул: 3 единицы. rocky L10: бюджет 2.5/тик → тик2 добирает остаток 0.5.
+    const small = makePlanet({ planetType: 'rocky', buildingId: 'drilling_rig', buildingLevel: 10, pools: deepPool(0.5, 3) });
     runTicks(small, 5);
-    expect(small.resources['Zr-ore']).toBeCloseTo(3, 5); // РОВНО количество залежи
-    expect(small.hexes[0]!.deposits[0]!.quantity).toBe(0);
-    // Дальнейшие тики ничего не добавляют
+    expect(small.resources['Zr-ore']).toBeCloseTo(3, 5); // РОВНО остаток пула
+    expect(small.orePools[0]!.remainingQuantity).toBe(0);
+    // Дальнейшие тики ничего не добавляют (пул исключён из кандидатов)
     const before = small.resources['Zr-ore'];
     runTicks(small, 5);
     expect(small.resources['Zr-ore']).toBe(before);
 
-    // Уже истощённая залежь (qty 0) — тики не меняют ничего
-    const empty = makePlanet({ planetType: 'volcanic', buildingId: 'drilling_rig', buildingLevel: 10, deposits: deepDeposit(0.5, 0) });
+    // Уже пустой пул (remaining 0) — тики не меняют ничего
+    const empty = makePlanet({ planetType: 'volcanic', buildingId: 'drilling_rig', buildingLevel: 10, pools: deepPool(0.5, 0) });
     runTicks(empty, 10);
     expect(empty.resources['Zr-ore']).toBeUndefined();
-    expect(empty.hexes[0]!.deposits[0]!.quantity).toBe(0);
+    expect(empty.orePools[0]!.remainingQuantity).toBe(0);
   });
 });
 
@@ -313,18 +322,17 @@ describe('R-40 T: тех-гейт deep_drilling → drilling_rig (единый r
     expect(loadedHex.buildingLevel).toBe(5);
     expect(loaded.researchState.researched['deep_drilling'] ?? 0).toBe(0);
 
-    // Добыча продолжается после загрузки (гео-множитель — на лету, без миграции)
+    // Добыча продолжается после загрузки (планетарные пулы — ORE-POOLS;
+    // sum(extracted) ≤ исходного остатка пулов)
     const queues = new Map<EntityId, ProductionQueue>();
-    const qtyBefore = hexBefore.deposits.reduce((s, d) => s + d.quantity, 0);
+    const qtyBefore = planet.orePools.reduce((s, d) => s + d.remainingQuantity, 0);
     processEconomyTick([loadedPlanet], queues);
-    const qtyAfter = loadedPlanet.hexes[hexIdx]!.deposits.reduce((s, d) => s + d.quantity, 0);
+    const qtyAfter = loadedPlanet.orePools.reduce((s, d) => s + d.remainingQuantity, 0);
     const extractedSum = qtyBefore - qtyAfter;
-    // На выбранном гексе может не быть deep-залежей — берём сумму; если залежи
-    // есть, добыча строго положительна (все гео-множители > 0)
-    const hadDeepDeposit = hexBefore.deposits.some((d) => d.elementId.endsWith('-ore') && isDeepOre(d.elementId));
-    if (hadDeepDeposit) {
-      expect(extractedSum).toBeGreaterThan(0);
-    }
+    // Пулы есть у любой не-ГГ планеты; добыча строго положительна
+    // (все гео-множители > 0, есть совместимые пулы)
+    expect(loadedPlanet.orePools.length).toBeGreaterThan(0);
+    expect(extractedSum).toBeGreaterThan(0);
 
     // Апгрейд старой буровой — НОВОЕ действие: гейтится до изучения теха
     expect(upgradeBuilding(loadedPlanet, hexIdx, loaded.researchState.researched)).toBe(false);

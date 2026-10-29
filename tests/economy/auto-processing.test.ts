@@ -47,7 +47,6 @@ function makePlanet(resources: Record<string, number> = {}): Planet {
     terrain: 'plains' as HexTerrain,
     buildingId: null,
     buildingLevel: 0,
-    deposits: [],
   }));
   // Стартовые стройресурсы (стоимость постройки завода {Fe:8, Si:5, C:3}).
   return {
@@ -70,6 +69,7 @@ function makePlanet(resources: Record<string, number> = {}): Planet {
     orbitSlots: [],
     moons: [],
     resourceDeposits: [],
+    orePools: [],
     resources: { Fe: 200, Si: 100, C: 100, Ti: 50, U: 10, ...resources },
     warehouse: createDefaultWarehouse(),
     energyBalance: 1000,
