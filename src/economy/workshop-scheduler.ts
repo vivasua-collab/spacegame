@@ -23,11 +23,18 @@
  *      c) авто-кандидаты R-27 (только строительный пул): оставшиеся
  *         свободные цехи заполняются кандидатами Fe → Si → Al → C → Cu → Ti.
  *   3. Runnable-гейты при назначении: входы (для авто-кандидатов — над
- *      резервным полем склада), энергия ≥ per-tick, место под ВСЕ выходы.
- *      Недоступная задача не занимает цех и не блокирует доступные.
- *   4. Завершение: списание входов, начисление выходов (формулы по цеху-
- *      исполнителю), repeat → хвост пула, без repeat — удаление. Одна задача
- *      никогда не исполняется двумя цехами.
+ *      резервным полем склада), энергия ≥ per-tick, место под ВСЕ выходы —
+ *      с вычетом БРОНЕЙ ТИКА (входы/энергия/место, занятые идущими и
+ *      назначаемыми в этом же тике партиями) и по ФАКТИЧЕСКОМУ выходу
+ *      цеха-исполнителя (§3.0.2), не по номиналу рецепта. Недоступная
+ *      задача не занимает цех и не блокирует доступные.
+ *   4. Завершение: повторная проверка (входы целиком; место под фактический
+ *      выход) — при нехватке партия НЕ удерживает цех: авто-партия
+ *      снимается, player-партия возвращается в очередь с сохранённым
+ *      прогрессом (0 тиков работы — досдача при появлении ресурсов), цех
+ *      освобождается немедленно. Успешный расчёт: списание входов, начисление
+ *      выходов (формулы по цеху-исполнителю), repeat → хвост пула, без
+ *      repeat — удаление. Одна задача никогда не исполняется двумя цехами.
  *
  * Энергия: партия тратит recipe.energyCost / total за тик (внутритиковый
  * бюджет — последующие партии того же тика видят остаток; сброс в конце тика
@@ -116,7 +123,7 @@ export function collectWorkshops(planet: Planet, buildingId: string): WorkshopRe
   return refs;
 }
 
-// ─── Runnable-гейты (чистые; используются планировщиком и UI) ────────────
+// ─── Runnable-гейты (чистые; используются UI; планировщик — checkBatchStart)
 
 export type RunabilityReason =
   | 'ok'
@@ -170,6 +177,158 @@ export function getRecipeRunability(
   }
 
   return 'ok';
+}
+
+// ─── Брони на тик (P1-1/P1-2, аудит Issue #23; §3.0.5 v3.0.1) ──────────
+
+/** Потребности партии — тип рецепта из каталога. */
+type RecipeNeeds = NonNullable<ReturnType<typeof RECIPE_MAP.get>>;
+
+/**
+ * Аккумулятор броней на текущий тик: входы, энергия и место под выходы,
+ * уже занятые идущими партиями и партиями, назначаемыми в этом же тике.
+ *
+ * Создаётся диспетчером на планету (createPoolReservations) и передаётся
+ * обоим пулам: брони видят и construction-, и processor-партии (общие
+ * входы/энергия/склад планеты). Пересчитывается из состояния партий каждый
+ * тик — в сейв не сохраняется. Завершение/снятие партии освобождает броню.
+ */
+export interface PoolReservations {
+  /** inputId → зарезервировано полными входами партии */
+  inputs: Map<string, number>;
+  /** Σ per-tick энергии зарезервированных партий */
+  energyPerTick: number;
+  /** тип склада → Σ фактического выхода партий (с yieldMult исполнителя) */
+  outputsByType: Map<string, number>;
+}
+
+/** yieldMult цеха для рецепта (совпадение профиля — §3.0.2). */
+function workshopYield(def: BuildingDef, workshop: WorkshopState, recipeId: string): number {
+  return calculateWorkshopOutputMultiplier(def, workshop, recipeId).yieldMult;
+}
+
+/** Per-tick стоимость энергии партии. */
+function perTickEnergy(recipe: RecipeNeeds): number {
+  return recipe.energyCost / Math.max(1, recipe.time);
+}
+
+/** Зарезервировать потребности партии (входы + per-tick энергия + выход). */
+function reserveNeeds(res: PoolReservations, recipe: RecipeNeeds, yieldMult: number): void {
+  for (const [id, amount] of Object.entries(recipe.inputs)) {
+    res.inputs.set(id, (res.inputs.get(id) ?? 0) + amount);
+  }
+  res.energyPerTick += perTickEnergy(recipe);
+  for (const [rid, amount] of Object.entries(recipe.outputs)) {
+    if ((amount ?? 0) <= 0) continue;
+    const whType = getWarehouseType(rid);
+    res.outputsByType.set(whType, (res.outputsByType.get(whType) ?? 0) + (amount ?? 0) * yieldMult);
+  }
+}
+
+/** Освободить бронь партии (симметрично reserveNeeds). */
+function releaseNeeds(res: PoolReservations, recipe: RecipeNeeds, yieldMult: number): void {
+  for (const [id, amount] of Object.entries(recipe.inputs)) {
+    const left = (res.inputs.get(id) ?? 0) - amount;
+    if (left > 1e-9) res.inputs.set(id, left);
+    else res.inputs.delete(id);
+  }
+  res.energyPerTick = Math.max(0, res.energyPerTick - perTickEnergy(recipe));
+  for (const [rid, amount] of Object.entries(recipe.outputs)) {
+    if ((amount ?? 0) <= 0) continue;
+    const whType = getWarehouseType(rid);
+    const left = (res.outputsByType.get(whType) ?? 0) - (amount ?? 0) * yieldMult;
+    if (left > 1e-9) res.outputsByType.set(whType, left);
+    else res.outputsByType.delete(whType);
+  }
+}
+
+/**
+ * Создать аккумулятор броней на тик, засеяв его ВСЕМИ идущими партиями
+ * обоих цеховых пулов планеты (входы целиком; per-tick энергия; фактический
+ * выход по формулам цеха-исполнителя). Диспетчер создаёт ОДИН аккумулятор
+ * на планету и передаёт обоим вызовам runWorkshopPoolTick.
+ */
+export function createPoolReservations(planet: Planet): PoolReservations {
+  const res: PoolReservations = { inputs: new Map(), energyPerTick: 0, outputsByType: new Map() };
+  for (const buildingId of Object.keys(WORKSHOP_BUILDING_POOLS)) {
+    const poolDef = BUILDING_MAP.get(buildingId);
+    if (!poolDef?.usesWorkshops) continue;
+    for (const ref of collectWorkshops(planet, buildingId)) {
+      const batch = ref.workshop.currentBatch;
+      if (!batch) continue;
+      const recipe = RECIPE_MAP.get(batch.recipeId);
+      if (!recipe) continue;
+      reserveNeeds(res, recipe, workshopYield(poolDef, ref.workshop, recipe.id));
+    }
+  }
+  return res;
+}
+
+/**
+ * P1-1/P1-2: авторитетный гейт НАЗНАЧЕНИЯ для конкретного цеха — как
+ * getRecipeRunability, но (а) с вычетом броней тика, (б) место под выходы —
+ * по ФАКТИЧЕСКОМУ выходу этого цеха (yieldMult §3.0.2), не по номиналу.
+ * Планировщик принимает решения только здесь; getRecipeRunability (номинал,
+ * без броней) остаётся UI-подсказкой (production-queue.tsx).
+ */
+function checkBatchStart(
+  planet: Planet,
+  def: BuildingDef,
+  ref: WorkshopRef,
+  res: PoolReservations,
+  recipeId: string,
+  options: { aboveReserveFloor?: boolean } = {},
+): RunabilityReason {
+  const recipe = RECIPE_MAP.get(recipeId);
+  if (!recipe) return 'recipe-not-found';
+
+  // Входы (минус брони идущих/назначаемых партий; авто — над резервным полем)
+  for (const [inputId, amount] of Object.entries(recipe.inputs)) {
+    const stock = planet.resources[inputId] ?? 0;
+    const floor = options.aboveReserveFloor
+      ? planet.warehouse?.reserves[inputId]?.minimum ?? 0
+      : 0;
+    const reserved = res.inputs.get(inputId) ?? 0;
+    if (stock - floor - reserved < amount - 1e-9) return 'no-inputs';
+  }
+
+  // Энергия (per-tick, минус брони)
+  const perTick = perTickEnergy(recipe);
+  if (recipe.energyCost > 0 && planet.energyBalance - res.energyPerTick < perTick - 1e-9) {
+    return 'no-energy';
+  }
+
+  // Место под ВСЕ выходы вместе: фактический выход ЭТОГО цеха + брони
+  // других партий (по типам склада — как в getRecipeRunability).
+  // Условие: доступное место покрывает ВСЁ (брони других + эта партия),
+  // т.е. storable == total; сравнение с combined пропускало партиям
+  // «на двоих» одно и то же место (P1-2).
+  const yieldMult = workshopYield(def, ref.workshop, recipeId);
+  const desiredByType = new Map<string, number>();
+  for (const [outputId, outputAmount] of Object.entries(recipe.outputs)) {
+    if ((outputAmount ?? 0) <= 0) continue;
+    const whType = getWarehouseType(outputId);
+    const combined = (desiredByType.get(whType) ?? 0) + (outputAmount ?? 0) * yieldMult;
+    desiredByType.set(whType, combined);
+    const total = combined + (res.outputsByType.get(whType) ?? 0);
+    const storable = canStoreResource(planet, outputId, total);
+    if (storable < total - 1e-9) return 'no-output-space';
+  }
+  return 'ok';
+}
+
+/** P1-2: место под фактический выход партии (yieldMult цеха), по типам. */
+function canDepositOutputs(planet: Planet, recipe: RecipeNeeds, yieldMult: number): boolean {
+  const desiredByType = new Map<string, number>();
+  for (const [outputId, outputAmount] of Object.entries(recipe.outputs)) {
+    if ((outputAmount ?? 0) <= 0) continue;
+    const whType = getWarehouseType(outputId);
+    const combined = (desiredByType.get(whType) ?? 0) + (outputAmount ?? 0) * yieldMult;
+    desiredByType.set(whType, combined);
+    const storable = canStoreResource(planet, outputId, combined);
+    if (storable < combined - 1e-9) return false;
+  }
+  return true;
 }
 
 // ─── Выход партии по цеху-исполнителю ────────────────────────────────────
@@ -240,18 +399,24 @@ export function findWorkshopExecutor(
 
 /**
  * Один тик пула цехового здания buildingId на планете.
- * Вызывается из engine.processProductionQueue (диспетчер).
+ * Вызывается из engine.processProductionQueue (диспетчер). Диспетчер
+ * передаёт общий аккумулятор броней sharedRes (P1-1/P1-2): оба пула видят
+ * входы/энергию/место, занятые партиями другого пула.
  */
 export function runWorkshopPoolTick(
   planet: Planet,
   queues: Map<EntityId, ProductionQueue>,
   buildingId: string,
+  sharedRes?: PoolReservations,
 ): void {
   const def = BUILDING_MAP.get(buildingId);
   if (!def?.usesWorkshops) return;
 
   const workshops = collectWorkshops(planet, buildingId);
   if (workshops.length === 0) return;
+
+  // Брони на тик (P1-1/P1-2): без общей — создаём свою (изоляция пула).
+  const res = sharedRes ?? createPoolReservations(planet);
 
   const queue = queues.get(planet.id);
   const recipeOf = (recipeId: string) => RECIPE_MAP.get(recipeId);
@@ -276,15 +441,19 @@ export function runWorkshopPoolTick(
 
   const free = workshops.filter((ref) => !ref.workshop.currentBatch);
   if (free.length > 0) {
-    // Доступные (runnable) player-задачи, ещё не исполняемые другим цехом.
-    const runnableItems: ProductionItem[] = [];
+    // Кандидаты-player: элементы пула, ещё не исполняемые другим цехом.
+    // Финальное решение принимает checkBatchStart ПЕРЕД каждым назначением
+    // (брони тика + фактический выход цеха); плейн-гейт getRecipeRunability
+    // здесь больше не используется — независимая проверка пропускала
+    // партиям «на двоих» одни и те же входы/место (P1-1/P1-2).
+    const candidates: ProductionItem[] = [];
     for (const item of poolItems) {
       if (executingIds.has(item.id)) continue;
-      if (getRecipeRunability(planet, item.recipeId) === 'ok') runnableItems.push(item);
+      candidates.push(item);
     }
     const claimed = new Set<string>();
 
-    // A1: специалист-приоритет — профильная runnable-задача (player-FIFO),
+    // A1: специалист-приоритет — профильная задача (player-FIFO),
     // затем профильный авто-кандидат (только строительный пул).
     const stillFree: WorkshopRef[] = [];
     for (const ref of free) {
@@ -294,42 +463,51 @@ export function runWorkshopPoolTick(
         continue;
       }
       let assigned = false;
-      for (const item of runnableItems) {
-        if (claimed.has(item.id)) continue;
-        if (item.recipeId === profile) {
-          startPlayerBatch(planet.id, ref, item);
-          claimed.add(item.id);
-          assigned = true;
-          break;
-        }
+      const profileItem = candidates.find(
+        (it) => !claimed.has(it.id) && it.recipeId === profile,
+      );
+      if (
+        profileItem
+        && checkBatchStart(planet, def, ref, res, profileItem.recipeId) === 'ok'
+      ) {
+        startPlayerBatch(planet.id, ref, profileItem, def, res);
+        claimed.add(profileItem.id);
+        assigned = true;
       }
-      if (!assigned && buildingId === 'construction_materials_plant') {
-        if (autoCandidateRunnable(planet, profile)) {
-          startAutoBatch(planet.id, ref, profile);
-          assigned = true;
-        }
+      if (
+        !assigned
+        && buildingId === 'construction_materials_plant'
+        && checkBatchStart(planet, def, ref, res, profile, { aboveReserveFloor: true }) === 'ok'
+      ) {
+        startAutoBatch(planet.id, ref, profile, def, res);
+        assigned = true;
       }
       if (!assigned) stillFree.push(ref);
     }
 
-    // A2: общий FIFO — оставшиеся runnable-задачи свободным цехам
-    // (обычные + специалисты без доступной профильной задачи).
-    const remaining = runnableItems.filter((it) => !claimed.has(it.id));
-    const n = Math.min(stillFree.length, remaining.length);
-    for (let i = 0; i < n; i++) {
-      const ref = stillFree[i];
-      const item = remaining[i];
-      if (ref && item) startPlayerBatch(planet.id, ref, item);
+    // A2: общий FIFO — оставшиеся задачи свободным цехам (обычные +
+    // специалисты без доступной профильной задачи). Для каждого цеха —
+    // первая подошедшая задача по порядку очереди; гейт per-цех.
+    const remaining = candidates.filter((it) => !claimed.has(it.id));
+    for (const ref of stillFree) {
+      for (let k = 0; k < remaining.length; k++) {
+        const item = remaining[k];
+        if (item && checkBatchStart(planet, def, ref, res, item.recipeId) === 'ok') {
+          startPlayerBatch(planet.id, ref, item, def, res);
+          remaining.splice(k, 1);
+          break;
+        }
+      }
     }
-    const freeAfterFifo = stillFree.slice(n);
+    const freeAfterFifo = stillFree.filter((ref) => !ref.workshop.currentBatch);
 
     // A3: авто-кандидаты R-27 — только строительный пул; порядок
     // Fe → Si → Al → C → Cu → Ti; по одной партии на свободный цех.
     if (buildingId === 'construction_materials_plant') {
       for (const ref of freeAfterFifo) {
         for (const recipeId of BASE_CONSTRUCTION_RECIPE_IDS) {
-          if (autoCandidateRunnable(planet, recipeId)) {
-            startAutoBatch(planet.id, ref, recipeId);
+          if (checkBatchStart(planet, def, ref, res, recipeId, { aboveReserveFloor: true }) === 'ok') {
+            startAutoBatch(planet.id, ref, recipeId, def, res);
             break;
           }
         }
@@ -368,22 +546,36 @@ export function runWorkshopPoolTick(
 
     if (batch.progress > 0) continue;
 
-    // ── Завершение партии ────────────────────────────────────────────
+    // ── Завершение партии (P1-1/P1-2: безопасный расчёт) ────────────
+    // Повторная проверка ПЕРЕД списанием/начислением: входы целиком +
+    // место под фактический выход (с yieldMult цеха, по типам склада).
+    // Партия, которой не хватило входов/места, НЕ удерживает цех и не
+    // блокирует другие задачи (§3.0.5 п.4 v3.0.1).
+    const { yieldMult, purity } = calculateWorkshopOutputMultiplier(def, ref.workshop, recipe.id);
     const canConsume = Object.entries(recipe.inputs).every(
       ([rid, amount]) => (planet.resources[rid] ?? 0) >= amount - 1e-9,
     );
-    if (!canConsume) {
-      // Входы исчезли к моменту завершения (параллельная партия забрала):
-      // player-партия стоит на progress=0, удерживая цех, до появления
-      // входов; авто-партия снимается (заказа нет — нечего сохранять).
+    const canDeposit = canDepositOutputs(planet, recipe, yieldMult);
+    if (!canConsume || !canDeposit) {
+      // Входы/место исчезли к моменту завершения (параллельная партия
+      // забрала). Авто-партия снимается; player-партия возвращается в
+      // очередь с сохранённым прогрессом (работа сделана: progress=0,
+      // досдача в тот же тик, когда ресурсы/место появятся) — без потерь
+      // и дублей. Цех освобождается НЕМЕДЛЕННО.
+      releaseNeeds(res, recipe, yieldMult);
       if (batch.queueItemId == null) {
         ref.workshop.currentBatch = undefined;
       } else {
         batch.progress = 0;
         syncItemProgress(queue, batch);
+        ref.workshop.currentBatch = undefined;
       }
       continue;
     }
+
+    // Расчёт идёт напрямую со склада — бронь этой партии освобождается
+    // (следующие решения того же тика видят фактические остатки).
+    releaseNeeds(res, recipe, yieldMult);
 
     // Списание входов
     for (const [rid, amount] of Object.entries(recipe.inputs)) {
@@ -392,8 +584,8 @@ export function runWorkshopPoolTick(
       else delete planet.resources[rid];
     }
 
-    // Начисление выходов по цеху-исполнителю (средневзвешенная чистота).
-    const { yieldMult, purity } = calculateWorkshopOutputMultiplier(def, ref.workshop, recipe.id);
+    // Начисление выходов по цеху-исполнителю (средневзвешенная чистота;
+    // yieldMult/purity вынесены в проверку завершения выше).
     if (!planet.resourcePurity) planet.resourcePurity = {};
     for (const [rid, amount] of Object.entries(recipe.outputs)) {
       const produced = (amount ?? 0) * yieldMult;
@@ -426,19 +618,23 @@ export function runWorkshopPoolTick(
 
 // ─── Внутренние хелперы ───────────────────────────────────────────────────
 
-/** Авто-кандидат R-27 runnable: входы над резервным полем + энергия + место. */
-function autoCandidateRunnable(planet: Planet, recipeId: string): boolean {
-  return getRecipeRunability(planet, recipeId, { aboveReserveFloor: true }) === 'ok';
-}
-
-/** Начать player-партию на цехе (прогресс берётся из элемента очереди). */
-function startPlayerBatch(planetId: EntityId, ref: WorkshopRef, item: ProductionItem): void {
+/** Начать player-партию на цехе (прогресс берётся из элемента очереди) и
+ *  зарезервировать её потребности на тик (P1-1/P1-2). */
+function startPlayerBatch(
+  planetId: EntityId,
+  ref: WorkshopRef,
+  item: ProductionItem,
+  def: BuildingDef,
+  res: PoolReservations,
+): void {
   ref.workshop.currentBatch = {
     queueItemId: item.id,
     recipeId: item.recipeId,
     progress: item.progress,
     total: item.total,
   };
+  const recipe = RECIPE_MAP.get(item.recipeId);
+  if (recipe) reserveNeeds(res, recipe, workshopYield(def, ref.workshop, item.recipeId));
   gameBus.emit('economy:workshop-batch-started', {
     planetId,
     buildingId: ref.buildingId,
@@ -449,8 +645,15 @@ function startPlayerBatch(planetId: EntityId, ref: WorkshopRef, item: Production
   });
 }
 
-/** Начать системную авто-партию R-27 (без элемента очереди). */
-function startAutoBatch(planetId: EntityId, ref: WorkshopRef, recipeId: string): void {
+/** Начать системную авто-партию R-27 (без элемента очереди) и
+ *  зарезервировать её потребности на тик (P1-1/P1-2). */
+function startAutoBatch(
+  planetId: EntityId,
+  ref: WorkshopRef,
+  recipeId: string,
+  def: BuildingDef,
+  res: PoolReservations,
+): void {
   const recipe = RECIPE_MAP.get(recipeId);
   if (!recipe) return;
   ref.workshop.currentBatch = {
@@ -459,6 +662,7 @@ function startAutoBatch(planetId: EntityId, ref: WorkshopRef, recipeId: string):
     progress: recipe.time,
     total: recipe.time,
   };
+  reserveNeeds(res, recipe, workshopYield(def, ref.workshop, recipeId));
   gameBus.emit('economy:workshop-batch-started', {
     planetId,
     buildingId: ref.buildingId,

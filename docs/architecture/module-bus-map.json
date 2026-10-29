@@ -225,112 +225,112 @@
     },
     {
       "file": "src/economy/engine.ts",
-      "line": 440,
+      "line": 441,
       "event": "economy:production-cancelled",
       "publisher": "processProductionQueue",
       "receiver": "gameBus"
     },
     {
       "file": "src/economy/engine.ts",
-      "line": 520,
+      "line": 521,
       "event": "economy:production-complete",
       "publisher": "processProductionQueue",
       "receiver": "gameBus"
     },
     {
       "file": "src/economy/engine.ts",
-      "line": 523,
+      "line": 524,
       "event": "economy:production-cancelled",
       "publisher": "processProductionQueue",
       "receiver": "gameBus"
     },
     {
       "file": "src/economy/engine.ts",
-      "line": 1027,
+      "line": 1028,
       "event": "economy:building-constructed",
       "publisher": "buildOnHex",
       "receiver": "gameBus"
     },
     {
       "file": "src/economy/engine.ts",
-      "line": 1087,
+      "line": 1088,
       "event": "economy:building-constructed",
       "publisher": "buildOnAtmosphereSlot",
       "receiver": "gameBus"
     },
     {
       "file": "src/economy/engine.ts",
-      "line": 1141,
+      "line": 1142,
       "event": "economy:building-constructed",
       "publisher": "buildOnOrbitSlot",
       "receiver": "gameBus"
     },
     {
       "file": "src/economy/engine.ts",
-      "line": 1194,
+      "line": 1195,
       "event": "economy:building-upgraded",
       "publisher": "upgradeBuilding",
       "receiver": "gameBus"
     },
     {
       "file": "src/economy/engine.ts",
-      "line": 1311,
+      "line": 1312,
       "event": "economy:building-downgraded",
       "publisher": "downgradeBuilding",
       "receiver": "gameBus"
     },
     {
       "file": "src/economy/engine.ts",
-      "line": 1393,
+      "line": 1394,
       "event": "economy:building-demolished",
       "publisher": "demolishBuilding",
       "receiver": "gameBus"
     },
     {
       "file": "src/economy/engine.ts",
-      "line": 1530,
+      "line": 1531,
       "event": "economy:building-specialized",
       "publisher": "specializeWorkshop",
       "receiver": "gameBus"
     },
     {
       "file": "src/economy/engine.ts",
-      "line": 1594,
+      "line": 1595,
       "event": "economy:specialization-upgraded",
       "publisher": "upgradeWorkshopSpecialization",
       "receiver": "gameBus"
     },
     {
       "file": "src/economy/engine.ts",
-      "line": 1651,
+      "line": 1652,
       "event": "economy:production-cancelled",
       "publisher": "cancelProduction",
       "receiver": "gameBus"
     },
     {
       "file": "src/economy/engine.ts",
-      "line": 1747,
+      "line": 1748,
       "event": "economy:planet-colonized",
       "publisher": "colonizePlanet",
       "receiver": "gameBus"
     },
     {
       "file": "src/economy/workshop-scheduler.ts",
-      "line": 410,
+      "line": 602,
       "event": "economy:production-complete",
       "publisher": "runWorkshopPoolTick",
       "receiver": "gameBus"
     },
     {
       "file": "src/economy/workshop-scheduler.ts",
-      "line": 442,
+      "line": 638,
       "event": "economy:workshop-batch-started",
       "publisher": "startPlayerBatch",
       "receiver": "gameBus"
     },
     {
       "file": "src/economy/workshop-scheduler.ts",
-      "line": 462,
+      "line": 666,
       "event": "economy:workshop-batch-started",
       "publisher": "startAutoBatch",
       "receiver": "gameBus"
@@ -2230,21 +2230,21 @@
       "productionEmitters": [
         {
           "file": "src/economy/engine.ts",
-          "line": 1027,
+          "line": 1028,
           "event": "economy:building-constructed",
           "publisher": "buildOnHex",
           "receiver": "gameBus"
         },
         {
           "file": "src/economy/engine.ts",
-          "line": 1087,
+          "line": 1088,
           "event": "economy:building-constructed",
           "publisher": "buildOnAtmosphereSlot",
           "receiver": "gameBus"
         },
         {
           "file": "src/economy/engine.ts",
-          "line": 1141,
+          "line": 1142,
           "event": "economy:building-constructed",
           "publisher": "buildOnOrbitSlot",
           "receiver": "gameBus"
@@ -2285,7 +2285,7 @@
       "productionEmitters": [
         {
           "file": "src/economy/engine.ts",
-          "line": 1393,
+          "line": 1394,
           "event": "economy:building-demolished",
           "publisher": "demolishBuilding",
           "receiver": "gameBus"
@@ -2326,7 +2326,7 @@
       "productionEmitters": [
         {
           "file": "src/economy/engine.ts",
-          "line": 1311,
+          "line": 1312,
           "event": "economy:building-downgraded",
           "publisher": "downgradeBuilding",
           "receiver": "gameBus"
@@ -2369,7 +2369,7 @@
       "productionEmitters": [
         {
           "file": "src/economy/engine.ts",
-          "line": 1530,
+          "line": 1531,
           "event": "economy:building-specialized",
           "publisher": "specializeWorkshop",
           "receiver": "gameBus"
@@ -2397,7 +2397,7 @@
       "productionEmitters": [
         {
           "file": "src/economy/engine.ts",
-          "line": 1194,
+          "line": 1195,
           "event": "economy:building-upgraded",
           "publisher": "upgradeBuilding",
           "receiver": "gameBus"
@@ -2626,7 +2626,7 @@
       "productionEmitters": [
         {
           "file": "src/economy/engine.ts",
-          "line": 1747,
+          "line": 1748,
           "event": "economy:planet-colonized",
           "publisher": "colonizePlanet",
           "receiver": "gameBus"
@@ -2656,21 +2656,21 @@
       "productionEmitters": [
         {
           "file": "src/economy/engine.ts",
-          "line": 440,
+          "line": 441,
           "event": "economy:production-cancelled",
           "publisher": "processProductionQueue",
           "receiver": "gameBus"
         },
         {
           "file": "src/economy/engine.ts",
-          "line": 523,
+          "line": 524,
           "event": "economy:production-cancelled",
           "publisher": "processProductionQueue",
           "receiver": "gameBus"
         },
         {
           "file": "src/economy/engine.ts",
-          "line": 1651,
+          "line": 1652,
           "event": "economy:production-cancelled",
           "publisher": "cancelProduction",
           "receiver": "gameBus"
@@ -2698,14 +2698,14 @@
       "productionEmitters": [
         {
           "file": "src/economy/engine.ts",
-          "line": 520,
+          "line": 521,
           "event": "economy:production-complete",
           "publisher": "processProductionQueue",
           "receiver": "gameBus"
         },
         {
           "file": "src/economy/workshop-scheduler.ts",
-          "line": 410,
+          "line": 602,
           "event": "economy:production-complete",
           "publisher": "runWorkshopPoolTick",
           "receiver": "gameBus"
@@ -2753,7 +2753,7 @@
       "productionEmitters": [
         {
           "file": "src/economy/engine.ts",
-          "line": 1594,
+          "line": 1595,
           "event": "economy:specialization-upgraded",
           "publisher": "upgradeWorkshopSpecialization",
           "receiver": "gameBus"
@@ -2936,14 +2936,14 @@
       "productionEmitters": [
         {
           "file": "src/economy/workshop-scheduler.ts",
-          "line": 442,
+          "line": 638,
           "event": "economy:workshop-batch-started",
           "publisher": "startPlayerBatch",
           "receiver": "gameBus"
         },
         {
           "file": "src/economy/workshop-scheduler.ts",
-          "line": 462,
+          "line": 666,
           "event": "economy:workshop-batch-started",
           "publisher": "startAutoBatch",
           "receiver": "gameBus"

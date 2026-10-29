@@ -16,7 +16,7 @@ import { resolveProcessorCategory } from '@/data/processor-recipe-categories';
 import { materializePlanetDeposits, WATER_DEPOSIT_ID } from '@/galaxy/generate-resources'; // R-29: ленивые залежи
 import { gameBus } from '@/core/typed-event-bus';
 import { getEnergyConsumptionMultiplier, getEnergyGenerationMultiplier, getMiningSpeedMultiplier, getProcessingSpeedMultiplier } from '@/economy/adjacency';
-import { runWorkshopPoolTick } from '@/economy/workshop-scheduler';
+import { runWorkshopPoolTick, createPoolReservations } from '@/economy/workshop-scheduler';
 
 /** Цеховые здания (usesWorkshops) — их очереди обслуживает планировщик пулов. */
 const WORKSHOP_BUILDING_IDS = ['construction_materials_plant', 'processor'] as const;
@@ -401,9 +401,12 @@ function processProductionQueue(planet: Planet, queues: Map<EntityId, Production
     }
   }
 
-  // 1. Цеховые здания → планировщик пулов.
+  // 1. Цеховые здания → планировщик пулов. Один аккумулятор броней на тик
+  //    на планету (P1-1/P1-2, §3.0.5 v3.0.1): оба пула видят входы/энергию/
+  //    место под выходы, занятые партиями другого пула.
+  const sharedReservations = createPoolReservations(planet);
   for (const buildingId of WORKSHOP_BUILDING_IDS) {
-    runWorkshopPoolTick(planet, queues, buildingId);
+    runWorkshopPoolTick(planet, queues, buildingId, sharedReservations);
   }
 
   // 2. Прочие здания → карусель R-26 (по группам).

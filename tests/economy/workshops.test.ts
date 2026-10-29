@@ -28,6 +28,14 @@
  *               вместимости; каждый заказ — отдельные входы.
  *  C12 (п.61)   Save/load: сериализация специализаций/уровней/порядка
  *               очередей/repeat/прогресса без потерь и дублей.
+ *  C13 (P1-1)   Аудит Issue #23 (2026-10-29): две одинаковые партии, для
+ *               которых входов хватает только на одну; входы исчезли к
+ *               завершению — проигравшая НЕ удерживает цех, другие задачи
+ *               идут, заказ возвращается с прогрессом без потерь/дублей.
+ *  C14 (P1-2)   Аудит Issue #23: место под выходы на одну партию из двух
+ *               (включая specialist yield); место занято между назначением
+ *               и завершением — без выхода сверх вместимости, без удержания
+ *               цеха, досдача при появлении места.
  *
  * Run: bun test tests/economy/workshops.test.ts
  */
@@ -51,7 +59,14 @@ import {
 import { setCurrentLookups } from '@/data/baked-lookups';
 import { bakeGalaxyModel } from '@/data/chemistry-generator';
 import { ELEMENTS } from '@/data/elements';
-import { createDefaultWarehouse } from '@/data/warehouse';
+import {
+  createDefaultWarehouse,
+  calculateWarehouseCapacities,
+  getUsedCapacityByType,
+  getReserveDebt,
+  ensureReservesForResources,
+  canStoreResource,
+} from '@/data/warehouse';
 import { compactSaveV3, expandSaveV3 } from '@/lib/save-format-v3';
 import type {
   Planet,
@@ -670,5 +685,222 @@ describe('C12 — save/load: цехи, партии, очереди', () => {
     // Загруженное состояние продолжает работать (тик жив после раундтрипа).
     processEconomyTick([loadedPlanet], loadedQueue);
     expect(collectWorkshops(loadedPlanet, 'construction_materials_plant').length).toBe(3);
+  });
+});
+
+// ─── C13: P1-1 — конкурентные партии не захватывают входы друг друга ───
+
+describe('C13 — P1-1 (аудит): входы на одну партию из двух', () => {
+  beforeEach(() => queues.clear());
+
+  test('Два заказа smelt_fe при Fe-ore=10: назначается ОДНА партия (не две и не авто)', () => {
+    const planet = makePlanet();
+    buildWorkshopBuilding(planet, 0, 'construction_materials_plant', 2);
+    planet.resources['Fe-ore'] = 10; // ровно на ОДНУ партию (10 ед.)
+    const q = queueOf(planet);
+    expect(enqueueProduction(planet, queues, 'smelt_fe', false)).toBe(true);
+    expect(enqueueProduction(planet, queues, 'smelt_fe', false)).toBe(true);
+
+    processEconomyTick([planet], queues);
+    // Ровно один цех занят: второй заказ И авто-кандидат не стартуют —
+    // входов на одну партию (до фикса независимо прошли бы гейт «на двоих»).
+    const busy = collectWorkshops(planet, 'construction_materials_plant')
+      .filter((r) => r.workshop.currentBatch);
+    expect(busy.length).toBe(1);
+    const executing = q.items.filter((it) => findWorkshopExecutor(planet, it.id) !== null);
+    expect(executing.length).toBe(1);
+    const waiting = q.items.find((it) => findWorkshopExecutor(planet, it.id) === null)!;
+    expect(waiting.progress).toBe(waiting.total); // ждёт, не занимая цех
+    expect(planet.resources['Fe-ore']).toBe(10); // не списано до завершения
+
+    // Доходим партию до конца: входы не уходят в минус ни на одном тике.
+    for (let t = 0; t < 4; t++) {
+      processEconomyTick([planet], queues);
+      expect((planet.resources['Fe-ore'] ?? 0)).toBeGreaterThanOrEqual(0);
+    }
+    // Тик 5: первая партия рассчиталась — входы списаны, выходы начислены.
+    const fe0 = 600 - 8 - 10; // стартовые 600 − завод 8 − реактор 10
+    expect(planet.resources['Fe-ore'] ?? 0).toBe(0);
+    expect(planet.resources['Fe']!).toBeCloseTo(fe0 + 7 * 0.75, 3);
+    expect((planet.resources['O'] ?? 0)).toBeCloseTo(3 * 0.75, 3);
+    expect(q.items.length).toBe(1); // второй заказ цел (не потерян, не дублирован)
+
+    // Руда появилась снова → ожидавший заказ досдаётся теми же правилами.
+    planet.resources['Fe-ore'] = 10;
+    for (let t = 0; t < 5; t++) processEconomyTick([planet], queues);
+    expect(q.items.length).toBe(0);
+    expect(planet.resources['Fe-ore'] ?? 0).toBe(0); // ровно два расчёта, без дублей
+    expect(planet.resources['Fe']!).toBeCloseTo(fe0 + 2 * 7 * 0.75, 3);
+    expect((planet.resources['O'] ?? 0)).toBeCloseTo(2 * 3 * 0.75, 3);
+  });
+
+  test('Входы исчезли к завершению: цех освобождается, заказ в очереди с прогрессом, другие идут', () => {
+    const planet = makePlanet();
+    buildWorkshopBuilding(planet, 0, 'construction_materials_plant', 2);
+    planet.resources['Fe-ore'] = 20; // на ДВЕ партии
+    const q = queueOf(planet);
+    enqueueProduction(planet, queues, 'smelt_fe', false);
+    enqueueProduction(planet, queues, 'smelt_fe', false);
+    processEconomyTick([planet], queues);
+    // Обе назначены (входов достаточно на обе — бронь честно делится).
+    expect(collectWorkshops(planet, 'construction_materials_plant')
+      .filter((r) => r.workshop.currentBatch).length).toBe(2);
+
+    // Середина партии: внешний потребитель забирает 10 руды (гонка P1-1).
+    processEconomyTick([planet], queues); // тик 2 (progress 3)
+    planet.resources['Fe-ore'] = (planet.resources['Fe-ore'] ?? 0) - 10;
+    for (let t = 0; t < 3; t++) processEconomyTick([planet], queues); // тики 3–5
+
+    // Тик 5: первая партия рассчиталась; вторая — НЕ удерживает цех (до
+    // фикса висела бы на цехе №2 с progress=0 навсегда, starvation остальных).
+    const feLeft = q.items.filter((i) => i.recipeId === 'smelt_fe');
+    expect(feLeft.length).toBe(1); // первая удалена, вторая цела
+    expect(feLeft[0]!.progress).toBe(0); // прогресс сохранён: работа сделана
+    expect(ws(planet, 0, 1).currentBatch).toBeUndefined();
+    expect(ws(planet, 0, 2).currentBatch).toBeUndefined(); // ← до фикса цех №2 занят
+    expect((planet.resources['Fe-ore'] ?? 0)).toBeGreaterThanOrEqual(0); // без отрицательных
+    const fe0 = 600 - 8 - 10;
+    expect(planet.resources['Fe']!).toBeCloseTo(fe0 + 7 * 0.75, 3); // ровно ОДИН расчёт
+    expect((planet.resources['O'] ?? 0)).toBeCloseTo(3 * 0.75, 3);
+
+    // Доступная задача другого профиля идёт, пока Fe-заказ ждёт входов.
+    planet.resources['Si-ore'] = 100;
+    enqueueProduction(planet, queues, 'smelt_si', false);
+    processEconomyTick([planet], queues);
+    const si = q.items.find((i) => i.recipeId === 'smelt_si')!;
+    expect(findWorkshopExecutor(planet, si.id)).not.toBeNull(); // не starved
+    expect(findWorkshopExecutor(planet, feLeft[0]!.id)).toBeNull(); // ждёт в очереди
+
+    // Входы вернулись → ожидавший заказ досдаётся (бронь не «протекла»).
+    planet.resources['Fe-ore'] = 10;
+    for (let t = 0; t < 6; t++) processEconomyTick([planet], queues);
+    expect(q.items.filter((i) => i.recipeId === 'smelt_fe').length).toBe(0);
+    expect((planet.resources['Fe-ore'] ?? 0)).toBe(0); // ровно два расчёта, без дублей
+    // Fe производится только smelt_fe (smelt_si даёт Si/O) — точный счёт по Fe:
+    expect(planet.resources['Fe']!).toBeCloseTo(fe0 + 2 * 7 * 0.75, 3);
+    // (глобальный O не утверждаем: сюда же legitimately идут партии smelt_si)
+  });
+});
+
+// ─── C14: P1-2 — место под выходы резервируется партиями ─────────────
+
+describe('C14 — P1-2 (аудит): место под выходы на одну партию из двух', () => {
+  beforeEach(() => queues.clear());
+
+  /**
+   * Точно выставить доступное место processed-склада (с точки зрения O):
+   * доливаем Fe так, чтобы canStoreResource(planet,'O',∞) === target.
+   * Резервы создаём заранее (как после первого тика) — долг учитывается.
+   * O сеем ≥ 50: иначе после первого же депозита O ensure создаёт резерв
+   * с минимумом 50, его «долг» выедает место в Fe-проверках и меняет причину
+   * ожидания — тесты должны гейтиться именно МЕСТОМ, а не резервом O.
+   */
+  function tuneProcessedSpace(planet: Planet, target: number): void {
+    if ((planet.resources['O'] ?? 0) < 60) planet.resources['O'] = 60;
+    ensureReservesForResources(planet);
+    const caps = calculateWarehouseCapacities(planet);
+    const used = getUsedCapacityByType(planet, 'processed');
+    const debt = getReserveDebt(planet, 'processed', 'O');
+    const add = caps.processed - debt - target - used;
+    expect(add).toBeGreaterThan(0); // в этих тестах всегда доливаем, не сливаем
+    planet.resources['Fe'] = (planet.resources['Fe'] ?? 0) + add;
+    expect(canStoreResource(planet, 'O', 1e9)).toBeCloseTo(target, 6);
+  }
+
+  test('Специалист L5 + обычный, два заказа: место есть только на ОДНУ (по факту, с yieldMult)', () => {
+    const planet = makePlanet();
+    buildWorkshopBuilding(planet, 0, 'construction_materials_plant', 2);
+    // Цех №1 — специалист smelt_fe L5: yieldMult = 1.08 → выход 7×1.08+3×1.08 = 10.8.
+    expect(specializeWorkshop(planet, 0, 1, 'smelt_fe').success).toBe(true);
+    for (let i = 0; i < 4; i++) {
+      expect(upgradeWorkshopSpecialization(planet, 0, 1).success).toBe(true);
+    }
+    expect(ws(planet, 0, 1).specializationLevel).toBe(5);
+
+    // Окно 12: специалист 10.8 ≤ 12 ✓; 10.8 + обычная 7.5 = 18.3 > 12 ✗;
+    // даже две обычных 15 > 12 ✗. Место гейтит именно НАЗНАЧЕНИЕ.
+    tuneProcessedSpace(planet, 12);
+    planet.resources['Fe-ore'] = 1000; // входов достаточно — гейтит только место
+    const feBase = planet.resources['Fe']!;
+    const oBase = planet.resources['O'] ?? 0; // сеяно tuneProcessedSpace (≥ 50)
+    const q = queueOf(planet);
+    enqueueProduction(planet, queues, 'smelt_fe', false);
+    enqueueProduction(planet, queues, 'smelt_fe', false);
+
+    processEconomyTick([planet], queues);
+    // До фикса обе партии + авто прошли бы гейт независимо и вместе превысили
+    // вместимость; сейчас назначается ровно одна (специалист — A1).
+    const busy = collectWorkshops(planet, 'construction_materials_plant')
+      .filter((r) => r.workshop.currentBatch);
+    expect(busy.length).toBe(1);
+    const exec1 = findWorkshopExecutor(planet, q.items[0]!.id);
+    expect(exec1?.workshopNumber).toBe(1); // профильная задача — специалисту
+    expect(findWorkshopExecutor(planet, q.items[1]!.id)).toBeNull(); // ждёт
+
+    // Склад не переполняется ни на одном тике (до фикса — выход сверх вместимости).
+    for (let t = 0; t < 4; t++) {
+      processEconomyTick([planet], queues);
+      expect(getUsedCapacityByType(planet, 'processed')).toBeLessThanOrEqual(
+        calculateWarehouseCapacities(planet).processed + 1e-9,
+      );
+    }
+    // Тик 5: партия специалиста рассчиталась по формулам §3.0.2 (1.08).
+    expect(planet.resources['Fe']!).toBeCloseTo(feBase + 7 * 1.08, 3);
+    expect((planet.resources['O'] ?? 0)).toBeCloseTo(oBase + 3 * 1.08, 3);
+    expect((planet.resources['Fe-ore'] ?? 0)).toBe(1000 - 10); // ровно ОДНА партия
+    expect(q.items.length).toBe(1); // вторая всё ещё ждёт (места 12−10.8=1.2 < 7.5)
+    expect(getUsedCapacityByType(planet, 'processed')).toBeLessThanOrEqual(
+      calculateWarehouseCapacities(planet).processed + 1e-9,
+    );
+  });
+
+  test('Место занято между назначением и завершением: без выхода сверх вместимости, досдача позже', () => {
+    const planet = makePlanet();
+    buildWorkshopBuilding(planet, 0, 'construction_materials_plant', 2);
+    // Место ровно на две обычных партии: 7.5 + 7.5 = 15 (назначаются ОБЕ).
+    tuneProcessedSpace(planet, 15);
+    planet.resources['Fe-ore'] = 1000;
+    const feBase = planet.resources['Fe']!;
+    const oBase = planet.resources['O'] ?? 0; // сеяно tuneProcessedSpace (≥ 50)
+    const q = queueOf(planet);
+    enqueueProduction(planet, queues, 'smelt_fe', false);
+    enqueueProduction(planet, queues, 'smelt_fe', false);
+    processEconomyTick([planet], queues);
+    expect(collectWorkshops(planet, 'construction_materials_plant')
+      .filter((r) => r.workshop.currentBatch).length).toBe(2);
+
+    // Середина партии: внешняя доставка занимает 6 места processed-склада.
+    processEconomyTick([planet], queues); // тик 2
+    planet.resources['Si'] = (planet.resources['Si'] ?? 0) + 6; // Si — processed-тип
+    for (let t = 0; t < 3; t++) {
+      processEconomyTick([planet], queues); // тики 3–5
+      // НИКОГДА не выше вместимости (до фикса обе партии добавляли выход
+      // без проверки — склад уходил в плюс).
+      expect(getUsedCapacityByType(planet, 'processed')).toBeLessThanOrEqual(
+        calculateWarehouseCapacities(planet).processed + 1e-9,
+      );
+    }
+
+    // Тик 5: первая рассчиталась (5.25 Fe + 2.25 O); вторая — места хватило
+    // только одной: цех освобождён, заказ в очереди с progress=0.
+    const feLeft = q.items.filter((i) => i.recipeId === 'smelt_fe');
+    expect(feLeft.length).toBe(1);
+    expect(feLeft[0]!.progress).toBe(0);
+    expect(ws(planet, 0, 1).currentBatch).toBeUndefined();
+    expect(ws(planet, 0, 2).currentBatch).toBeUndefined(); // ← до фикса цех №2 занят
+    expect(planet.resources['Fe']!).toBeCloseTo(feBase + 7 * 0.75, 3); // ровно ОДИН расчёт
+    expect((planet.resources['O'] ?? 0)).toBeCloseTo(oBase + 3 * 0.75, 3);
+    expect((planet.resources['Fe-ore'] ?? 0)).toBe(1000 - 10);
+
+    // Место освободилось → ожидавший заказ досдаётся в тот же тик.
+    planet.resources['Si'] = (planet.resources['Si'] ?? 0) - 6;
+    processEconomyTick([planet], queues);
+    expect(q.items.filter((i) => i.recipeId === 'smelt_fe').length).toBe(0);
+    expect(planet.resources['Fe']!).toBeCloseTo(feBase + 2 * 7 * 0.75, 3); // ровно ДВЕ, без дублей
+    expect((planet.resources['O'] ?? 0)).toBeCloseTo(oBase + 2 * 3 * 0.75, 3);
+    expect((planet.resources['Fe-ore'] ?? 0)).toBe(1000 - 20);
+    expect(getUsedCapacityByType(planet, 'processed')).toBeLessThanOrEqual(
+      calculateWarehouseCapacities(planet).processed + 1e-9,
+    );
   });
 });
