@@ -4433,3 +4433,33 @@ Stage Summary:
   Скриншоты checkpoints/ore-pools-e2e*.png; чекпоинт
   checkpoints/10_29_ore_pools_runtime_issue25.md.
 - playtest-checklist §4.2: ORE-POOL-01…09 pending (ручная приёмка владельца).
+
+## Task 72 — 2026-10-29 — Save-System Audit Fix: метаданные версии формата + текст отказа загрузки (Issue #25, follow-up владельца)
+
+- Дефекты владельца после миграции v4: (1) метаданные БД сообщают
+  неправильную версию формата — POST/PUT хардкодили version:1 при state
+  fmt:4; (2) сообщение об ошибке загрузки не соответствует v4 — тост
+  «v1/v2 не поддерживаются» (эпоха v3) при отвергаемых v1/v2/v3.
+- Д1: `declaredFormatVersion(parsedState)` (save-format-v4) — честное
+  зеркало маркера fmt; POST/PUT пишут фактическую версию (клиент → 4;
+  без маркера → legacy-дефолт 1; PUT корректно обновляет метаданные при
+  перезаписи legacy-строки v4-state). API остаётся формат-агностичным —
+  отбор чужих версий на загрузке (docs/31 §12).
+- Д2: `REJECTED_LEGACY_FORMAT_VERSIONS` (v1..v{N−1}, производно) +
+  `rejectedLegacyVersionsLabel()` → «v1/v2/v3»; тост page.tsx строится
+  из модуля формата — не может протухнуть при следующей смене версии.
+  Протухшие комментарии (fmt≠3, «формат сейвов v3», «схема v3») в
+  game-store/factions/game-recovery-contract/page приведены к v4.
+- Сопутствующий UX-фикс (раскрыт в отчёте): список сейвов обновляется
+  при открытии таба Load (раньше кэшировался с монтирования — новый сейв
+  не виден после возврата из игры до F5).
+- Гейты: bun test 1009/1009 (+8 новых: tests/save-metadata-v4.test.ts —
+  POST/PUT version, legacy-дефолты, зеркало fmt, список отвергаемых,
+  строка тоста, явные ошибки fmt), lint 0/42 Δ0.
+- Браузерный E2E (agent-browser, dev :3000): новая игра → Save →
+  GET /api/save version=4; синтетический fmt:3-сейв → Load → тост
+  «(v1/v2/v3 не поддерживаются)» + консоль «fmt=3 (ожидается 4)»;
+  рантрип v4 (load → игра); повторный Save (PUT) → version=4, updatedAt
+  обновлён; консоль/ошибки чистые. Скриншоты
+  checkpoints/assets/save-metadata-v4-*.png; чекпоинт
+  checkpoints/10_29_save_metadata_v4.md.
