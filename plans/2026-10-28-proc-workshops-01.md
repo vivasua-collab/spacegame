@@ -121,3 +121,31 @@ repeat); два независимых пула — `processor` (продвин�
   Скриншот: checkpoints/proc-workshops-e2e-2026-10-28.png.
 - Issue #23 НЕ закрыт — приёмка/плейтест за владельцем (PROC-01..PROC-12
   appended в чекпоинт как pending manual checks).
+
+## Результат FIX (2026-10-29, Task 69)
+
+Статус: done (исправление двух блокирующих дефектов независимого аудита).
+
+Коммиты (post-rebase история реализации выровнена по чекпоинту аудита):
+155b286 → 4034104 → a5f661f → 171dd73 → 7d752fa (сам PROC-WORKSHOPS-01)
+→ 5825bdc (docs аудита) → **c62e676** (docs §3.0.5 v3.0.1 ДО runtime —
+протокол задачи) → **f4822bf** (runtime: PoolReservations + checkBatchStart
++ canDepositOutputs + безопасное завершение; +4 регрессионных теста C13/C14
+с подтверждённым КРАСНЫМ прогоном на до-фиксовом runtime; bus-map
+регенерирован). Артефакты: worklog Task 69;
+checkpoints/10_29_proc_workshops_p1_fix.md; STATUS changelog Task 69;
+playtest-checklist — примечание об исправлении.
+
+Гейты FIX: bun test 1019/1019 (база 1015 + 4); lint 0 err/42 warn (Δ0);
+tsc 75 (baseline Δ0, в файлах задачи 0); validate:all ok; git diff --check
+чисто; bus-map 85 событий drift=0.
+
+Браузерный E2E FIX (agent-browser, double-fork :3000): шахта+3 солнечные+
+завод через UI → цех №1: АВТО-партия R-27 «2/5 тиков · 40%» → player
+«Автоповтор»: «гекс #6 · цех 1 · 1/5 · 20%» → живой P1-2 при насыщении
+склада: «нет места на складе» (skip badge), склад 3494/3500 БЕЗ
+переполнения, цех «свободен». 0 ошибок консоли. Скриншоты:
+checkpoints/proc-workshops-p1-fix-e2e-2026-10-29.png (+ e2e2).
+
+Issue #23 остаётся OPEN — ручной проход владельца PROC-01…PROC-12
+(понижение уровня, FIFO/repeat, ограничение R-27, настоящий save/load).
