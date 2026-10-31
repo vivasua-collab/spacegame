@@ -5,6 +5,7 @@ import { checkRateLimit } from '@/lib/rate-limit';
 import { decodeStatePayload, encodeStatePayload, STATE_ENCODING_THRESHOLD, StateTooLargeDuringDecodingError } from '@/lib/save-codec-server';
 import { MAX_STATE_BYTES } from '@/lib/schemas/save-schema';
 import { declaredFormatVersion } from '@/lib/save-format-v4';
+import { isPlausibleSaveRequestId } from '@/lib/save-request-dedup';
 import type { Prisma } from '@prisma/client';
 
 type RouteContext = { params: Promise<{ id: string }> };
@@ -61,8 +62,12 @@ export async function PUT(request: Request, context: RouteContext) {
   // ─── CORE-SAVE-01 (Issue #18): старт-лог ДО любых await ──────────
   // См. комментарий в POST /api/save: делает зависший запрос видимым
   // в логе мгновенно (строка старта без строки завершения).
+  // ─── CORE-SAVE-REPRO-01 (Issue #27 §4): requestId для корреляции
+  // этапов. PUT идемпотентен по ID записи естественно — дедуп не нужен.
+  const rawRequestId = request.headers.get('x-save-request-id');
+  const requestId = isPlausibleSaveRequestId(rawRequestId) ? rawRequestId : null;
   console.log(
-    `[save-api] PUT /api/save/[id] start: content-length=${request.headers.get('content-length') ?? 'unknown'}`,
+    `[save-api] PUT /api/save/[id] start: content-length=${request.headers.get('content-length') ?? 'unknown'}, requestId=${requestId ?? '-'}`,
   );
   // ─── Rate limit (gap-8) ────────────────────────────────────────────
   const ip = request.headers.get('x-forwarded-for') ?? 'unknown';

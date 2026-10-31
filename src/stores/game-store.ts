@@ -495,6 +495,33 @@ function syncMediatorState(): void {
  */
 export const SAVE_REQUEST_TIMEOUT_MS = 30_000;
 
+// ─── CORE-SAVE-REPRO-01 (Issue #27 §6): идемпотентность POST ────────
+// При «неоднозначном» исходе (ответ POST потерян: abort по таймауту, обрыв
+// соединения, сбой прокси) сервер МОГ уже создать запись — повторное
+// нажатие Save с новым POST создало бы дубль. Поэтому ID операции
+// генерируется один раз и ПЕРЕЖИВАЕТ неудачные попытки в рамках одной
+// игровой сессии; при УСПЕХЕ освобождается (следующий Save — новая
+// операция с новым ID). Привязка к монотонному sessionVersion (инкремент
+// ровно при замене сессии: newGame / успешный loadGame / restore) не даёт
+// ID утечь в чужую игру после выхода из зависшей сессии.
+let pendingSaveRequest: { sessionVersion: number; id: string } | null = null;
+
+function acquireSaveRequestId(currentSessionVersion: number): string | null {
+  if (pendingSaveRequest && pendingSaveRequest.sessionVersion === currentSessionVersion) {
+    return pendingSaveRequest.id;
+  }
+  const id =
+    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : null; // нет crypto.randomUUID — работаем без идемпотентности (старые окружения)
+  pendingSaveRequest = id ? { sessionVersion: currentSessionVersion, id } : null;
+  return id;
+}
+
+function releaseSaveRequestId(): void {
+  pendingSaveRequest = null;
+}
+
 /**
  * Сериализует GameState в JSON-строку.
  *
@@ -1540,10 +1567,18 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
         };
 
         const tNetwork0 = Date.now();
+        // ─── CORE-SAVE-REPRO-01 (Issue #27 §6): ID операции для дедупа ──
+        // acquire ДО fetch: при сбое ID остаётся pending → повтор попадёт
+        // в дедуп сервера, дубль не создастся. Привязан к текущей сессии.
+        const saveRequestId = acquireSaveRequestId(get().sessionVersion);
+        const requestHeaders: Record<string, string> = {
+          'Content-Type': 'application/json',
+          ...(saveRequestId ? { 'x-save-request-id': saveRequestId } : {}),
+        };
         if (currentSaveId) {
           const res = await fetchWithTimeout(`/api/save/${currentSaveId}`, {
             method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
+            headers: requestHeaders,
             body: JSON.stringify({ name: saveName, state: stateBody, stateEncoding, tick: currentGameState.time.tick }),
           });
           if (!res.ok) {
@@ -1553,7 +1588,7 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
         } else {
           const res = await fetchWithTimeout('/api/save', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: requestHeaders,
             body: JSON.stringify({
               name: saveName,
               seed: currentGameState.galaxy.seed,
@@ -1569,6 +1604,9 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
           const data = await res.json();
           set({ currentSaveId: data.id });
         }
+        // ─── CORE-SAVE-REPRO-01 (Issue #27 §6): успех — операция завершена,
+        // следующий Save = НОВАЯ операция (новый requestId).
+        releaseSaveRequestId();
         // CORE-SAVE-01 (Issue #18): структурная диагностика успешного пути.
         // При инцидентах следующего раунда эти строки в консоли браузера
         // сразу показывают границу отказа (сериализация/сжатие/сеть).
@@ -1577,6 +1615,7 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
           `(serialize=${tSerialized - tSerialize0}ms, encode=${tEncoded - tSerialized}ms, ` +
           `network=${Date.now() - tNetwork0}ms), ` +
           `raw=${stateJson.length} chars, body=${stateBody.length} chars, encoding=${stateEncoding ?? 'json'}, ` +
+          `requestId=${saveRequestId ?? '-'}, ` +
           `saveId=${get().currentSaveId ?? 'new'}`,
         );
         set({ saveError: null });
@@ -1594,6 +1633,9 @@ export const useGameStore = create<GameStore>()(immer((set, get) => {
           rawChars: serializeLen,
           bodyChars: bodyLen,
           encoding: encodingUsed,
+          // CORE-SAVE-REPRO-01: по requestId серверный лог покажет, дошёл ли
+          // запрос и был ли создан commit (ambiguous-диагностика §4/§6).
+          requestId: pendingSaveRequest?.id ?? null,
           error: e instanceof Error ? `${e.name}: ${e.message}` : String(e),
         };
         console.error('Save failed:', e, detail);

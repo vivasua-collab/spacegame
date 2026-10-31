@@ -5,6 +5,11 @@ import { checkRateLimit } from '@/lib/rate-limit';
 import { decodeStatePayload, StateTooLargeDuringDecodingError } from '@/lib/save-codec-server';
 import { MAX_STATE_BYTES } from '@/lib/schemas/save-schema';
 import { declaredFormatVersion } from '@/lib/save-format-v4';
+import {
+  checkSaveRequestDuplicate,
+  isPlausibleSaveRequestId,
+  rememberSaveRequest,
+} from '@/lib/save-request-dedup';
 
 /**
  * GET /api/save — list all saves.
@@ -66,8 +71,12 @@ export async function POST(request: Request) {
   // логе (Next пишет строку только по ЗАВЕРШЕНИИ запроса) — граница отказа
   // была недиагностируема. Синхронный старт-лог делает «зависший» запрос
   // видимым мгновенно: строка есть — строки завершения нет = запрос висит.
+  // ─── CORE-SAVE-REPRO-01 (Issue #27 §4): requestId в логе — по нему
+  // коррелируются клиентские логи, старт, decoded и дедуп-решение.
+  const rawRequestId = request.headers.get('x-save-request-id');
+  const requestId = isPlausibleSaveRequestId(rawRequestId) ? rawRequestId : null;
   console.log(
-    `[save-api] POST /api/save start: content-length=${request.headers.get('content-length') ?? 'unknown'}`,
+    `[save-api] POST /api/save start: content-length=${request.headers.get('content-length') ?? 'unknown'}, requestId=${requestId ?? '-'}`,
   );
 
   // ─── Rate limit (gap-8) ────────────────────────────────────────────
@@ -109,6 +118,21 @@ export async function POST(request: Request) {
       );
     }
     const { name, seed, state, stateEncoding, settings, tick } = parsed.data;
+
+    // ─── CORE-SAVE-REPRO-01 (Issue #27 §6): дедуп ambiguous POST ──────
+    // Проверяется ПОСЛЕ zod (валидация важнее дедупа) и ДО декодирования
+    // (повторная попытка не должна повторно платить за gzip-декод).
+    // Повтор с тем же requestId — та же операция, ответ потерянный в прошлый
+    // раз: возвращаем УЖЕ СОЗДАННУЮ запись вместо новой строки.
+    if (requestId) {
+      const existingSaveId = checkSaveRequestDuplicate(requestId);
+      if (existingSaveId) {
+        console.log(
+          `[save-api] POST /api/save dedup-hit: requestId=${requestId} -> existing save ${existingSaveId} (новая запись НЕ создаётся)`,
+        );
+        return NextResponse.json({ id: existingSaveId, deduplicated: true }, { status: 200 });
+      }
+    }
 
     // ─── R-26: декодирование транспорта (gzip-base64 → plain JSON) ────
     // Аудит 2026-10-26 (этап 0–1): потоковая распаковка с РАННИМ лимитом
@@ -180,6 +204,12 @@ export async function POST(request: Request) {
         version,
       },
     });
+
+    // ─── CORE-SAVE-REPRO-01 (Issue #27 §6): запомнить операцию ────────
+    // Если ответ потеряется — повтор с тем же requestId вернёт этот id.
+    if (requestId) {
+      rememberSaveRequest(requestId, save.id);
+    }
 
     // Аудит 2026-10-26: минимально необходимый ответ. Раньше возвращалась
     // ПОЛНАЯ запись (включая несжатый state — замер: 3.29 МБ ответа на
